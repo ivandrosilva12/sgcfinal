@@ -3,6 +3,7 @@
 package integration_test
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -10,6 +11,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ivandrosilva12/sgcfinal/internal/adapters/keycloak"
+	dominio "github.com/ivandrosilva12/sgcfinal/internal/domain/identidade"
 )
 
 const segredoOTPDirector = "segredoteste-otp-32chars-abcdefgh"
@@ -61,11 +65,28 @@ func claimsDe(t *testing.T, jwt string) map[string]any {
 	return m
 }
 
-// TestSpike_ClaimsMFA imprime acr/amr do token OTP — usado no spike para decidir
-// o mecanismo. NÃO é um gate; remove-se/ajusta-se para asserção na Task 2.
-func TestSpike_ClaimsMFA(t *testing.T) {
+// TestMFA_DirectorComOTP_AutenticacaoForte confirma o CAMINHO POSITIVO: um login
+// com 2º factor é reconhecido como autenticação forte e o papel sensível é aceite.
+func TestMFA_DirectorComOTP_AutenticacaoForte(t *testing.T) {
 	issuer := issuerTeste()
 	token := tokenDirectorComOTP(t, issuer)
-	c := claimsDe(t, token)
-	t.Logf("acr=%v amr=%v", c["acr"], c["amr"])
+
+	verificador, err := keycloak.Novo(context.Background(), issuer, "sgc-api", []string{"mfa", "gold", "2"})
+	if err != nil {
+		t.Fatalf("inicializar Keycloak: %v", err)
+	}
+	sessao, err := verificador.Verificar(context.Background(), token)
+	if err != nil {
+		t.Fatalf("verificar token: %v", err)
+	}
+	if !sessao.TemPapel(dominio.PapelDirector) {
+		t.Fatalf("esperava papel Director, obtive %v", sessao.Papeis)
+	}
+	if !sessao.AutenticacaoForte {
+		t.Fatalf("CAMINHO POSITIVO: login com OTP devia ser autenticação forte (acr=%v amr=%v)",
+			claimsDe(t, token)["acr"], claimsDe(t, token)["amr"])
+	}
+	if err := dominio.VerificarAutenticacaoForte(sessao); err != nil {
+		t.Fatalf("papel sensível com MFA devia ser aceite, obtive %v", err)
+	}
 }
