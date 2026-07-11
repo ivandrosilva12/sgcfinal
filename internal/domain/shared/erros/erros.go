@@ -19,6 +19,8 @@ const (
 	CategoriaNaoEncontrado
 	// CategoriaConflito — conflito de estado (→ 409).
 	CategoriaConflito
+	// CategoriaMFAObrigatorio — papel sensível sem segundo fator (→ 403, type próprio).
+	CategoriaMFAObrigatorio
 	// CategoriaInterno — falha inesperada (→ 500).
 	CategoriaInterno
 )

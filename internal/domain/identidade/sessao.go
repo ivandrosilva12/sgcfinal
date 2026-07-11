@@ -7,6 +7,9 @@ type Sessao struct {
 	Nome    string
 	Email   string
 	Papeis  []Papel
+	// AutenticacaoForte indica que o token comprova segundo factor (MFA),
+	// derivado dos claims acr/amr pela camada de adaptadores.
+	AutenticacaoForte bool
 }
 
 // TemPapel indica se a sessão possui o papel indicado.

@@ -29,19 +29,28 @@ const (
 	MsgConflito Chave = "erro.conflito"
 	// MsgDemasiadosPedidos — limite de taxa excedido (429).
 	MsgDemasiadosPedidos Chave = "erro.demasiados_pedidos"
+	// MsgMFAObrigatoria — papel sensível sem segundo fator de autenticação.
+	MsgMFAObrigatoria Chave = "erro.mfa_obrigatoria"
+	// MsgPapelInvalido — código de papel desconhecido.
+	MsgPapelInvalido Chave = "erro.papel_invalido"
+	// MsgUtilizadorNaoEncontrado — utilizador inexistente no Keycloak.
+	MsgUtilizadorNaoEncontrado Chave = "erro.utilizador_nao_encontrado"
 )
 
 // mensagensPtAO é o catálogo pt-AO.
 var mensagensPtAO = map[Chave]string{
-	MsgServicoIndisponivel:  "Serviço temporariamente indisponível.",
-	MsgServicoOperacional:   "Serviço operacional.",
-	MsgNaoAutenticado:       "Autenticação necessária.",
-	MsgSemPermissao:         "Não tem permissão para aceder a este recurso.",
-	MsgRecursoNaoEncontrado: "Recurso não encontrado.",
-	MsgErroInterno:          "Ocorreu um erro interno. Tente novamente mais tarde.",
-	MsgPedidoInvalido:       "Pedido inválido.",
-	MsgConflito:             "Conflito com o estado actual do recurso.",
-	MsgDemasiadosPedidos:    "Demasiados pedidos. Tente novamente mais tarde.",
+	MsgServicoIndisponivel:     "Serviço temporariamente indisponível.",
+	MsgServicoOperacional:      "Serviço operacional.",
+	MsgNaoAutenticado:          "Autenticação necessária.",
+	MsgSemPermissao:            "Não tem permissão para aceder a este recurso.",
+	MsgRecursoNaoEncontrado:    "Recurso não encontrado.",
+	MsgErroInterno:             "Ocorreu um erro interno. Tente novamente mais tarde.",
+	MsgPedidoInvalido:          "Pedido inválido.",
+	MsgConflito:                "Conflito com o estado actual do recurso.",
+	MsgDemasiadosPedidos:       "Demasiados pedidos. Tente novamente mais tarde.",
+	MsgMFAObrigatoria:          "Autenticação com segundo factor obrigatória para este perfil.",
+	MsgPapelInvalido:           "Papel inválido.",
+	MsgUtilizadorNaoEncontrado: "Utilizador não encontrado.",
 }
 
 // T devolve a mensagem pt-AO para a chave. Se a chave for desconhecida, devolve

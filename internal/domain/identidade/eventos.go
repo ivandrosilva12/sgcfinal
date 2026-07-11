@@ -43,9 +43,67 @@ func (e AcessoNegado) NomeEvento() string { return "identidade.acesso.negado" }
 // OcorridoEm implementa evento.EventoDominio.
 func (e AcessoNegado) OcorridoEm() time.Time { return e.Em }
 
+// PapelAtribuido é emitido quando um administrador atribui um papel.
+type PapelAtribuido struct {
+	Actor string
+	Alvo  string
+	Papel Papel
+	Em    time.Time
+}
+
+// NomeEvento implementa evento.EventoDominio.
+func (e PapelAtribuido) NomeEvento() string { return "identidade.papel.atribuido" }
+
+// OcorridoEm implementa evento.EventoDominio.
+func (e PapelAtribuido) OcorridoEm() time.Time { return e.Em }
+
+// PapelRevogado é emitido quando um administrador revoga um papel.
+type PapelRevogado struct {
+	Actor string
+	Alvo  string
+	Papel Papel
+	Em    time.Time
+}
+
+// NomeEvento implementa evento.EventoDominio.
+func (e PapelRevogado) NomeEvento() string { return "identidade.papel.revogado" }
+
+// OcorridoEm implementa evento.EventoDominio.
+func (e PapelRevogado) OcorridoEm() time.Time { return e.Em }
+
+// UtilizadorActivado é emitido quando um administrador activa uma conta.
+type UtilizadorActivado struct {
+	Actor string
+	Alvo  string
+	Em    time.Time
+}
+
+// NomeEvento implementa evento.EventoDominio.
+func (e UtilizadorActivado) NomeEvento() string { return "identidade.utilizador.activado" }
+
+// OcorridoEm implementa evento.EventoDominio.
+func (e UtilizadorActivado) OcorridoEm() time.Time { return e.Em }
+
+// UtilizadorDesactivado é emitido quando um administrador desactiva uma conta.
+type UtilizadorDesactivado struct {
+	Actor string
+	Alvo  string
+	Em    time.Time
+}
+
+// NomeEvento implementa evento.EventoDominio.
+func (e UtilizadorDesactivado) NomeEvento() string { return "identidade.utilizador.desactivado" }
+
+// OcorridoEm implementa evento.EventoDominio.
+func (e UtilizadorDesactivado) OcorridoEm() time.Time { return e.Em }
+
 // Garantias de conformidade com a interface de evento de domínio.
 var (
 	_ evento.EventoDominio = UtilizadorAutenticado{}
 	_ evento.EventoDominio = PerfilConsultado{}
 	_ evento.EventoDominio = AcessoNegado{}
+	_ evento.EventoDominio = PapelAtribuido{}
+	_ evento.EventoDominio = PapelRevogado{}
+	_ evento.EventoDominio = UtilizadorActivado{}
+	_ evento.EventoDominio = UtilizadorDesactivado{}
 )
