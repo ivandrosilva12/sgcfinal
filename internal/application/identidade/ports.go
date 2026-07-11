@@ -20,3 +20,32 @@ type VerificadorToken interface {
 type Auditor interface {
 	Registar(ctx context.Context, r auditoria.Registo) error
 }
+
+// FiltroUtilizadores parametriza a listagem de utilizadores.
+type FiltroUtilizadores struct {
+	Termo        string // pesquisa por nome/email/username (opcional)
+	Limite       int    // máximo de resultados (0 = default do adaptador)
+	Deslocamento int    // paginação
+}
+
+// ResumoUtilizador é o DTO de um utilizador na gestão administrativa.
+type ResumoUtilizador struct {
+	ID     string   `json:"id"`
+	Nome   string   `json:"nome"`
+	Email  string   `json:"email"`
+	Activo bool     `json:"activo"`
+	Papeis []string `json:"papeis"`
+}
+
+// DetalheUtilizador é o detalhe de um utilizador (mesma forma que o resumo).
+type DetalheUtilizador = ResumoUtilizador
+
+// AdminIdentidade é a porta de saída para a gestão de utilizadores/papéis no
+// Keycloak (fonte de verdade). Implementada por adapters/keycloak.AdminCliente.
+type AdminIdentidade interface {
+	ListarUtilizadores(ctx context.Context, filtro FiltroUtilizadores) ([]ResumoUtilizador, error)
+	ObterUtilizador(ctx context.Context, id string) (DetalheUtilizador, error)
+	AtribuirPapel(ctx context.Context, id string, papel dominio.Papel) error
+	RevogarPapel(ctx context.Context, id string, papel dominio.Papel) error
+	DefinirActivo(ctx context.Context, id string, activo bool) error
+}
