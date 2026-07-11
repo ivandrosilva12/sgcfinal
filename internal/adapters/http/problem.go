@@ -19,9 +19,13 @@ type Problema struct {
 	Instance string `json:"instance,omitempty"`
 }
 
-// responderProblema escreve uma resposta RFC 7807 e aborta a cadeia. O instance
-// é preenchido com o request-id para correlação.
+// responderProblema mantém a assinatura usada pelo rate limiter (type genérico).
 func responderProblema(c *gin.Context, status int, titulo, detalhe string) {
+	responderProblemaTipo(c, status, "about:blank", titulo, detalhe)
+}
+
+// responderProblemaTipo escreve uma resposta RFC 7807 com um type específico.
+func responderProblemaTipo(c *gin.Context, status int, tipo, titulo, detalhe string) {
 	instancia := ""
 	if v, ok := c.Get("request_id"); ok {
 		if s, ok := v.(string); ok {
@@ -29,7 +33,7 @@ func responderProblema(c *gin.Context, status int, titulo, detalhe string) {
 		}
 	}
 	corpo, _ := json.Marshal(Problema{
-		Type:     "about:blank",
+		Type:     tipo,
 		Title:    titulo,
 		Status:   status,
 		Detail:   detalhe,
@@ -47,7 +51,7 @@ func responderErro(c *gin.Context, err error) {
 	if cat == erros.CategoriaInterno {
 		detalhe = i18n.T(i18n.MsgErroInterno)
 	}
-	responderProblema(c, estadoDe(cat), tituloDe(cat), detalhe)
+	responderProblemaTipo(c, estadoDe(cat), tipoDe(cat), tituloDe(cat), detalhe)
 }
 
 func estadoDe(cat erros.Categoria) int {
@@ -57,6 +61,8 @@ func estadoDe(cat erros.Categoria) int {
 	case erros.CategoriaNaoAutorizado:
 		return nethttp.StatusUnauthorized
 	case erros.CategoriaProibido:
+		return nethttp.StatusForbidden
+	case erros.CategoriaMFAObrigatorio:
 		return nethttp.StatusForbidden
 	case erros.CategoriaNaoEncontrado:
 		return nethttp.StatusNotFound
@@ -75,6 +81,8 @@ func tituloDe(cat erros.Categoria) string {
 		return i18n.T(i18n.MsgNaoAutenticado)
 	case erros.CategoriaProibido:
 		return i18n.T(i18n.MsgSemPermissao)
+	case erros.CategoriaMFAObrigatorio:
+		return i18n.T(i18n.MsgMFAObrigatoria)
 	case erros.CategoriaNaoEncontrado:
 		return i18n.T(i18n.MsgRecursoNaoEncontrado)
 	case erros.CategoriaConflito:
@@ -82,4 +90,13 @@ func tituloDe(cat erros.Categoria) string {
 	default:
 		return i18n.T(i18n.MsgErroInterno)
 	}
+}
+
+// tipoDe devolve o URI de tipo RFC 7807 para a categoria. Distingue o caso MFA;
+// as restantes categorias usam "about:blank" (o título já as identifica).
+func tipoDe(cat erros.Categoria) string {
+	if cat == erros.CategoriaMFAObrigatorio {
+		return "/erros/mfa-obrigatorio"
+	}
+	return "about:blank"
 }

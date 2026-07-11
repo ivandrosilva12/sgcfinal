@@ -55,6 +55,23 @@ func RBAC(permitidos ...dominio.Papel) gin.HandlerFunc {
 	}
 }
 
+// MFAObrigatoria rejeita (403, type mfa-obrigatorio) qualquer sessão com papel
+// sensível cujo token não comprove segundo factor. Aplicar logo a seguir a Auth.
+func MFAObrigatoria() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		sessao, ok := SessaoDe(c)
+		if !ok {
+			responderErro(c, erros.Novo(erros.CategoriaNaoAutorizado, i18n.T(i18n.MsgNaoAutenticado)))
+			return
+		}
+		if err := dominio.VerificarAutenticacaoForte(sessao); err != nil {
+			responderErro(c, err)
+			return
+		}
+		c.Next()
+	}
+}
+
 // SessaoDe devolve a sessão autenticada colocada no contexto pelo middleware Auth.
 func SessaoDe(c *gin.Context) (dominio.Sessao, bool) {
 	v, existe := c.Get(chaveSessao)
