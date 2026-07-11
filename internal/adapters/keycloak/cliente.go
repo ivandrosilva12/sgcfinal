@@ -22,6 +22,7 @@ type Cliente struct {
 	audiencia string
 	discovery string
 	http      *nethttp.Client
+	acrFortes map[string]bool
 }
 
 // audiencia desserializa o claim "aud", que pode ser string ou lista de strings.
@@ -49,6 +50,8 @@ type claims struct {
 	Email       string   `json:"email"`
 	Azp         string   `json:"azp"`
 	Aud         claimAud `json:"aud"`
+	Acr         string   `json:"acr"`
+	Amr         []string `json:"amr"`
 	RealmAccess struct {
 		Roles []string `json:"roles"`
 	} `json:"realm_access"`
@@ -57,7 +60,7 @@ type claims struct {
 // Novo cria o cliente fazendo OIDC discovery no issuer. audiencia é o
 // client/audience esperado (ex.: "sgc-api"). Devolve erro se o discovery falhar
 // (Keycloak inacessível ou issuer errado) — chamado no arranque (composition root).
-func Novo(ctx context.Context, issuer, audiencia string) (*Cliente, error) {
+func Novo(ctx context.Context, issuer, audiencia string, acrFortes []string) (*Cliente, error) {
 	provider, err := oidc.NewProvider(ctx, issuer)
 	if err != nil {
 		return nil, fmt.Errorf("discovery OIDC em %q: %w", issuer, err)
@@ -65,11 +68,16 @@ func Novo(ctx context.Context, issuer, audiencia string) (*Cliente, error) {
 	// A verificação de audience é feita manualmente (aud OU azp), porque o
 	// client público do Keycloak coloca o client em azp e aud="account".
 	verifier := provider.Verifier(&oidc.Config{SkipClientIDCheck: true})
+	fortes := make(map[string]bool, len(acrFortes))
+	for _, a := range acrFortes {
+		fortes[a] = true
+	}
 	return &Cliente{
 		verifier:  verifier,
 		audiencia: audiencia,
 		discovery: issuer + "/.well-known/openid-configuration",
 		http:      &nethttp.Client{Timeout: 5 * time.Second},
+		acrFortes: fortes,
 	}, nil
 }
 
@@ -96,10 +104,11 @@ func (c *Cliente) Verificar(ctx context.Context, tokenBruto string) (dominio.Ses
 	}
 
 	return dominio.Sessao{
-		Sujeito: cl.Sub,
-		Nome:    cl.Nome,
-		Email:   cl.Email,
-		Papeis:  dominio.PapeisDe(cl.RealmAccess.Roles),
+		Sujeito:           cl.Sub,
+		Nome:              cl.Nome,
+		Email:             cl.Email,
+		Papeis:            dominio.PapeisDe(cl.RealmAccess.Roles),
+		AutenticacaoForte: c.ehAutenticacaoForte(cl.Acr, cl.Amr),
 	}, nil
 }
 
@@ -118,6 +127,22 @@ func (c *Cliente) audienceValida(cl claims) bool {
 		}
 	}
 	return false
+}
+
+// amrFortes são métodos de autenticação que, por si, comprovam segundo factor.
+var amrFortes = map[string]bool{
+	"otp": true, "totp": true, "mfa": true, "hwk": true, "sms": true, "swk": true,
+}
+
+// ehAutenticacaoForte decide se o token comprova segundo factor: qualquer método
+// forte em "amr", ou um valor de "acr" na lista configurada (KEYCLOAK_ACR_FORTE).
+func (c *Cliente) ehAutenticacaoForte(acr string, amr []string) bool {
+	for _, m := range amr {
+		if amrFortes[m] {
+			return true
+		}
+	}
+	return acr != "" && c.acrFortes[acr]
 }
 
 // VerificarSaude confirma que o endpoint de discovery do Keycloak responde.

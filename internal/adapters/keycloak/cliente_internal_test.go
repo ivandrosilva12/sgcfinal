@@ -72,12 +72,36 @@ func TestVerificarSaude(t *testing.T) {
 	}
 }
 
+func TestEhAutenticacaoForte(t *testing.T) {
+	c := &Cliente{acrFortes: map[string]bool{"gold": true, "2": true}}
+	casos := []struct {
+		nome string
+		acr  string
+		amr  []string
+		quer bool
+	}{
+		{"amr otp", "1", []string{"pwd", "otp"}, true},
+		{"amr mfa", "", []string{"mfa"}, true},
+		{"acr forte configurado", "gold", nil, true},
+		{"acr numerico configurado", "2", nil, true},
+		{"so password", "1", []string{"pwd"}, false},
+		{"vazio", "", nil, false},
+	}
+	for _, tc := range casos {
+		t.Run(tc.nome, func(t *testing.T) {
+			if got := c.ehAutenticacaoForte(tc.acr, tc.amr); got != tc.quer {
+				t.Fatalf("ehAutenticacaoForte(%q,%v)=%v; quer %v", tc.acr, tc.amr, got, tc.quer)
+			}
+		})
+	}
+}
+
 func TestNovo_DiscoveryInvalido(t *testing.T) {
 	srv := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.NotFound(w, r)
 	}))
 	defer srv.Close()
-	if _, err := Novo(context.Background(), srv.URL, "sgc-api"); err == nil {
+	if _, err := Novo(context.Background(), srv.URL, "sgc-api", nil); err == nil {
 		t.Fatal("esperava erro de discovery inválido")
 	}
 }
@@ -98,7 +122,7 @@ func TestNovo_DiscoveryValido_EVerificarTokenInvalido(t *testing.T) {
 	defer srv.Close()
 	base = srv.URL
 
-	cli, err := Novo(context.Background(), base, "sgc-api")
+	cli, err := Novo(context.Background(), base, "sgc-api", nil)
 	if err != nil {
 		t.Fatalf("esperava discovery válido, obtive %v", err)
 	}
