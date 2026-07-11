@@ -27,3 +27,23 @@ sem criação de utilizadores. Este sprint fecha ambos.
 - A senha temporária é devolvida uma única vez; o admin comunica-a por canal seguro.
 - Alternativas descartadas: envio por email (sem SMTP em dev); gestão de credenciais
   na BD local (Keycloak é a fonte de verdade).
+- `docker/keycloak/realm-sgc.json` é o realm de **desenvolvimento** e contém,
+  deliberadamente, utilizadores de teste com credenciais conhecidas
+  (`director.teste` com segredo TOTP conhecido, passwords `teste`). NÃO deve ser
+  importado em produção — o pipeline de produção usa um realm separado sem estes
+  fixtures.
+
+## Limitações conhecidas (seguimento Sprint 5)
+
+1. **Criação não-atómica.** `CriarUtilizador` cria o utilizador no Keycloak e depois
+   atribui os papéis num ciclo; se uma atribuição de papel (ou o registo de
+   auditoria subsequente) falhar a meio, o utilizador JÁ existe no Keycloak mas o
+   chamador recebe erro, a senha temporária não é devolvida e uma nova tentativa
+   com o mesmo username falha com 409. Para o M1 (volume baixo, o admin tem acesso
+   directo ao Keycloak) é aceite; fica como seguimento no Sprint 5 uma compensação
+   best-effort (limpeza em caso de falha parcial) e/ou devolver o id para a conta
+   criada ser endereçável.
+2. **Corpo da resposta contém `senha_temporaria`.** É intencional (devolvida uma
+   única vez), mas qualquer middleware futuro que serialize/registe corpos de
+   resposta não pode fazê-lo para esta rota. Nota para quem adicionar logging de
+   respostas.
