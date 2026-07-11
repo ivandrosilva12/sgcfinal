@@ -5,6 +5,13 @@
   "sslRequired": "external",
   "registrationAllowed": false,
   "loginWithEmailAllowed": true,
+  "attributes": {
+    "acr.loa.map": "{\"2\":\"2\"}"
+  },
+  "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA1",
+  "otpPolicyDigits": 6,
+  "otpPolicyPeriod": 30,
   "roles": {
     "realm": [
       { "name": "Medico", "description": "Médico" },
@@ -33,6 +40,9 @@
       "webOrigins": ["*"],
       "attributes": {
         "post.logout.redirect.uris": "+"
+      },
+      "authenticationFlowBindingOverrides": {
+        "direct_grant": "bc93bcf5-be53-4c26-813b-0ddc5d103338"
       }
     },
     {
@@ -79,6 +89,97 @@
         { "type": "password", "value": "teste", "temporary": false }
       ],
       "realmRoles": ["Admin"]
+    },
+    {
+      "username": "director.teste",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "director.teste@sgc.ao",
+      "firstName": "Director",
+      "lastName": "de Teste",
+      "credentials": [
+        { "type": "password", "value": "teste", "temporary": false },
+        {
+          "type": "otp",
+          "secretData": "{\"value\":\"segredoteste-otp-32chars-abcdefgh\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ],
+      "realmRoles": ["Director"]
+    }
+  ],
+  "authenticationFlows": [
+    {
+      "id": "bc93bcf5-be53-4c26-813b-0ddc5d103338",
+      "alias": "direct grant loa2",
+      "description": "OpenID Connect Resource Owner Grant — cópia do fluxo nativo com um passo de Level of Authentication (LoA=2) a envolver o OTP, para que o access token emita acr=2 numa autenticação forte (spike Sprint 4/Task 1, Variante A).",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "direct-grant-validate-username",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": false
+        },
+        {
+          "authenticator": "direct-grant-validate-password",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "userSetupAllowed": false
+        },
+        {
+          "authenticatorFlow": true,
+          "requirement": "CONDITIONAL",
+          "priority": 30,
+          "flowAlias": "direct grant loa2 Direct Grant - Conditional OTP",
+          "userSetupAllowed": false
+        }
+      ]
+    },
+    {
+      "id": "934e9c70-405c-426f-8aac-9584ab963b73",
+      "alias": "direct grant loa2 Direct Grant - Conditional OTP",
+      "description": "Flow to determine if the OTP is required for the authentication",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticatorConfig": "loa2-config",
+          "authenticator": "conditional-level-of-authentication",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 0,
+          "userSetupAllowed": false
+        },
+        {
+          "authenticator": "conditional-user-configured",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": false
+        },
+        {
+          "authenticator": "direct-grant-validate-otp",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "userSetupAllowed": false
+        }
+      ]
+    }
+  ],
+  "authenticatorConfig": [
+    {
+      "alias": "loa2-config",
+      "config": {
+        "loa-condition-level": "2",
+        "loa-max-age": "36000"
+      }
     }
   ]
 }
