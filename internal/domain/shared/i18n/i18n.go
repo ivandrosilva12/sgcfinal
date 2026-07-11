@@ -35,6 +35,10 @@ const (
 	MsgPapelInvalido Chave = "erro.papel_invalido"
 	// MsgUtilizadorNaoEncontrado — utilizador inexistente no Keycloak.
 	MsgUtilizadorNaoEncontrado Chave = "erro.utilizador_nao_encontrado"
+	// MsgUtilizadorJaExiste — username/email já registado.
+	MsgUtilizadorJaExiste Chave = "erro.utilizador_ja_existe"
+	// MsgCriacaoInvalida — dados de criação inválidos.
+	MsgCriacaoInvalida Chave = "erro.criacao_invalida"
 )
 
 // mensagensPtAO é o catálogo pt-AO.
@@ -51,6 +55,8 @@ var mensagensPtAO = map[Chave]string{
 	MsgMFAObrigatoria:          "Autenticação com segundo factor obrigatória para este perfil.",
 	MsgPapelInvalido:           "Papel inválido.",
 	MsgUtilizadorNaoEncontrado: "Utilizador não encontrado.",
+	MsgUtilizadorJaExiste:      "Já existe um utilizador com este nome de utilizador ou email.",
+	MsgCriacaoInvalida:         "Dados de criação inválidos.",
 }
 
 // T devolve a mensagem pt-AO para a chave. Se a chave for desconhecida, devolve

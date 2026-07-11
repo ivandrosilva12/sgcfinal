@@ -97,6 +97,19 @@ func (e UtilizadorDesactivado) NomeEvento() string { return "identidade.utilizad
 // OcorridoEm implementa evento.EventoDominio.
 func (e UtilizadorDesactivado) OcorridoEm() time.Time { return e.Em }
 
+// UtilizadorCriado é emitido quando um administrador cria um utilizador.
+type UtilizadorCriado struct {
+	Actor string
+	Alvo  string
+	Em    time.Time
+}
+
+// NomeEvento implementa evento.EventoDominio.
+func (e UtilizadorCriado) NomeEvento() string { return "identidade.utilizador.criado" }
+
+// OcorridoEm implementa evento.EventoDominio.
+func (e UtilizadorCriado) OcorridoEm() time.Time { return e.Em }
+
 // Garantias de conformidade com a interface de evento de domínio.
 var (
 	_ evento.EventoDominio = UtilizadorAutenticado{}
@@ -106,4 +119,5 @@ var (
 	_ evento.EventoDominio = PapelRevogado{}
 	_ evento.EventoDominio = UtilizadorActivado{}
 	_ evento.EventoDominio = UtilizadorDesactivado{}
+	_ evento.EventoDominio = UtilizadorCriado{}
 )
