@@ -18,6 +18,8 @@ func TestCarregar_Valido(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/sgc")
 	t.Setenv("REDIS_URL", "redis://localhost:6379/0")
 	t.Setenv("KEYCLOAK_ISSUER", "http://localhost:8081/realms/sgc")
+	t.Setenv("KEYCLOAK_ADMIN_CLIENT_ID", "sgc-admin")
+	t.Setenv("KEYCLOAK_ADMIN_CLIENT_SECRET", "segredo-admin")
 	t.Setenv("APP_ENV", "dev")
 
 	cfg, err := config.Carregar()
@@ -30,12 +32,17 @@ func TestCarregar_Valido(t *testing.T) {
 	if cfg.EmProducao() {
 		t.Fatal("dev não deve ser produção")
 	}
-	// Em dev, sem CORS_ORIGINS, permite todas as origens.
 	if len(cfg.OrigensCORS) != 1 || cfg.OrigensCORS[0] != "*" {
 		t.Fatalf("CORS por omissão em dev errado: %v", cfg.OrigensCORS)
 	}
 	if cfg.LimiteTaxaIP != 100 {
 		t.Fatalf("limite de taxa por omissão errado: %d", cfg.LimiteTaxaIP)
+	}
+	if cfg.KeycloakAdminClientID != "sgc-admin" {
+		t.Fatalf("admin client id errado: %q", cfg.KeycloakAdminClientID)
+	}
+	if len(cfg.KeycloakACRFortes) == 0 {
+		t.Fatal("esperava lista de ACR fortes por omissão")
 	}
 }
 
@@ -43,6 +50,8 @@ func TestCarregar_FaltaKeycloakIssuer(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/sgc")
 	t.Setenv("REDIS_URL", "redis://localhost:6379/0")
 	t.Setenv("KEYCLOAK_ISSUER", "")
+	t.Setenv("KEYCLOAK_ADMIN_CLIENT_ID", "sgc-admin")
+	t.Setenv("KEYCLOAK_ADMIN_CLIENT_SECRET", "segredo-admin")
 	t.Setenv("APP_ENV", "dev")
 	if _, err := config.Carregar(); err == nil {
 		t.Fatal("esperava erro por faltar KEYCLOAK_ISSUER")
@@ -52,8 +61,23 @@ func TestCarregar_FaltaKeycloakIssuer(t *testing.T) {
 func TestCarregar_AmbienteInvalido(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/sgc")
 	t.Setenv("REDIS_URL", "redis://localhost:6379/0")
+	t.Setenv("KEYCLOAK_ISSUER", "http://localhost:8081/realms/sgc")
+	t.Setenv("KEYCLOAK_ADMIN_CLIENT_ID", "sgc-admin")
+	t.Setenv("KEYCLOAK_ADMIN_CLIENT_SECRET", "segredo-admin")
 	t.Setenv("APP_ENV", "producao-errada")
 	if _, err := config.Carregar(); err == nil {
 		t.Fatal("esperava erro por APP_ENV inválido")
+	}
+}
+
+func TestCarregar_FaltaAdminClient(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/sgc")
+	t.Setenv("REDIS_URL", "redis://localhost:6379/0")
+	t.Setenv("KEYCLOAK_ISSUER", "http://localhost:8081/realms/sgc")
+	t.Setenv("KEYCLOAK_ADMIN_CLIENT_ID", "")
+	t.Setenv("KEYCLOAK_ADMIN_CLIENT_SECRET", "")
+	t.Setenv("APP_ENV", "dev")
+	if _, err := config.Carregar(); err == nil {
+		t.Fatal("esperava erro por faltar KEYCLOAK_ADMIN_CLIENT_ID/SECRET")
 	}
 }

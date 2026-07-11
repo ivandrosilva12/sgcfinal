@@ -13,17 +13,20 @@ import (
 
 // Config agrega toda a configuração da API.
 type Config struct {
-	Ambiente        string        // "dev" | "staging" | "prod"
-	PortaHTTP       string        // porta do servidor HTTP (ex.: "8080")
-	NivelLog        string        // "debug" | "info" | "warn" | "error"
-	URLBaseDados    string        // DSN PostgreSQL (pgx)
-	URLRedis        string        // URL Redis (redis://...)
-	TimeoutParagem  time.Duration // tempo máximo de shutdown gracioso
-	KeycloakIssuer  string        // issuer OIDC (obrigatório desde Sprint 2)
-	KeycloakAudNome string        // audience/client esperado (Sprint 2)
-	OrigensCORS     []string      // origens permitidas em CORS (por ambiente)
-	LimiteTaxaIP    int           // limite de pedidos por IP na janela de taxa
-	JanelaTaxa      time.Duration // janela do rate limiting
+	Ambiente                  string        // "dev" | "staging" | "prod"
+	PortaHTTP                 string        // porta do servidor HTTP (ex.: "8080")
+	NivelLog                  string        // "debug" | "info" | "warn" | "error"
+	URLBaseDados              string        // DSN PostgreSQL (pgx)
+	URLRedis                  string        // URL Redis (redis://...)
+	TimeoutParagem            time.Duration // tempo máximo de shutdown gracioso
+	KeycloakIssuer            string        // issuer OIDC (obrigatório desde Sprint 2)
+	KeycloakAudNome           string        // audience/client esperado (Sprint 2)
+	KeycloakAdminClientID     string        // client confidencial para a Admin API (sgc-admin)
+	KeycloakAdminClientSecret string        // segredo do client admin
+	KeycloakACRFortes         []string      // valores de acr considerados MFA
+	OrigensCORS               []string      // origens permitidas em CORS (por ambiente)
+	LimiteTaxaIP              int           // limite de pedidos por IP na janela de taxa
+	JanelaTaxa                time.Duration // janela do rate limiting
 }
 
 // erroConfig acumula erros de validação para reportar todos de uma vez.
@@ -40,17 +43,20 @@ func (e *erroConfig) Error() string {
 func Carregar() (Config, error) {
 	ambiente := valorOu("APP_ENV", "dev")
 	cfg := Config{
-		Ambiente:        ambiente,
-		PortaHTTP:       valorOu("HTTP_PORT", "8080"),
-		NivelLog:        valorOu("LOG_LEVEL", "info"),
-		URLBaseDados:    os.Getenv("DATABASE_URL"),
-		URLRedis:        os.Getenv("REDIS_URL"),
-		TimeoutParagem:  15 * time.Second,
-		KeycloakIssuer:  os.Getenv("KEYCLOAK_ISSUER"),
-		KeycloakAudNome: os.Getenv("KEYCLOAK_AUDIENCE"),
-		OrigensCORS:     parseCORS(os.Getenv("CORS_ORIGINS"), ambiente),
-		LimiteTaxaIP:    inteiroOu("RATE_LIMIT_IP", 100),
-		JanelaTaxa:      time.Minute,
+		Ambiente:                  ambiente,
+		PortaHTTP:                 valorOu("HTTP_PORT", "8080"),
+		NivelLog:                  valorOu("LOG_LEVEL", "info"),
+		URLBaseDados:              os.Getenv("DATABASE_URL"),
+		URLRedis:                  os.Getenv("REDIS_URL"),
+		TimeoutParagem:            15 * time.Second,
+		KeycloakIssuer:            os.Getenv("KEYCLOAK_ISSUER"),
+		KeycloakAudNome:           os.Getenv("KEYCLOAK_AUDIENCE"),
+		KeycloakAdminClientID:     os.Getenv("KEYCLOAK_ADMIN_CLIENT_ID"),
+		KeycloakAdminClientSecret: os.Getenv("KEYCLOAK_ADMIN_CLIENT_SECRET"),
+		KeycloakACRFortes:         parseLista(valorOu("KEYCLOAK_ACR_FORTE", "mfa,gold,2")),
+		OrigensCORS:               parseCORS(os.Getenv("CORS_ORIGINS"), ambiente),
+		LimiteTaxaIP:              inteiroOu("RATE_LIMIT_IP", 100),
+		JanelaTaxa:                time.Minute,
 	}
 
 	erro := &erroConfig{}
@@ -62,6 +68,12 @@ func Carregar() (Config, error) {
 	}
 	if cfg.KeycloakIssuer == "" {
 		erro.faltam = append(erro.faltam, "KEYCLOAK_ISSUER")
+	}
+	if cfg.KeycloakAdminClientID == "" {
+		erro.faltam = append(erro.faltam, "KEYCLOAK_ADMIN_CLIENT_ID")
+	}
+	if cfg.KeycloakAdminClientSecret == "" {
+		erro.faltam = append(erro.faltam, "KEYCLOAK_ADMIN_CLIENT_SECRET")
 	}
 	if !ambienteValido(cfg.Ambiente) {
 		erro.faltam = append(erro.faltam, fmt.Sprintf("APP_ENV (valor inválido: %q)", cfg.Ambiente))
@@ -113,6 +125,18 @@ func parseCORS(raw, ambiente string) []string {
 		}
 	}
 	return origens
+}
+
+// parseLista interpreta uma lista separada por vírgulas, ignorando vazios.
+func parseLista(raw string) []string {
+	partes := strings.Split(raw, ",")
+	out := make([]string, 0, len(partes))
+	for _, p := range partes {
+		if v := strings.TrimSpace(p); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // inteiroOu lê um inteiro do ambiente; devolve omissao se ausente ou inválido.
