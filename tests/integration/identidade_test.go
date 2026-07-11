@@ -72,7 +72,7 @@ func TestIdentidade_FluxoAutenticadoEndToEnd(t *testing.T) {
 	issuer := issuerTeste()
 	token := obterTokenPassword(t, issuer)
 
-	verificador, err := keycloak.Novo(ctx, issuer, "sgc-api")
+	verificador, err := keycloak.Novo(ctx, issuer, "sgc-api", []string{"mfa", "gold", "2"})
 	if err != nil {
 		t.Fatalf("inicializar Keycloak: %v", err)
 	}
