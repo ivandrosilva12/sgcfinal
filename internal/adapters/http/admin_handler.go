@@ -34,6 +34,10 @@ type (
 	ServicoDefinirActivo interface {
 		Executar(ctx context.Context, actor, id string, activo bool) error
 	}
+	// ServicoCriarUtilizador cria um utilizador.
+	ServicoCriarUtilizador interface {
+		Executar(ctx context.Context, actor string, entrada appident.CriacaoUtilizador) (appident.UtilizadorCriado, error)
+	}
 )
 
 // AdministracaoHandler expõe os endpoints de gestão de utilizadores/papéis.
@@ -43,6 +47,7 @@ type AdministracaoHandler struct {
 	atribuir ServicoAtribuirPapel
 	revogar  ServicoRevogarPapel
 	activar  ServicoDefinirActivo
+	criar    ServicoCriarUtilizador
 }
 
 // NovoAdministracaoHandler constrói o handler com os casos de uso.
@@ -52,8 +57,9 @@ func NovoAdministracaoHandler(
 	atribuir ServicoAtribuirPapel,
 	revogar ServicoRevogarPapel,
 	activar ServicoDefinirActivo,
+	criar ServicoCriarUtilizador,
 ) *AdministracaoHandler {
-	return &AdministracaoHandler{listar: listar, obter: obter, atribuir: atribuir, revogar: revogar, activar: activar}
+	return &AdministracaoHandler{listar: listar, obter: obter, atribuir: atribuir, revogar: revogar, activar: activar, criar: criar}
 }
 
 // RegistarAdministracao regista as rotas sob /api/v1/identidade/utilizadores. Os
@@ -67,6 +73,7 @@ func RegistarAdministracao(r gin.IRouter, h *AdministracaoHandler, protecao ...g
 	escrita := RBAC(dominio.PapelAdmin)
 
 	g.GET("", leitura, h.listarUtilizadores)
+	g.POST("", escrita, h.criarUtilizador)
 	g.GET("/:id", leitura, h.obterUtilizador)
 	g.POST("/:id/papeis", escrita, h.atribuirPapel)
 	g.DELETE("/:id/papeis/:papel", escrita, h.revogarPapel)
@@ -134,4 +141,32 @@ func (h *AdministracaoHandler) definirActivo(c *gin.Context) {
 		return
 	}
 	c.Status(nethttp.StatusNoContent)
+}
+
+type corpoCriacao struct {
+	Username string   `json:"username"`
+	Nome     string   `json:"nome"`
+	Email    string   `json:"email"`
+	Papeis   []string `json:"papeis"`
+}
+
+func (h *AdministracaoHandler) criarUtilizador(c *gin.Context) {
+	var corpo corpoCriacao
+	if err := c.ShouldBindJSON(&corpo); err != nil || corpo.Username == "" {
+		responderErro(c, erros.Novo(erros.CategoriaValidacao, i18n.T(i18n.MsgCriacaoInvalida)))
+		return
+	}
+	papeis := make([]dominio.Papel, 0, len(corpo.Papeis))
+	for _, p := range corpo.Papeis {
+		papeis = append(papeis, dominio.Papel(p))
+	}
+	actor, _ := SessaoDe(c)
+	out, err := h.criar.Executar(c.Request.Context(), actor.Sujeito, appident.CriacaoUtilizador{
+		Username: corpo.Username, Nome: corpo.Nome, Email: corpo.Email, Papeis: papeis,
+	})
+	if err != nil {
+		responderErro(c, err)
+		return
+	}
+	c.JSON(nethttp.StatusCreated, out)
 }

@@ -97,6 +97,15 @@ func (f *fakeActivo) Executar(_ context.Context, _, _ string, activo bool) error
 	return f.err
 }
 
+type fakeCriar struct {
+	out appident.UtilizadorCriado
+	err error
+}
+
+func (f fakeCriar) Executar(context.Context, string, appident.CriacaoUtilizador) (appident.UtilizadorCriado, error) {
+	return f.out, f.err
+}
+
 func routerAdmin(sessao dominio.Sessao, atribuir *fakePapel) *gin.Engine {
 	r := novoRouter()
 	r.Use(adhttp.RequestID())
@@ -106,6 +115,7 @@ func routerAdmin(sessao dominio.Sessao, atribuir *fakePapel) *gin.Engine {
 		atribuir,
 		&fakePapel{},
 		&fakeActivo{},
+		fakeCriar{out: appident.UtilizadorCriado{ID: "novo-id", SenhaTemporaria: "senha-temp"}},
 	)
 	adhttp.RegistarAdministracao(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
 	return r
@@ -178,5 +188,34 @@ func TestAdmin_DesactivarUtilizador_204(t *testing.T) {
 	w := pedidoCorpo(r, "PATCH", "/api/v1/identidade/utilizadores/u1", `{"activo":false}`)
 	if w.Code != nethttp.StatusNoContent {
 		t.Fatalf("esperava 204, obtive %d (%s)", w.Code, w.Body.String())
+	}
+}
+
+func TestAdmin_CriarUtilizador_AdminOk_201(t *testing.T) {
+	r := routerAdmin(dominio.Sessao{Sujeito: "actor-1", Papeis: []dominio.Papel{dominio.PapelAdmin}}, &fakePapel{})
+	w := pedidoCorpo(r, "POST", "/api/v1/identidade/utilizadores",
+		`{"username":"ana.silva","nome":"Ana Silva","email":"ana@sgc.ao","papeis":["Medico"]}`)
+	if w.Code != nethttp.StatusCreated {
+		t.Fatalf("esperava 201, obtive %d (%s)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"senha_temporaria":"senha-temp"`) {
+		t.Fatalf("corpo inesperado: %s", w.Body.String())
+	}
+}
+
+func TestAdmin_CriarUtilizador_MedicoProibido_403(t *testing.T) {
+	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}, &fakePapel{})
+	w := pedidoCorpo(r, "POST", "/api/v1/identidade/utilizadores",
+		`{"username":"x","nome":"X","email":"x@sgc.ao"}`)
+	if w.Code != nethttp.StatusForbidden {
+		t.Fatalf("Medico não deve criar; obtive %d", w.Code)
+	}
+}
+
+func TestAdmin_CriarUtilizador_CorpoInvalido_400(t *testing.T) {
+	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAdmin}}, &fakePapel{})
+	w := pedidoCorpo(r, "POST", "/api/v1/identidade/utilizadores", `{"nome":"sem username"}`)
+	if w.Code != nethttp.StatusBadRequest {
+		t.Fatalf("esperava 400 (username em falta); obtive %d", w.Code)
 	}
 }
