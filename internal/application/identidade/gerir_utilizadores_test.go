@@ -53,6 +53,9 @@ func (f *fakeAdmin) DefinirActivo(_ context.Context, id string, activo bool) err
 	f.activo[id] = activo
 	return nil
 }
+func (f *fakeAdmin) CriarUtilizador(context.Context, appident.DadosNovoUtilizador) (string, error) {
+	return "", f.err
+}
 
 // --- Testes ---
 

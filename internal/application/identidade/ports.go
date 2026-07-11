@@ -40,6 +40,32 @@ type ResumoUtilizador struct {
 // DetalheUtilizador é o detalhe de um utilizador (mesma forma que o resumo).
 type DetalheUtilizador = ResumoUtilizador
 
+// CriacaoUtilizador é a entrada do caso de uso de criação (dados do pedido).
+type CriacaoUtilizador struct {
+	Username string
+	Nome     string
+	Email    string
+	Papeis   []dominio.Papel
+}
+
+// DadosNovoUtilizador são os dados enviados ao adaptador para criar o utilizador
+// no Keycloak (já enriquecidos com a senha temporária e a política de OTP).
+type DadosNovoUtilizador struct {
+	Username        string
+	Nome            string
+	Email           string
+	SenhaTemporaria string
+	Papeis          []dominio.Papel
+	ConfigurarOTP   bool
+}
+
+// UtilizadorCriado é a saída do caso de uso: id do Keycloak e senha temporária
+// (devolvida uma única vez).
+type UtilizadorCriado struct {
+	ID              string `json:"id"`
+	SenhaTemporaria string `json:"senha_temporaria"`
+}
+
 // AdminIdentidade é a porta de saída para a gestão de utilizadores/papéis no
 // Keycloak (fonte de verdade). Implementada por adapters/keycloak.AdminCliente.
 type AdminIdentidade interface {
@@ -48,4 +74,5 @@ type AdminIdentidade interface {
 	AtribuirPapel(ctx context.Context, id string, papel dominio.Papel) error
 	RevogarPapel(ctx context.Context, id string, papel dominio.Papel) error
 	DefinirActivo(ctx context.Context, id string, activo bool) error
+	CriarUtilizador(ctx context.Context, dados DadosNovoUtilizador) (id string, err error)
 }
