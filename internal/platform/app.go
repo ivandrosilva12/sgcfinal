@@ -65,7 +65,8 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 	casoAtribuir := appident.NovoCasoAtribuirPapel(adminKC, repoAuditoria)
 	casoRevogar := appident.NovoCasoRevogarPapel(adminKC, repoAuditoria)
 	casoActivo := appident.NovoCasoDefinirActivo(adminKC, repoAuditoria)
-	handlerAdmin := adhttp.NovoAdministracaoHandler(casoListar, casoObter, casoAtribuir, casoRevogar, casoActivo)
+	casoCriar := appident.NovoCasoCriarUtilizador(adminKC, repoAuditoria)
+	handlerAdmin := adhttp.NovoAdministracaoHandler(casoListar, casoObter, casoAtribuir, casoRevogar, casoActivo, casoCriar)
 
 	// Middlewares transversais e do grupo protegido.
 	segurancaMW := adhttp.SegurancaHTTP(cfg.OrigensCORS, cfg.EmProducao())
