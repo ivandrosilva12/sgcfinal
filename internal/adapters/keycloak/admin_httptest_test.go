@@ -311,3 +311,82 @@ func TestAdminCliente_ObterUtilizador_NaoEncontrado(t *testing.T) {
 		t.Fatalf("categoria do erro = %v; quer CategoriaNaoEncontrado", cat)
 	}
 }
+
+func TestCriarUtilizador_201ComLocation(t *testing.T) {
+	var criouComRequiredAction bool
+	var atribuiuPapel bool
+	srv := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		switch {
+		case r.Method == nethttp.MethodPost && strings.HasSuffix(r.URL.Path, "/protocol/openid-connect/token"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 300})
+		case r.Method == nethttp.MethodPost && strings.HasSuffix(r.URL.Path, "/admin/realms/sgc/users"):
+			var corpo map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&corpo)
+			if ra, ok := corpo["requiredActions"].([]any); ok && len(ra) > 0 {
+				criouComRequiredAction = true
+			}
+			w.Header().Set("Location", srvBase(r)+"/admin/realms/sgc/users/novo-id-123")
+			w.WriteHeader(nethttp.StatusCreated)
+		case r.Method == nethttp.MethodGet && strings.HasSuffix(r.URL.Path, "/roles/Admin"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "role-admin", "name": "Admin"})
+		case r.Method == nethttp.MethodPost && strings.HasSuffix(r.URL.Path, "/role-mappings/realm"):
+			atribuiuPapel = true
+			w.WriteHeader(nethttp.StatusNoContent)
+		default:
+			w.WriteHeader(nethttp.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	admin, err := NovoAdmin(srv.URL+"/realms/sgc", "sgc-admin", "segredo")
+	if err != nil {
+		t.Fatalf("NovoAdmin: %v", err)
+	}
+	id, err := admin.CriarUtilizador(context.Background(), appident.DadosNovoUtilizador{
+		Username: "chefe", Nome: "Chefe Geral", Email: "chefe@sgc.ao",
+		SenhaTemporaria: "temp123", Papeis: []dominio.Papel{dominio.PapelAdmin}, ConfigurarOTP: true,
+	})
+	if err != nil {
+		t.Fatalf("CriarUtilizador: %v", err)
+	}
+	if id != "novo-id-123" {
+		t.Fatalf("id extraído do Location errado: %q", id)
+	}
+	if !criouComRequiredAction {
+		t.Fatal("esperava requiredActions no corpo (ConfigurarOTP=true)")
+	}
+	if !atribuiuPapel {
+		t.Fatal("esperava atribuição de papel após criação")
+	}
+}
+
+func TestCriarUtilizador_409Conflito(t *testing.T) {
+	srv := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/protocol/openid-connect/token"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 300})
+		case r.Method == nethttp.MethodPost && strings.HasSuffix(r.URL.Path, "/admin/realms/sgc/users"):
+			w.WriteHeader(nethttp.StatusConflict)
+		default:
+			w.WriteHeader(nethttp.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	admin, _ := NovoAdmin(srv.URL+"/realms/sgc", "sgc-admin", "segredo")
+	_, err := admin.CriarUtilizador(context.Background(), appident.DadosNovoUtilizador{
+		Username: "dup", Nome: "Dup", Email: "dup@sgc.ao", SenhaTemporaria: "t",
+	})
+	if erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Fatalf("esperava conflito (409), obtive %v", err)
+	}
+}
+
+// srvBase reconstrói o esquema+host do pedido para compor um Location absoluto.
+func srvBase(r *nethttp.Request) string {
+	esquema := "http"
+	if r.TLS != nil {
+		esquema = "https"
+	}
+	return esquema + "://" + r.Host
+}

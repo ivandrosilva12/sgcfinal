@@ -269,5 +269,85 @@ func (a *AdminCliente) DefinirActivo(ctx context.Context, id string, activo bool
 	return a.pedir(ctx, nethttp.MethodPut, "/users/"+url.PathEscape(id), map[string]any{"enabled": activo}, nil)
 }
 
+// CriarUtilizador cria um utilizador no Keycloak com uma credencial de password
+// temporária e, se pedido, a required action CONFIGURE_TOTP; devolve o id lido do
+// cabeçalho Location. Depois atribui os papéis indicados. Mapeia 409 (já existe)
+// para CategoriaConflito.
+func (a *AdminCliente) CriarUtilizador(ctx context.Context, dados appident.DadosNovoUtilizador) (string, error) {
+	tok, err := a.tokenServico(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	primeiro, ultimo := repartirNome(dados.Nome)
+	rep := map[string]any{
+		"username":      dados.Username,
+		"firstName":     primeiro,
+		"lastName":      ultimo,
+		"email":         dados.Email,
+		"enabled":       true,
+		"emailVerified": true,
+		"credentials": []map[string]any{
+			{"type": "password", "value": dados.SenhaTemporaria, "temporary": true},
+		},
+	}
+	if dados.ConfigurarOTP {
+		rep["requiredActions"] = []string{"CONFIGURE_TOTP"}
+	}
+
+	corpo, err := json.Marshal(rep)
+	if err != nil {
+		return "", err
+	}
+	// #nosec G107 -- URL deriva de KEYCLOAK_ISSUER (config de confiança).
+	req, err := nethttp.NewRequestWithContext(ctx, nethttp.MethodPost,
+		a.base+"/admin/realms/"+a.realm+"/users", bytes.NewReader(corpo))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := a.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("keycloak admin criar: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == nethttp.StatusConflict {
+		return "", erros.Novo(erros.CategoriaConflito, i18n.T(i18n.MsgUtilizadorJaExiste))
+	}
+	if resp.StatusCode != nethttp.StatusCreated {
+		return "", fmt.Errorf("keycloak admin criar devolveu %d", resp.StatusCode)
+	}
+	id := idDoLocation(resp.Header.Get("Location"))
+	if id == "" {
+		return "", fmt.Errorf("keycloak admin criar: Location sem id")
+	}
+
+	for _, p := range dados.Papeis {
+		if err := a.AtribuirPapel(ctx, id, p); err != nil {
+			return "", err
+		}
+	}
+	return id, nil
+}
+
+// repartirNome divide "Ana Maria Silva" em ("Ana", "Maria Silva").
+func repartirNome(nome string) (primeiro, ultimo string) {
+	nome = strings.TrimSpace(nome)
+	if i := strings.IndexByte(nome, ' '); i >= 0 {
+		return nome[:i], strings.TrimSpace(nome[i+1:])
+	}
+	return nome, ""
+}
+
+// idDoLocation extrai o último segmento de um URL de Location (.../users/{id}).
+func idDoLocation(loc string) string {
+	loc = strings.TrimRight(loc, "/")
+	if i := strings.LastIndexByte(loc, '/'); i >= 0 {
+		return loc[i+1:]
+	}
+	return ""
+}
+
 // Garantia de conformidade com a porta.
 var _ appident.AdminIdentidade = (*AdminCliente)(nil)
