@@ -1,9 +1,22 @@
 # SPRINT ACTUAL
 
 - **Marco**: M1 — Fundações
-- **Sprint**: 2 (BC Identidade — autenticação, RBAC, auditoria) — **entregue**
+- **Sprint**: 3 (BC Identidade — MFA + gestão administrativa) — **entregue**
 - **Objectivo**: fatia vertical do BC Identidade — autenticação Keycloak (JWT RS256),
   RBAC pelos 11 papéis, auditoria de acesso e `GET /api/v1/identidade/perfil`.
+
+## Sprint 3 — entregue
+
+- [x] Imposição de MFA para papéis sensíveis (Director, Admin, DPO, Auditor):
+      `Sessao.AutenticacaoForte` derivada de `acr`/`amr`, middleware
+      `MFAObrigatoria` → 403 (`type: /erros/mfa-obrigatorio`).
+- [x] Gestão administrativa via Admin REST API do Keycloak: listar, ver,
+      atribuir/revogar papel, activar/desactivar (adaptador HTTP puro).
+- [x] RBAC por rota: escrita só Admin; leitura Admin/Auditor/DPO. Auditoria de
+      todas as escritas.
+- [x] Realm: client `sgc-admin` (service account) + utilizador `admin.teste`.
+- [x] Smoke tests e2e (MFA negativo + fluxo de atribuição via Keycloak).
+- [x] ADR-022.
 
 ## Sprint 2 — entregue
 
@@ -46,7 +59,7 @@
 
 ## Critérios de saída M1
 
-- [x] Identidade Keycloak operacional (login, 11 papéis per DDM-001). — Sprint 2 (MFA em Sprint 3)
+- [x] Identidade Keycloak operacional (login, 11 papéis, MFA para papéis sensíveis). — Sprint 2/3
 - [x] BC Identidade testado (domínio 98% ≥85%). — Sprint 2 (fatia vertical completa)
 - [x] Audit log append-only funcional (retenção 10 anos). — trigger imutável + teste de integração
 - [ ] CI/CD: build + test + deploy staging < 15 min. — build+test ok; deploy staging por configurar
