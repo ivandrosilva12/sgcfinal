@@ -109,6 +109,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       KEYCLOAK_ISSUER: http://keycloak:8080/realms/sgc
       KEYCLOAK_AUDIENCE: sgc-api
+      KEYCLOAK_ADMIN_CLIENT_ID: sgc-admin
+      KEYCLOAK_ADMIN_CLIENT_SECRET: segredo-admin
     ports:
       - "8080:8080"
     depends_on:

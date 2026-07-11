@@ -34,6 +34,17 @@
       "attributes": {
         "post.logout.redirect.uris": "+"
       }
+    },
+    {
+      "clientId": "sgc-admin",
+      "name": "SGC Admin (service account)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "segredo-admin",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true
     }
   ],
   "users": [
@@ -48,6 +59,26 @@
         { "type": "password", "value": "teste", "temporary": false }
       ],
       "realmRoles": ["Medico"]
+    },
+    {
+      "username": "service-account-sgc-admin",
+      "enabled": true,
+      "serviceAccountClientId": "sgc-admin",
+      "clientRoles": {
+        "realm-management": ["view-users", "query-users", "manage-users"]
+      }
+    },
+    {
+      "username": "admin.teste",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "admin.teste@sgc.ao",
+      "firstName": "Admin",
+      "lastName": "de Teste",
+      "credentials": [
+        { "type": "password", "value": "teste", "temporary": false }
+      ],
+      "realmRoles": ["Admin"]
     }
   ]
 }
