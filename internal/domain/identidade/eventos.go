@@ -110,6 +110,57 @@ func (e UtilizadorCriado) NomeEvento() string { return "identidade.utilizador.cr
 // OcorridoEm implementa evento.EventoDominio.
 func (e UtilizadorCriado) OcorridoEm() time.Time { return e.Em }
 
+// PasswordReposta é emitido quando um administrador repõe a password.
+type PasswordReposta struct {
+	Actor string
+	Alvo  string
+	Em    time.Time
+}
+
+// NomeEvento implementa evento.EventoDominio.
+func (e PasswordReposta) NomeEvento() string { return "identidade.password.reposta" }
+
+// OcorridoEm implementa evento.EventoDominio.
+func (e PasswordReposta) OcorridoEm() time.Time { return e.Em }
+
+// OtpReposto é emitido quando um administrador repõe o OTP.
+type OtpReposto struct {
+	Actor string
+	Alvo  string
+	Em    time.Time
+}
+
+// NomeEvento implementa evento.EventoDominio.
+func (e OtpReposto) NomeEvento() string { return "identidade.otp.reposto" }
+
+// OcorridoEm implementa evento.EventoDominio.
+func (e OtpReposto) OcorridoEm() time.Time { return e.Em }
+
+// SessoesRevogadas é emitido quando as sessões de um utilizador são revogadas.
+type SessoesRevogadas struct {
+	Actor string
+	Alvo  string
+	Em    time.Time
+}
+
+// NomeEvento implementa evento.EventoDominio.
+func (e SessoesRevogadas) NomeEvento() string { return "identidade.sessoes.revogadas" }
+
+// OcorridoEm implementa evento.EventoDominio.
+func (e SessoesRevogadas) OcorridoEm() time.Time { return e.Em }
+
+// PerfilActualizado é emitido quando um utilizador actualiza o seu perfil.
+type PerfilActualizado struct {
+	Sujeito string
+	Em      time.Time
+}
+
+// NomeEvento implementa evento.EventoDominio.
+func (e PerfilActualizado) NomeEvento() string { return "identidade.perfil.actualizado" }
+
+// OcorridoEm implementa evento.EventoDominio.
+func (e PerfilActualizado) OcorridoEm() time.Time { return e.Em }
+
 // Garantias de conformidade com a interface de evento de domínio.
 var (
 	_ evento.EventoDominio = UtilizadorAutenticado{}
@@ -120,4 +171,8 @@ var (
 	_ evento.EventoDominio = UtilizadorActivado{}
 	_ evento.EventoDominio = UtilizadorDesactivado{}
 	_ evento.EventoDominio = UtilizadorCriado{}
+	_ evento.EventoDominio = PasswordReposta{}
+	_ evento.EventoDominio = OtpReposto{}
+	_ evento.EventoDominio = SessoesRevogadas{}
+	_ evento.EventoDominio = PerfilActualizado{}
 )

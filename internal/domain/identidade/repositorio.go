@@ -14,4 +14,9 @@ type RepositorioUtilizadores interface {
 	// sincroniza a sua lista de papéis, de forma atómica. Suporta o JIT
 	// provisioning no primeiro login.
 	GuardarComPapeis(ctx context.Context, u *Utilizador) error
+
+	// AtualizarContacto persiste os campos de perfil local (telefone/BI) do
+	// utilizador com o keycloak_id indicado. Devolve NaoEncontrado se a linha
+	// não existir. Strings vazias limpam o campo.
+	AtualizarContacto(ctx context.Context, keycloakID, telefone, bi string) error
 }

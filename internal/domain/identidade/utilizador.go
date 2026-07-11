@@ -85,3 +85,28 @@ func (u *Utilizador) TemAlgumPapel(permitidos ...Papel) bool {
 	}
 	return false
 }
+
+// AtualizarContacto valida e define o telefone e o BI (campos de perfil local).
+// Uma string vazia limpa o campo correspondente. Devolve um ErroDominio de
+// categoria Validação se algum valor for inválido. Não altera nome/email/papéis.
+func (u *Utilizador) AtualizarContacto(telefone, bi string) error {
+	tel := ""
+	if s := strings.TrimSpace(telefone); s != "" {
+		t, err := identity.NovoTelefone(s)
+		if err != nil {
+			return erros.Novo(erros.CategoriaValidacao, "telefone inválido")
+		}
+		tel = t.String()
+	}
+	doc := ""
+	if s := strings.TrimSpace(bi); s != "" {
+		b, err := identity.NovoBI(s)
+		if err != nil {
+			return erros.Novo(erros.CategoriaValidacao, "bilhete de identidade inválido")
+		}
+		doc = b.String()
+	}
+	u.Telefone = tel
+	u.BI = doc
+	return nil
+}
