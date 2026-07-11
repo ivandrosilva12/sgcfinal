@@ -105,5 +105,6 @@ confirmação humana**. Nunca improvisar decisão arquitectural ou de conformida
 
 **Convenções-fonte**: `..\Software Gestão Clínicas\Prompts\CLAUDE.md` (blueprint completo,
 80 documentos + 19 ADRs). ADRs registadas: `adrs/ADR-020-fundacao-m1.md`,
-`adrs/ADR-021-identidade-oidc-rbac.md`, `adrs/ADR-022-mfa-gestao-admin.md`.
-Próximo ADR: **ADR-023**.
+`adrs/ADR-021-identidade-oidc-rbac.md`, `adrs/ADR-022-mfa-gestao-admin.md`,
+`adrs/ADR-023-mfa-positivo-criar-utilizadores.md`.
+Próximo ADR: **ADR-024**.

@@ -1,9 +1,18 @@
 # SPRINT ACTUAL
 
 - **Marco**: M1 — Fundações
-- **Sprint**: 3 (BC Identidade — MFA + gestão administrativa) — **entregue**
+- **Sprint**: 4 (BC Identidade — MFA positivo + criação de utilizadores) — **entregue**
 - **Objectivo**: fatia vertical do BC Identidade — autenticação Keycloak (JWT RS256),
   RBAC pelos 11 papéis, auditoria de acesso e `GET /api/v1/identidade/perfil`.
+
+## Sprint 4 — entregue
+
+- [x] Caminho positivo de MFA validado e2e: `director.teste` com OTP → autenticação
+      forte reconhecida (acesso concedido); config de MFA fixada no realm.
+- [x] Criação administrativa de utilizadores: `POST /api/v1/identidade/utilizadores`
+      (RBAC Admin), senha temporária gerada (devolvida 1x), `CONFIGURE_TOTP` em papéis
+      sensíveis, 409 em duplicados. Auditoria `identidade.utilizador.criado`.
+- [x] ADR-023.
 
 ## Sprint 3 — entregue
 
@@ -59,7 +68,7 @@
 
 ## Critérios de saída M1
 
-- [x] Identidade Keycloak operacional (login, 11 papéis, MFA para papéis sensíveis). — Sprint 2/3
+- [x] Identidade Keycloak operacional (login, 11 papéis, MFA para papéis sensíveis — positivo e negativo). — Sprint 2/3/4
 - [x] BC Identidade testado (domínio 98% ≥85%). — Sprint 2 (fatia vertical completa)
 - [x] Audit log append-only funcional (retenção 10 anos). — trigger imutável + teste de integração
 - [ ] CI/CD: build + test + deploy staging < 15 min. — build+test ok; deploy staging por configurar
