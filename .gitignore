@@ -1,0 +1,42 @@
+# Binários e builds
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Cobertura
+coverage.out
+coverage.html
+*.cover
+
+# Ambiente / segredos
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Dependências vendored (usamos go modules)
+/vendor/
+
+# Ferramentas / cache
+/.tools/
+/tmp/
+*.log
+
+# IDEs / SO
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Dados locais de infra (docker volumes montados no repo)
+/docker/data/
+/.data/
