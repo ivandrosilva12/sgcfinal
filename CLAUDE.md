@@ -78,7 +78,8 @@ seeds/  tests/  docs/  adrs/  docker/
 
 **M1 — Fundações** (ver `docs/PLANO-M1-Fundacao-Identidade.md` e `SPRINT.md`).
 Entrega: esqueleto arquitectural + infra (Docker Compose) + fatia vertical do BC
-Identidade (Keycloak OIDC + JWT RS256 + RBAC 8 papéis) + audit log + observabilidade.
+Identidade (Keycloak OIDC + JWT RS256 + RBAC 11 papéis — DDM-001, ver
+`docs/ERRATA-001-papeis.md`) + audit log + observabilidade.
 
 ## 7. Antipadrões a Rejeitar
 
@@ -103,4 +104,5 @@ confirmação humana**. Nunca improvisar decisão arquitectural ou de conformida
 ---
 
 **Convenções-fonte**: `..\Software Gestão Clínicas\Prompts\CLAUDE.md` (blueprint completo,
-80 documentos + 19 ADRs). Próximo ADR: **ADR-020**.
+80 documentos + 19 ADRs). ADR-020 registada (`adrs/ADR-020-fundacao-m1.md`).
+Próximo ADR: **ADR-021**.

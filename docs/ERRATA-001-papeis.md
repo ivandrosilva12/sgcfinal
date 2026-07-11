@@ -1,7 +1,7 @@
 # ERRATA-001 — Divergência no número de papéis (RBAC)
 
 - **Data**: 2026-07-11
-- **Estado**: aberta (aguarda validação do Tech Lead)
+- **Estado**: **resolvida** (validada; fonte de verdade = DDM-001, 11 papéis)
 - **Âmbito**: BC Identidade — enum `Papel` e seed `papeis`.
 
 ## Inconsistência detectada
@@ -24,10 +24,13 @@ aparecem com esse nome no DDM-001 (possivelmente mapeados para `Administrativo`)
 reflecte directamente e é mais recente. O enum `internal/domain/identidade/papel.go` e o
 seed `seeds/papeis.sql` alinham-se pelos 11 valores.
 
-## Acção pendente
+## Resolução (2026-07-11)
 
-- [ ] Validação humana (Tech Lead) da lista definitiva e do mapeamento
-      `Financeiro`/`Recepção` ↔ `Administrativo`.
-- [ ] Actualizar `CLAUDE.md` e `m1-fundacoes.md` do blueprint após validação (ou reconciliar
-      via nova versão do DDM/ADR).
-- [ ] Registar decisão final em ADR se implicar alteração de escopo de permissões.
+Decisão validada em M1/Sprint 1. Fonte de verdade fixada nos **11 papéis do DDM-001**.
+`Financeiro` e `Recepção` da lista antiga mapeiam para `Administrativo`.
+
+- [x] Validação da lista definitiva e do mapeamento `Financeiro`/`Recepção` ↔ `Administrativo`.
+- [x] Reconciliar `CLAUDE.md` e `README.md` (deixavam de dizer "8 papéis" → "11 papéis").
+- [x] Registar a decisão em `adrs/ADR-020-fundacao-m1.md`.
+- [x] Aplicar nos artefactos: `seeds/papeis.sql`, `migrations/identidade/0003_papeis.sql`
+      e `docker/keycloak/realm-sgc.json` (11 papéis).

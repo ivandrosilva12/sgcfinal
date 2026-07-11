@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.25"
+
+jobs:
+  qualidade:
+    name: Qualidade (build, lint, testes, cobertura, segurança)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.5.0
+
+      - name: go-arch-lint (regra de dependência Clean Architecture)
+        run: |
+          go install github.com/fe3dback/go-arch-lint@latest
+          "$(go env GOPATH)/bin/go-arch-lint" check
+
+      - name: Testes (com -race)
+        run: go test -race ./...
+
+      - name: Gate de cobertura por camada (85/75/60)
+        run: bash scripts/cobertura.sh
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          "$(go env GOPATH)/bin/govulncheck" ./...
+
+      - name: gosec
+        # G704 (SSRF por taint) é excluído: a única chamada HTTP de saída é o
+        # healthcheck loopback (URL totalmente controlada pela config, não por
+        # entrada externa). Reavaliar quando forem adicionadas chamadas de saída
+        # reais (ex.: JWKS do Keycloak em Sprint 2).
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          "$(go env GOPATH)/bin/gosec" -exclude-generated -exclude=G704 -severity medium ./...
+
+  integracao:
+    name: Integração (migrations, audit imutável, seed 11 papéis)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sgc
+          POSTGRES_PASSWORD: sgc
+          POSTGRES_DB: sgc
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U sgc -d sgc"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Testes de integração
+        env:
+          DATABASE_URL: postgres://sgc:sgc@localhost:5432/sgc?sslmode=disable
+        run: go test -tags=integration ./tests/integration/...
+
+  seguranca-imagem:
+    name: Segurança da imagem (hadolint, build, Trivy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: hadolint (Dockerfile)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+
+      - name: Build da imagem
+        run: docker build -t sgc-api:ci .
+
+      - name: Trivy (scan de vulnerabilidades da imagem)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: sgc-api:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH

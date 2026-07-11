@@ -1,0 +1,103 @@
+version: 3
+
+# Regra de dependência da Clean Architecture: a dependência aponta sempre para
+# dentro. Domínio → Aplicação → Adaptadores → Plataforma.
+# O domínio não pode depender de nenhum vendor de infra (pgx, gin, http...).
+#
+# Cada camada refere-se a si própria em mayDependOn para permitir imports entre
+# subpacotes da mesma camada (ex.: Shared Kernel dentro do domínio).
+
+allow:
+  depOnAnyVendor: false
+
+vendors:
+  gin:
+    in: github.com/gin-gonic/gin
+  gin-contrib:
+    in: github.com/gin-contrib/**
+  pgx:
+    in: github.com/jackc/pgx/**
+  redis:
+    in: github.com/redis/go-redis/**
+  prometheus:
+    in: github.com/prometheus/client_golang/**
+  uuid:
+    in: github.com/google/uuid
+
+components:
+  domain:
+    in: internal/domain/**
+  application:
+    in: internal/application/**
+  adapters:
+    in: internal/adapters/**
+  platform:
+    in: internal/platform/**
+  migrations:
+    in: migrations
+  cmd:
+    in: cmd/**
+  tests:
+    in: tests/**
+
+deps:
+  # Camada 1 — Domínio: apenas si próprio; nenhum vendor de infra.
+  domain:
+    mayDependOn:
+      - domain
+
+  # Camada 2 — Aplicação: Domínio.
+  application:
+    mayDependOn:
+      - application
+      - domain
+
+  # Camada 3 — Adaptadores: Domínio + Aplicação (+ vendors de I/O).
+  adapters:
+    mayDependOn:
+      - adapters
+      - domain
+      - application
+    canUse:
+      - gin
+      - gin-contrib
+      - pgx
+      - redis
+      - uuid
+
+  # Camada 4 — Plataforma: composition root; pode importar tudo + migrations.
+  platform:
+    mayDependOn:
+      - platform
+      - domain
+      - application
+      - adapters
+      - migrations
+    canUse:
+      - gin
+      - pgx
+      - redis
+      - prometheus
+
+  # Entrypoint: só a Plataforma.
+  cmd:
+    mayDependOn:
+      - cmd
+      - platform
+
+  # Migrations: pacote de embed; refere-se a si próprio (testes internos).
+  migrations:
+    mayDependOn:
+      - migrations
+
+  # Testes de integração: podem tocar em todas as camadas + infra (pgx).
+  tests:
+    mayDependOn:
+      - tests
+      - domain
+      - application
+      - adapters
+      - platform
+      - migrations
+    canUse:
+      - pgx

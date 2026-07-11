@@ -51,9 +51,9 @@ Schemas por bounded context. Para M1, os schemas `identidade` e `auditoria`:
 `PapelFarmaceuticoSenior`, `PapelTecnicoLab`, `PapelPatologista`, `PapelDirector`,
 `PapelAdmin`, `PapelDPO`, `PapelAuditor`.
 
-> **Errata registada** (`docs/ERRATA-001-papeis.md`): o `m1-fundacoes.md`/`CLAUDE.md`
-> referem "8 papéis"; o `DDM-001` (modelo de dados, mais recente) define 11. **Fonte
-> adoptada: DDM-001 (11)**. A validar formalmente pelo Tech Lead antes de fixar o enum.
+> **Errata resolvida** (`docs/ERRATA-001-papeis.md`): o `m1-fundacoes.md`/`CLAUDE.md`
+> referiam "8 papéis"; o `DDM-001` (modelo de dados, mais recente) define 11. **Fonte
+> fixada: DDM-001 (11)**. Validada em Sprint 1; `CLAUDE.md`/`README.md` reconciliados.
 
 ---
 
@@ -77,6 +77,7 @@ internal/
       identity/bi.go telefone.go     # validadores Angola
       moeda/aoa.go  evento/evento.go  erros/erros.go
       auditoria/registo.go
+      i18n/i18n.go           # mensagens pt-AO (folha sem deps; ver ADR-020)
     identidade/              # ← BC REAL
       utilizador.go          # agregado raiz (rico)
       papel.go               # enum 11 papéis + regras RBAC (funções puras)
@@ -103,7 +104,9 @@ internal/
     config/config.go         # env com validação explícita (falha no arranque)
     log/log.go               # slog JSON estruturado
     observ/metrics.go        # registry Prometheus + middleware + /metrics
-    i18n/                    # ← NOVO (melhoria 8) mensagens pt-AO extraídas
+    # (i18n movido para o Shared Kernel: internal/domain/shared/i18n — folha
+    #  sem dependências, importável por qualquer camada sem violar a regra de
+    #  dependência. Ver ADR-020.)
     server/server.go         # http.Server + graceful shutdown (signal.NotifyContext)
     db/pool.go  db/migrate.go# pgxpool + runner forward-only (embed.FS)
     app.go                   # composition root

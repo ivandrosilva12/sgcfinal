@@ -1,0 +1,37 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  # Nota: 'misspell' está deliberadamente desactivado — o projecto é PT-PT
+  # angolano (CLAUDE.md §1) e o dicionário inglês do misspell gera falsos
+  # positivos em massa (ex.: "métricas", "dependências", "operacional").
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - gosec
+    - revive
+    - unconvert
+    - whitespace
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+  exclusions:
+    rules:
+      # Testes podem ser mais permissivos em segurança e complexidade.
+      - path: _test\.go
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/ivandrosilva12/sgcfinal

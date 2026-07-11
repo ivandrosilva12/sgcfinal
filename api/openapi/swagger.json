@@ -1,0 +1,68 @@
+{
+    "schemes": [
+        "http"
+    ],
+    "swagger": "2.0",
+    "info": {
+        "description": "API do Sistema de Gestão de Clínicas privadas em Angola (Marco M1 — Fundações).",
+        "title": "SGC Angola — API",
+        "contact": {
+            "name": "Equipa SGC Angola"
+        },
+        "version": "0.1.0-M1"
+    },
+    "basePath": "/",
+    "paths": {
+        "/healthz": {
+            "get": {
+                "description": "Indica que o processo está vivo. Não verifica dependências.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "saude"
+                ],
+                "summary": "Liveness probe",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/readyz": {
+            "get": {
+                "description": "Verifica PostgreSQL e Redis. Devolve 503 se alguma dependência falhar.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "saude"
+                ],
+                "summary": "Readiness probe",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

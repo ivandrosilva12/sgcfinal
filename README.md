@@ -16,7 +16,8 @@ Clean Architecture** (monólito modular), **PostgreSQL 16** (SQL puro via pgx v5
 - Infra local via Docker Compose (PostgreSQL, Keycloak, Redis, MinIO, Prometheus, Grafana).
 - Camada Plataforma: config validada, logging estruturado (slog), pool pgx, runner de
   migrations forward-only, servidor HTTP com shutdown gracioso, métricas Prometheus.
-- Fatia vertical do BC **Identidade**: Keycloak OIDC + middleware JWT RS256 + RBAC (8 papéis).
+- Fatia vertical do BC **Identidade**: Keycloak OIDC + middleware JWT RS256 + RBAC
+  (11 papéis, DDM-001 — ver `docs/ERRATA-001-papeis.md`).
 - Audit log append-only (trigger PG imutável, retenção 10 anos).
 
 ## Arquitectura (resumo)
@@ -48,9 +49,17 @@ e `GET /api/v1/identidade/perfil` com token `Bearer`.
 ## Qualidade
 
 ```bash
-make lint    # golangci-lint + go-arch-lint
-make test    # unit + aplicação (+ integração via Testcontainers se Docker disponível)
-make cover   # relatório de cobertura (domínio ≥85%, aplicação ≥75%, adapters ≥60%)
+make lint    # golangci-lint + go-arch-lint (regra de dependência Clean Architecture)
+make test    # unit + aplicação (-race)
+make cover   # gate de cobertura por camada (domínio ≥85%, aplicação ≥75%, adapters ≥60%)
+```
+
+Testes de integração (migrations, imutabilidade do audit log, seed dos 11 papéis) exigem um
+PostgreSQL e são separados por build tag:
+
+```bash
+DATABASE_URL=postgres://sgc:sgc@localhost:5432/sgc?sslmode=disable \
+  go test -tags=integration ./tests/integration/...
 ```
 
 ## Licença / Conformidade

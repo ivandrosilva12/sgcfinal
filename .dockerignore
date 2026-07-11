@@ -1,0 +1,13 @@
+.git
+.github
+bin/
+docker/data/
+*.md
+!README.md
+.env
+.env.*
+!.env.example
+coverage.out
+tests/
+docs/
+adrs/

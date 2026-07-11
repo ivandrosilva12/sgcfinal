@@ -1,0 +1,47 @@
+basePath: /
+info:
+  contact:
+    name: Equipa SGC Angola
+  description: API do Sistema de Gestão de Clínicas privadas em Angola (Marco M1 —
+    Fundações).
+  title: SGC Angola — API
+  version: 0.1.0-M1
+paths:
+  /healthz:
+    get:
+      description: Indica que o processo está vivo. Não verifica dependências.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Liveness probe
+      tags:
+      - saude
+  /readyz:
+    get:
+      description: Verifica PostgreSQL e Redis. Devolve 503 se alguma dependência
+        falhar.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Readiness probe
+      tags:
+      - saude
+schemes:
+- http
+swagger: "2.0"

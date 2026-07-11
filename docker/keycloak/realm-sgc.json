@@ -1,0 +1,53 @@
+{
+  "realm": "sgc",
+  "enabled": true,
+  "displayName": "SGC Angola",
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "roles": {
+    "realm": [
+      { "name": "Medico", "description": "Médico" },
+      { "name": "Enfermeiro", "description": "Enfermeiro" },
+      { "name": "Administrativo", "description": "Administrativo (recepção/financeiro)" },
+      { "name": "Farmaceutico", "description": "Farmacêutico" },
+      { "name": "FarmaceuticoSenior", "description": "Farmacêutico Sénior" },
+      { "name": "TecnicoLab", "description": "Técnico de Laboratório" },
+      { "name": "Patologista", "description": "Patologista" },
+      { "name": "Director", "description": "Director Clínico" },
+      { "name": "Admin", "description": "Administrador de Sistema" },
+      { "name": "DPO", "description": "Encarregado de Protecção de Dados" },
+      { "name": "Auditor", "description": "Auditor" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "sgc-api",
+      "name": "SGC API",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["*"],
+      "webOrigins": ["*"],
+      "attributes": {
+        "post.logout.redirect.uris": "+"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "medico.teste",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "medico.teste@sgc.ao",
+      "firstName": "Médico",
+      "lastName": "de Teste",
+      "credentials": [
+        { "type": "password", "value": "teste", "temporary": false }
+      ],
+      "realmRoles": ["Medico"]
+    }
+  ]
+}
