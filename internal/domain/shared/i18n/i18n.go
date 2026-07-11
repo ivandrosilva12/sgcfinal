@@ -25,6 +25,10 @@ const (
 	MsgErroInterno Chave = "erro.interno"
 	// MsgPedidoInvalido — validação de entrada falhou.
 	MsgPedidoInvalido Chave = "erro.pedido_invalido"
+	// MsgConflito — conflito de estado do recurso.
+	MsgConflito Chave = "erro.conflito"
+	// MsgDemasiadosPedidos — limite de taxa excedido (429).
+	MsgDemasiadosPedidos Chave = "erro.demasiados_pedidos"
 )
 
 // mensagensPtAO é o catálogo pt-AO.
@@ -36,6 +40,8 @@ var mensagensPtAO = map[Chave]string{
 	MsgRecursoNaoEncontrado: "Recurso não encontrado.",
 	MsgErroInterno:          "Ocorreu um erro interno. Tente novamente mais tarde.",
 	MsgPedidoInvalido:       "Pedido inválido.",
+	MsgConflito:             "Conflito com o estado actual do recurso.",
+	MsgDemasiadosPedidos:    "Demasiados pedidos. Tente novamente mais tarde.",
 }
 
 // T devolve a mensagem pt-AO para a chave. Se a chave for desconhecida, devolve

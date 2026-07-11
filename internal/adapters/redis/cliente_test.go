@@ -25,3 +25,14 @@ func TestLigar_URLValida(t *testing.T) {
 		t.Fatalf("Fechar não deve falhar: %v", err)
 	}
 }
+
+func TestLimitador_Construcao(t *testing.T) {
+	c, err := redis.Ligar("redis://localhost:6379/0")
+	if err != nil {
+		t.Fatalf("criar cliente: %v", err)
+	}
+	defer func() { _ = c.Fechar() }()
+	if c.Limitador() == nil {
+		t.Fatal("Limitador não deve ser nil")
+	}
+}

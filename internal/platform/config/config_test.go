@@ -17,6 +17,7 @@ func TestCarregar_FaltamObrigatorias(t *testing.T) {
 func TestCarregar_Valido(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/sgc")
 	t.Setenv("REDIS_URL", "redis://localhost:6379/0")
+	t.Setenv("KEYCLOAK_ISSUER", "http://localhost:8081/realms/sgc")
 	t.Setenv("APP_ENV", "dev")
 
 	cfg, err := config.Carregar()
@@ -28,6 +29,23 @@ func TestCarregar_Valido(t *testing.T) {
 	}
 	if cfg.EmProducao() {
 		t.Fatal("dev não deve ser produção")
+	}
+	// Em dev, sem CORS_ORIGINS, permite todas as origens.
+	if len(cfg.OrigensCORS) != 1 || cfg.OrigensCORS[0] != "*" {
+		t.Fatalf("CORS por omissão em dev errado: %v", cfg.OrigensCORS)
+	}
+	if cfg.LimiteTaxaIP != 100 {
+		t.Fatalf("limite de taxa por omissão errado: %d", cfg.LimiteTaxaIP)
+	}
+}
+
+func TestCarregar_FaltaKeycloakIssuer(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/sgc")
+	t.Setenv("REDIS_URL", "redis://localhost:6379/0")
+	t.Setenv("KEYCLOAK_ISSUER", "")
+	t.Setenv("APP_ENV", "dev")
+	if _, err := config.Carregar(); err == nil {
+		t.Fatal("esperava erro por faltar KEYCLOAK_ISSUER")
 	}
 }
 

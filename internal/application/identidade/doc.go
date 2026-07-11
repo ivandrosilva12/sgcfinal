@@ -1,7 +1,8 @@
 // Package identidade contém os casos de uso do Bounded Context Identidade
 // (Camada 2 — Aplicação). Importa apenas o Domínio.
 //
-// Placeholder de M1/Sprint 1: os casos de uso Autenticar/ObterPerfil e as
-// portas (KeycloakPort, AuditoriaPort, RepositorioUtilizadores) entram em
-// Sprint 2. Ver docs/PLANO-M1-Fundacao-Identidade.md.
+// Casos de uso: CasoAutenticar (valida o token OIDC, sem I/O) e CasoObterPerfil
+// (JIT provisioning + auditoria de acesso + leitura do perfil). As portas de
+// saída (VerificadorToken, Auditor) e a interface de repositório do domínio são
+// implementadas pela camada de adaptadores.
 package identidade

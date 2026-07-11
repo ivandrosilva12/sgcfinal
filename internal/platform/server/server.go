@@ -23,9 +23,24 @@ type Servidor struct {
 	timeout time.Duration
 }
 
-// Novo monta o router Gin (middleware, /metrics e endpoints de saúde) e devolve
-// um Servidor pronto a iniciar.
+// Novo monta o router Gin base (middleware, /metrics e endpoints de saúde) sem
+// rotas de negócio. Mantido para testes e usos simples.
 func Novo(cfg config.Config, logger *slog.Logger, metricas *observ.Metricas, verificacoes []adhttp.Verificacao) *Servidor {
+	return NovoComRotas(cfg, logger, metricas, verificacoes, nil, nil)
+}
+
+// NovoComRotas monta o router Gin com middleware base, middlewares globais
+// adicionais (ex.: cabeçalhos de segurança) e um registador de rotas de negócio
+// (ex.: BC Identidade). /metrics e os endpoints de saúde permanecem públicos e
+// fora do rate limiting (para não afectar o scrape do Prometheus).
+func NovoComRotas(
+	cfg config.Config,
+	logger *slog.Logger,
+	metricas *observ.Metricas,
+	verificacoes []adhttp.Verificacao,
+	globais []gin.HandlerFunc,
+	registar func(gin.IRouter),
+) *Servidor {
 	if cfg.EmProducao() {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -35,9 +50,16 @@ func Novo(cfg config.Config, logger *slog.Logger, metricas *observ.Metricas, ver
 	eng.Use(adhttp.RequestID())
 	eng.Use(adhttp.Logging(logger))
 	eng.Use(metricas.Middleware())
+	for _, m := range globais {
+		eng.Use(m)
+	}
 
 	eng.GET("/metrics", gin.WrapH(metricas.Handler()))
 	adhttp.RegistarHealth(eng, verificacoes)
+
+	if registar != nil {
+		registar(eng)
+	}
 
 	srv := &nethttp.Server{
 		Addr:              ":" + cfg.PortaHTTP,

@@ -1,10 +1,24 @@
 # SPRINT ACTUAL
 
 - **Marco**: M1 — Fundações
-- **Sprint**: 1 (Setup + esqueleto + infra) — **entregue**
-- **Objectivo**: repositório, CI/CD, layout de pacotes (5 BCs + Shared Kernel + 4 camadas
-  Clean), Docker Compose (PG16, Keycloak, Redis, MinIO, Prometheus, Grafana), camada
-  Plataforma e migrations forward-only funcionais.
+- **Sprint**: 2 (BC Identidade — autenticação, RBAC, auditoria) — **entregue**
+- **Objectivo**: fatia vertical do BC Identidade — autenticação Keycloak (JWT RS256),
+  RBAC pelos 11 papéis, auditoria de acesso e `GET /api/v1/identidade/perfil`.
+
+## Sprint 2 — entregue
+
+- [x] Domínio Identidade: agregado `Utilizador`, VO `Sessao`, enum `Papel` (11), regras
+      RBAC puras, eventos e interface de repositório (cobertura 98%).
+- [x] Aplicação: casos de uso `Autenticar` e `ObterPerfil` (JIT provisioning + auditoria),
+      com portas `VerificadorToken`/`Auditor` (cobertura 95%).
+- [x] Adaptadores: cliente Keycloak OIDC (go-oidc, JWKS/RS256, validação `aud`/`azp`),
+      middleware `Auth`/`RBAC`/`SegurancaHTTP`/`LimiteTaxa`, respostas RFC 7807 (pt-AO),
+      repos pgx (`utilizadores`/`utilizadores_papeis`/auditoria).
+- [x] `/readyz` passa a verificar também o Keycloak (JWKS/discovery).
+- [x] Migration `identidade/0004_seed_papeis.sql` (catálogo de 11 papéis para o JIT).
+- [x] Testes: unit+aplicação (`-race`), gate 85/75/60 OK; **integração end-to-end** com
+      Keycloak+PG reais (token real → JIT → auditoria).
+- [x] ADR-021 (verificação OIDC, RBAC, JIT). go-oidc registado no `go-arch-lint`.
 
 ## Sprint 1 — entregue
 
@@ -26,17 +40,14 @@
 
 ## Próximas sprints M1
 
-- **Sprint 2**: BC Identidade (domínio + casos de uso de login), integração Keycloak OIDC,
-  middleware de validação JWT, audit log (tabela + trigger imutável + retenção 10 anos).
-- **Sprint 3**: RBAC 11 papéis (Medico, Enfermeiro, Administrativo, Farmaceutico,
-  FarmaceuticoSenior, TecnicoLab, Patologista, Director, Admin, DPO, Auditor — alinhado
-  pelo DDM-001, ver `docs/ERRATA-001-papeis.md`), MFA para papéis sensíveis, smoke tests
-  e2e de login.
+- **Sprint 3**: MFA para papéis sensíveis (Director, Admin, DPO, Auditor), gestão
+  administrativa de utilizadores/papéis, endpoints protegidos por papel (aplicar `RBAC`),
+  smoke tests e2e de login. Ver `docs/ERRATA-001-papeis.md`.
 
 ## Critérios de saída M1
 
-- [ ] Identidade Keycloak operacional (login, 11 papéis per DDM-001, MFA). — Sprint 2/3
-- [ ] BC Identidade testado (domínio ≥85%). — Sprint 2 (fatia vertical de Identidade)
+- [x] Identidade Keycloak operacional (login, 11 papéis per DDM-001). — Sprint 2 (MFA em Sprint 3)
+- [x] BC Identidade testado (domínio 98% ≥85%). — Sprint 2 (fatia vertical completa)
 - [x] Audit log append-only funcional (retenção 10 anos). — trigger imutável + teste de integração
 - [ ] CI/CD: build + test + deploy staging < 15 min. — build+test ok; deploy staging por configurar
 - [x] `go-arch-lint` sem violações.

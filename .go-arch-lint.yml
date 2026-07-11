@@ -23,6 +23,8 @@ vendors:
     in: github.com/prometheus/client_golang/**
   uuid:
     in: github.com/google/uuid
+  oidc:
+    in: github.com/coreos/go-oidc/**
 
 components:
   domain:
@@ -64,6 +66,7 @@ deps:
       - pgx
       - redis
       - uuid
+      - oidc
 
   # Camada 4 — Plataforma: composition root; pode importar tudo + migrations.
   platform:
