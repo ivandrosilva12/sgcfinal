@@ -43,9 +43,14 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 	}
 	defer redisCli.Fechar() //nolint:errcheck // best-effort no encerramento
 
-	verificador, err := keycloak.Novo(ctx, cfg.KeycloakIssuer, cfg.KeycloakAudNome)
+	verificador, err := keycloak.Novo(ctx, cfg.KeycloakIssuer, cfg.KeycloakAudNome, cfg.KeycloakACRFortes)
 	if err != nil {
 		return fmt.Errorf("inicializar Keycloak: %w", err)
+	}
+
+	adminKC, err := keycloak.NovoAdmin(cfg.KeycloakIssuer, cfg.KeycloakAdminClientID, cfg.KeycloakAdminClientSecret)
+	if err != nil {
+		return fmt.Errorf("inicializar Keycloak admin: %w", err)
 	}
 
 	// BC Identidade: repositórios, casos de uso e handler.
@@ -55,10 +60,18 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 	casoPerfil := appident.NovoCasoObterPerfil(repoUtilizadores, repoAuditoria)
 	handlerIdentidade := adhttp.NovoIdentidadeHandler(casoPerfil)
 
+	casoListar := appident.NovoCasoListarUtilizadores(adminKC)
+	casoObter := appident.NovoCasoObterUtilizador(adminKC)
+	casoAtribuir := appident.NovoCasoAtribuirPapel(adminKC, repoAuditoria)
+	casoRevogar := appident.NovoCasoRevogarPapel(adminKC, repoAuditoria)
+	casoActivo := appident.NovoCasoDefinirActivo(adminKC, repoAuditoria)
+	handlerAdmin := adhttp.NovoAdministracaoHandler(casoListar, casoObter, casoAtribuir, casoRevogar, casoActivo)
+
 	// Middlewares transversais e do grupo protegido.
 	segurancaMW := adhttp.SegurancaHTTP(cfg.OrigensCORS, cfg.EmProducao())
 	limiteMW := adhttp.LimiteTaxa(redisCli.Limitador(), cfg.LimiteTaxaIP, cfg.JanelaTaxa)
 	authMW := adhttp.Auth(casoAutenticar)
+	mfaMW := adhttp.MFAObrigatoria()
 
 	metricas := observ.Novo()
 	verificacoes := []adhttp.Verificacao{
@@ -68,7 +81,8 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 	}
 
 	registarRotas := func(r gin.IRouter) {
-		adhttp.RegistarIdentidade(r, handlerIdentidade, limiteMW, authMW)
+		adhttp.RegistarIdentidade(r, handlerIdentidade, limiteMW, authMW, mfaMW)
+		adhttp.RegistarAdministracao(r, handlerAdmin, limiteMW, authMW, mfaMW)
 	}
 
 	logger.Info("dependências estabelecidas", "ambiente", cfg.Ambiente)
