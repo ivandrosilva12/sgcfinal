@@ -100,6 +100,18 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		appclinico.NovoCasoRegistarAntecedente(repoDoentes, repoAuditoria),
 	)
 
+	// BC Clínico: episódios e EHR.
+	repoEpisodios := pgrepo.NovoRepositorioEpisodios(pool)
+	handlerEpisodios := adhttp.NovoEpisodiosHandler(
+		appclinico.NovoCasoIniciarEpisodio(repoEpisodios, repoDoentes, repoAuditoria),
+		appclinico.NovoCasoObterEpisodio(repoEpisodios, repoAuditoria),
+		appclinico.NovoCasoListarEpisodios(repoEpisodios),
+		appclinico.NovoCasoActualizarEpisodio(repoEpisodios, repoAuditoria),
+		appclinico.NovoCasoFecharEpisodio(repoEpisodios, repoAuditoria),
+		appclinico.NovoCasoCancelarEpisodio(repoEpisodios, repoAuditoria),
+		appclinico.NovoCasoObterEHR(repoDoentes, repoEpisodios, repoAuditoria),
+	)
+
 	// Middlewares transversais e do grupo protegido.
 	segurancaMW := adhttp.SegurancaHTTP(cfg.OrigensCORS, cfg.EmProducao())
 	limiteMW := adhttp.LimiteTaxa(redisCli.Limitador(), cfg.LimiteTaxaIP, cfg.JanelaTaxa)
@@ -117,6 +129,7 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		adhttp.RegistarIdentidade(r, handlerIdentidade, limiteMW, authMW, mfaMW)
 		adhttp.RegistarAdministracao(r, handlerAdmin, limiteMW, authMW, mfaMW)
 		adhttp.RegistarDoentes(r, handlerDoentes, limiteMW, authMW)
+		adhttp.RegistarEpisodios(r, handlerEpisodios, limiteMW, authMW)
 	}
 
 	logger.Info("dependências estabelecidas", "ambiente", cfg.Ambiente)
