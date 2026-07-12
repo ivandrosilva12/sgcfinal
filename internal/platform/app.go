@@ -14,6 +14,7 @@ import (
 	"github.com/ivandrosilva12/sgcfinal/internal/adapters/keycloak"
 	"github.com/ivandrosilva12/sgcfinal/internal/adapters/pgrepo"
 	adredis "github.com/ivandrosilva12/sgcfinal/internal/adapters/redis"
+	adsmtp "github.com/ivandrosilva12/sgcfinal/internal/adapters/smtp"
 	appident "github.com/ivandrosilva12/sgcfinal/internal/application/identidade"
 	"github.com/ivandrosilva12/sgcfinal/internal/platform/config"
 	"github.com/ivandrosilva12/sgcfinal/internal/platform/db"
@@ -53,6 +54,15 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		return fmt.Errorf("inicializar Keycloak admin: %w", err)
 	}
 
+	var notificador appident.Notificador
+	if cfg.SMTPHost == "" {
+		notificador = adsmtp.NovoNotificadorNulo(logger)
+		logger.Info("notificações por email desactivadas (SMTP_HOST vazio)")
+	} else {
+		notificador = adsmtp.NovoNotificadorSMTP(cfg.SMTPHost, cfg.SMTPPorta, cfg.SMTPRemetente)
+		logger.Info("notificações por email activadas", "smtp", cfg.SMTPHost+":"+cfg.SMTPPorta)
+	}
+
 	// BC Identidade: repositórios, casos de uso e handler.
 	repoUtilizadores := pgrepo.NovoRepositorioUtilizadores(pool)
 	repoAuditoria := pgrepo.NovoRepositorioAuditoria(pool)
@@ -66,10 +76,16 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 	casoAtribuir := appident.NovoCasoAtribuirPapel(adminKC, repoAuditoria)
 	casoRevogar := appident.NovoCasoRevogarPapel(adminKC, repoAuditoria)
 	casoActivo := appident.NovoCasoDefinirActivo(adminKC, repoAuditoria)
-	casoCriar := appident.NovoCasoCriarUtilizador(adminKC, repoAuditoria)
-	casoResetPass := appident.NovoCasoResetPassword(adminKC, repoAuditoria)
+	casoCriar := appident.NovoCasoCriarUtilizador(adminKC, repoAuditoria, notificador)
+	casoResetPass := appident.NovoCasoResetPassword(adminKC, repoAuditoria, notificador)
 	casoResetOTP := appident.NovoCasoResetOTP(adminKC, repoAuditoria)
-	handlerAdmin := adhttp.NovoAdministracaoHandler(casoListar, casoObter, casoAtribuir, casoRevogar, casoActivo, casoCriar, casoResetPass, casoResetOTP)
+	casoListarSessoes := appident.NovoCasoListarSessoes(adminKC)
+	casoRevogarSessao := appident.NovoCasoRevogarSessao(adminKC, repoAuditoria)
+	casoEditarPerfilAdmin := appident.NovoCasoEditarPerfilAdmin(adminKC, repoUtilizadores, repoAuditoria)
+	handlerAdmin := adhttp.NovoAdministracaoHandler(
+		casoListar, casoObter, casoAtribuir, casoRevogar, casoActivo, casoCriar,
+		casoResetPass, casoResetOTP, casoListarSessoes, casoRevogarSessao, casoEditarPerfilAdmin,
+	)
 
 	// Middlewares transversais e do grupo protegido.
 	segurancaMW := adhttp.SegurancaHTTP(cfg.OrigensCORS, cfg.EmProducao())

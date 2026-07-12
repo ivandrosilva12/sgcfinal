@@ -27,6 +27,9 @@ type Config struct {
 	OrigensCORS               []string      // origens permitidas em CORS (por ambiente)
 	LimiteTaxaIP              int           // limite de pedidos por IP na janela de taxa
 	JanelaTaxa                time.Duration // janela do rate limiting
+	SMTPHost                  string        // host SMTP para notificações (vazio → notificador no-op)
+	SMTPPorta                 string        // porta SMTP (default 1025 — MailHog)
+	SMTPRemetente             string        // remetente dos emails (From)
 }
 
 // erroConfig acumula erros de validação para reportar todos de uma vez.
@@ -57,6 +60,9 @@ func Carregar() (Config, error) {
 		OrigensCORS:               parseCORS(os.Getenv("CORS_ORIGINS"), ambiente),
 		LimiteTaxaIP:              inteiroOu("RATE_LIMIT_IP", 100),
 		JanelaTaxa:                time.Minute,
+		SMTPHost:                  os.Getenv("SMTP_HOST"),
+		SMTPPorta:                 valorOu("SMTP_PORT", "1025"),
+		SMTPRemetente:             valorOu("SMTP_FROM", "nao-responder@sgc.ao"),
 	}
 
 	erro := &erroConfig{}

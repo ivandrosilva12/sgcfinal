@@ -33,6 +33,13 @@ services:
       timeout: 3s
       retries: 5
 
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: sgc-mailhog
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # UI + API (http://localhost:8025)
+
   keycloak:
     image: quay.io/keycloak/keycloak:25.0
     command: ["start-dev", "--import-realm"]
@@ -111,6 +118,9 @@ services:
       KEYCLOAK_AUDIENCE: sgc-api
       KEYCLOAK_ADMIN_CLIENT_ID: sgc-admin
       KEYCLOAK_ADMIN_CLIENT_SECRET: segredo-admin
+      SMTP_HOST: mailhog
+      SMTP_PORT: "1025"
+      SMTP_FROM: nao-responder@sgc.ao
     ports:
       - "8080:8080"
     depends_on:
