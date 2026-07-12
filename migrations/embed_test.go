@@ -12,6 +12,7 @@ import (
 func TestFS_ContemMigrationsEsperadas(t *testing.T) {
 	esperadas := []string{
 		"auditoria/0001_auditoria_eventos.sql",
+		"clinico/0002_episodios.sql",
 		"identidade/0001_utilizadores.sql",
 		"identidade/0002_utilizadores_papeis.sql",
 		"identidade/0003_papeis.sql",
