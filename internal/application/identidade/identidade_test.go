@@ -26,6 +26,7 @@ type fakeRepo struct {
 	guardarErr      error
 	obterErr        error
 	chamadasGuardar int
+	atualizarErr    error
 }
 
 func (f *fakeRepo) ObterPorID(context.Context, string) (*dominio.Utilizador, error) {
@@ -41,6 +42,17 @@ func (f *fakeRepo) GuardarComPapeis(_ context.Context, u *dominio.Utilizador) er
 		return f.guardarErr
 	}
 	f.guardado = u
+	return nil
+}
+
+func (f *fakeRepo) AtualizarContacto(_ context.Context, _, telefone, bi string) error {
+	if f.atualizarErr != nil {
+		return f.atualizarErr
+	}
+	if f.guardado != nil {
+		f.guardado.Telefone = telefone
+		f.guardado.BI = bi
+	}
 	return nil
 }
 

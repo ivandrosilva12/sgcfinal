@@ -33,6 +33,10 @@ func (f *fakeCriador) CriarUtilizador(_ context.Context, d appident.DadosNovoUti
 	f.recebido = d
 	return f.id, nil
 }
+func (f *fakeCriador) DefinirPasswordTemporaria(context.Context, string, string) error { return nil }
+func (f *fakeCriador) ResetOTP(context.Context, string) error                          { return nil }
+func (f *fakeCriador) RevogarSessoes(context.Context, string) error                    { return nil }
+func (f *fakeCriador) ApagarUtilizador(context.Context, string) error                  { return nil }
 
 func TestCriarUtilizador_PapelComum(t *testing.T) {
 	admin := &fakeCriador{id: "novo-id"}

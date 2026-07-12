@@ -21,6 +21,11 @@ type fakeAdmin struct {
 	atribuido []string // "alvo:papel"
 	revogado  []string
 	activo    map[string]bool
+
+	passwordDefinida map[string]string
+	otpReposto       map[string]bool
+	sessoesRevogadas []string
+	apagados         []string
 }
 
 func (f *fakeAdmin) ListarUtilizadores(context.Context, appident.FiltroUtilizadores) ([]appident.ResumoUtilizador, error) {
@@ -55,6 +60,40 @@ func (f *fakeAdmin) DefinirActivo(_ context.Context, id string, activo bool) err
 }
 func (f *fakeAdmin) CriarUtilizador(context.Context, appident.DadosNovoUtilizador) (string, error) {
 	return "", f.err
+}
+func (f *fakeAdmin) DefinirPasswordTemporaria(_ context.Context, id, senha string) error {
+	if f.err != nil {
+		return f.err
+	}
+	if f.passwordDefinida == nil {
+		f.passwordDefinida = map[string]string{}
+	}
+	f.passwordDefinida[id] = senha
+	return nil
+}
+func (f *fakeAdmin) ResetOTP(_ context.Context, id string) error {
+	if f.err != nil {
+		return f.err
+	}
+	if f.otpReposto == nil {
+		f.otpReposto = map[string]bool{}
+	}
+	f.otpReposto[id] = true
+	return nil
+}
+func (f *fakeAdmin) RevogarSessoes(_ context.Context, id string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.sessoesRevogadas = append(f.sessoesRevogadas, id)
+	return nil
+}
+func (f *fakeAdmin) ApagarUtilizador(_ context.Context, id string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.apagados = append(f.apagados, id)
+	return nil
 }
 
 // --- Testes ---

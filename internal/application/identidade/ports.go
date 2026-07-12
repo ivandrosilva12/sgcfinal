@@ -75,4 +75,14 @@ type AdminIdentidade interface {
 	RevogarPapel(ctx context.Context, id string, papel dominio.Papel) error
 	DefinirActivo(ctx context.Context, id string, activo bool) error
 	CriarUtilizador(ctx context.Context, dados DadosNovoUtilizador) (id string, err error)
+	DefinirPasswordTemporaria(ctx context.Context, id, senha string) error
+	ResetOTP(ctx context.Context, id string) error
+	RevogarSessoes(ctx context.Context, id string) error
+	ApagarUtilizador(ctx context.Context, id string) error
+}
+
+// CredencialReposta é a saída de um reset de password: a nova senha temporária,
+// devolvida uma única vez.
+type CredencialReposta struct {
+	SenhaTemporaria string `json:"senha_temporaria"`
 }
