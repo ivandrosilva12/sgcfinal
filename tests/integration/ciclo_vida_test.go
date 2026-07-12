@@ -9,8 +9,6 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/google/uuid"
-
 	"github.com/ivandrosilva12/sgcfinal/internal/adapters/keycloak"
 	"github.com/ivandrosilva12/sgcfinal/internal/adapters/pgrepo"
 	appident "github.com/ivandrosilva12/sgcfinal/internal/application/identidade"
@@ -63,7 +61,7 @@ func TestAtualizarPerfil_ViaBD(t *testing.T) {
 
 	// keycloak_id é uuid na BD real (migrations/identidade/0001_utilizadores.sql);
 	// o exemplo do brief usava um sujeito não-UUID, o que falha contra o esquema real.
-	sessao := dominio.Sessao{Sujeito: uuid.NewString(), Nome: "Perfil Teste", Email: "perfil.teste@sgc.ao", Papeis: []dominio.Papel{dominio.PapelMedico}}
+	sessao := dominio.Sessao{Sujeito: "00000000-0000-4000-8000-0000000000c5", Nome: "Perfil Teste", Email: "perfil.teste@sgc.ao", Papeis: []dominio.Papel{dominio.PapelMedico}}
 	tel := "+244 923 456 789"
 	perfil, err := caso.Executar(ctx, sessao, &tel, nil)
 	if err != nil {
