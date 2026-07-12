@@ -38,16 +38,26 @@ type (
 	ServicoCriarUtilizador interface {
 		Executar(ctx context.Context, actor string, entrada appident.CriacaoUtilizador) (appident.UtilizadorCriado, error)
 	}
+	// ServicoResetPassword repõe a password de um utilizador.
+	ServicoResetPassword interface {
+		Executar(ctx context.Context, actor, id string) (appident.CredencialReposta, error)
+	}
+	// ServicoResetOtp repõe o OTP de um utilizador.
+	ServicoResetOtp interface {
+		Executar(ctx context.Context, actor, id string) error
+	}
 )
 
 // AdministracaoHandler expõe os endpoints de gestão de utilizadores/papéis.
 type AdministracaoHandler struct {
-	listar   ServicoListar
-	obter    ServicoObterUtilizador
-	atribuir ServicoAtribuirPapel
-	revogar  ServicoRevogarPapel
-	activar  ServicoDefinirActivo
-	criar    ServicoCriarUtilizador
+	listar        ServicoListar
+	obter         ServicoObterUtilizador
+	atribuir      ServicoAtribuirPapel
+	revogar       ServicoRevogarPapel
+	activar       ServicoDefinirActivo
+	criar         ServicoCriarUtilizador
+	resetPassword ServicoResetPassword
+	resetOtp      ServicoResetOtp
 }
 
 // NovoAdministracaoHandler constrói o handler com os casos de uso.
@@ -58,8 +68,10 @@ func NovoAdministracaoHandler(
 	revogar ServicoRevogarPapel,
 	activar ServicoDefinirActivo,
 	criar ServicoCriarUtilizador,
+	resetPassword ServicoResetPassword,
+	resetOtp ServicoResetOtp,
 ) *AdministracaoHandler {
-	return &AdministracaoHandler{listar: listar, obter: obter, atribuir: atribuir, revogar: revogar, activar: activar, criar: criar}
+	return &AdministracaoHandler{listar: listar, obter: obter, atribuir: atribuir, revogar: revogar, activar: activar, criar: criar, resetPassword: resetPassword, resetOtp: resetOtp}
 }
 
 // RegistarAdministracao regista as rotas sob /api/v1/identidade/utilizadores. Os
@@ -78,6 +90,8 @@ func RegistarAdministracao(r gin.IRouter, h *AdministracaoHandler, protecao ...g
 	g.POST("/:id/papeis", escrita, h.atribuirPapel)
 	g.DELETE("/:id/papeis/:papel", escrita, h.revogarPapel)
 	g.PATCH("/:id", escrita, h.definirActivo)
+	g.POST("/:id/reset-password", escrita, h.reporPassword)
+	g.POST("/:id/reset-otp", escrita, h.reporOtp)
 }
 
 func (h *AdministracaoHandler) listarUtilizadores(c *gin.Context) {
@@ -169,4 +183,23 @@ func (h *AdministracaoHandler) criarUtilizador(c *gin.Context) {
 		return
 	}
 	c.JSON(nethttp.StatusCreated, out)
+}
+
+func (h *AdministracaoHandler) reporPassword(c *gin.Context) {
+	actor, _ := SessaoDe(c)
+	out, err := h.resetPassword.Executar(c.Request.Context(), actor.Sujeito, c.Param("id"))
+	if err != nil {
+		responderErro(c, err)
+		return
+	}
+	c.JSON(nethttp.StatusOK, out)
+}
+
+func (h *AdministracaoHandler) reporOtp(c *gin.Context) {
+	actor, _ := SessaoDe(c)
+	if err := h.resetOtp.Executar(c.Request.Context(), actor.Sujeito, c.Param("id")); err != nil {
+		responderErro(c, err)
+		return
+	}
+	c.Status(nethttp.StatusNoContent)
 }

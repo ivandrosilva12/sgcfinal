@@ -106,6 +106,23 @@ func (f fakeCriar) Executar(context.Context, string, appident.CriacaoUtilizador)
 	return f.out, f.err
 }
 
+type fakeResetPass struct {
+	out appident.CredencialReposta
+	err error
+}
+
+func (f fakeResetPass) Executar(context.Context, string, string) (appident.CredencialReposta, error) {
+	return f.out, f.err
+}
+
+type fakeResetOtp struct {
+	err error
+}
+
+func (f fakeResetOtp) Executar(context.Context, string, string) error {
+	return f.err
+}
+
 func routerAdmin(sessao dominio.Sessao, atribuir *fakePapel) *gin.Engine {
 	r := novoRouter()
 	r.Use(adhttp.RequestID())
@@ -116,6 +133,8 @@ func routerAdmin(sessao dominio.Sessao, atribuir *fakePapel) *gin.Engine {
 		&fakePapel{},
 		&fakeActivo{},
 		fakeCriar{out: appident.UtilizadorCriado{ID: "novo-id", SenhaTemporaria: "senha-temp"}},
+		fakeResetPass{out: appident.CredencialReposta{SenhaTemporaria: "nova-senha"}},
+		fakeResetOtp{},
 	)
 	adhttp.RegistarAdministracao(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
 	return r
@@ -217,5 +236,30 @@ func TestAdmin_CriarUtilizador_CorpoInvalido_400(t *testing.T) {
 	w := pedidoCorpo(r, "POST", "/api/v1/identidade/utilizadores", `{"nome":"sem username"}`)
 	if w.Code != nethttp.StatusBadRequest {
 		t.Fatalf("esperava 400 (username em falta); obtive %d", w.Code)
+	}
+}
+
+func TestAdmin_ResetPassword_AdminOk_200(t *testing.T) {
+	r := routerAdmin(dominio.Sessao{Sujeito: "actor-1", Papeis: []dominio.Papel{dominio.PapelAdmin}}, &fakePapel{})
+	w := pedido(r, "POST", "/api/v1/identidade/utilizadores/u1/reset-password", "Bearer xyz")
+	if w.Code != nethttp.StatusOK {
+		t.Fatalf("esperava 200, obtive %d (%s)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"senha_temporaria":"nova-senha"`) {
+		t.Fatalf("corpo inesperado: %s", w.Body.String())
+	}
+}
+
+func TestAdmin_ResetPassword_MedicoProibido_403(t *testing.T) {
+	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}, &fakePapel{})
+	if w := pedido(r, "POST", "/api/v1/identidade/utilizadores/u1/reset-password", "Bearer xyz"); w.Code != nethttp.StatusForbidden {
+		t.Fatalf("Medico não deve repor password; obtive %d", w.Code)
+	}
+}
+
+func TestAdmin_ResetOtp_AdminOk_204(t *testing.T) {
+	r := routerAdmin(dominio.Sessao{Sujeito: "actor-1", Papeis: []dominio.Papel{dominio.PapelAdmin}}, &fakePapel{})
+	if w := pedido(r, "POST", "/api/v1/identidade/utilizadores/u1/reset-otp", "Bearer xyz"); w.Code != nethttp.StatusNoContent {
+		t.Fatalf("esperava 204, obtive %d", w.Code)
 	}
 }

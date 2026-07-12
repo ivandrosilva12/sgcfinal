@@ -46,6 +46,15 @@ func (f fakeLimitador) Permitir(context.Context, string, int, time.Duration) (bo
 	return f.ok, 0, f.retry, f.err
 }
 
+type fakeAtualizarPerfil struct {
+	perfil appident.Perfil
+	err    error
+}
+
+func (f fakeAtualizarPerfil) Executar(context.Context, dominio.Sessao, *string, *string) (appident.Perfil, error) {
+	return f.perfil, f.err
+}
+
 func pedido(r nethttp.Handler, metodo, caminho, autorizacao string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(metodo, caminho, nil)
@@ -193,7 +202,7 @@ func TestRegistarIdentidade_Perfil_200(t *testing.T) {
 	r := novoRouter()
 	sessao := dominio.Sessao{Sujeito: "uuid-1", Papeis: []dominio.Papel{dominio.PapelMedico}}
 	perfil := appident.Perfil{KeycloakID: "uuid-1", Nome: "Ana Silva", Email: "ana@sgc.ao", Activo: true, Papeis: []string{"Medico"}}
-	h := adhttp.NovoIdentidadeHandler(fakePerfil{perfil: perfil})
+	h := adhttp.NovoIdentidadeHandler(fakePerfil{perfil: perfil}, fakeAtualizarPerfil{})
 
 	adhttp.RegistarIdentidade(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
 
@@ -208,10 +217,30 @@ func TestRegistarIdentidade_Perfil_200(t *testing.T) {
 
 func TestRegistarIdentidade_Perfil_SemToken_401(t *testing.T) {
 	r := novoRouter()
-	h := adhttp.NovoIdentidadeHandler(fakePerfil{})
+	h := adhttp.NovoIdentidadeHandler(fakePerfil{}, fakeAtualizarPerfil{})
 	adhttp.RegistarIdentidade(r, h, adhttp.Auth(fakeAuth{err: erros.Novo(erros.CategoriaNaoAutorizado, "sem token")}))
 
 	if w := pedido(r, "GET", "/api/v1/identidade/perfil", ""); w.Code != nethttp.StatusUnauthorized {
 		t.Fatalf("esperava 401, obtive %d", w.Code)
+	}
+}
+
+func TestRegistarIdentidade_AtualizarPerfil_200(t *testing.T) {
+	r := novoRouter()
+	sessao := dominio.Sessao{Sujeito: "uuid-1", Papeis: []dominio.Papel{dominio.PapelMedico}}
+	perfil := appident.Perfil{KeycloakID: "uuid-1", Nome: "Ana", Email: "ana@sgc.ao", Telefone: "+244 923 456 789", Activo: true, Papeis: []string{"Medico"}}
+	h := adhttp.NovoIdentidadeHandler(fakePerfil{}, fakeAtualizarPerfil{perfil: perfil})
+	adhttp.RegistarIdentidade(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("PATCH", "/api/v1/identidade/perfil", strings.NewReader(`{"telefone":"+244 923 456 789"}`))
+	req.Header.Set("Authorization", "Bearer xyz")
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != nethttp.StatusOK {
+		t.Fatalf("esperava 200, obtive %d (%s)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"telefone":"+244 923 456 789"`) {
+		t.Fatalf("corpo inesperado: %s", w.Body.String())
 	}
 }
