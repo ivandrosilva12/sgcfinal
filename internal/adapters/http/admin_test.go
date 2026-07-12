@@ -123,6 +123,35 @@ func (f fakeResetOtp) Executar(context.Context, string, string) error {
 	return f.err
 }
 
+type fakeSessoesListar struct {
+	out []appident.SessaoActiva
+	err error
+}
+
+func (f fakeSessoesListar) Executar(context.Context, string) ([]appident.SessaoActiva, error) {
+	return f.out, f.err
+}
+
+type fakeSessaoRevogar struct {
+	ultimoActor string
+	ultimoSID   string
+	err         error
+}
+
+func (f *fakeSessaoRevogar) Executar(_ context.Context, actor, sessionID string) error {
+	f.ultimoActor, f.ultimoSID = actor, sessionID
+	return f.err
+}
+
+type fakePerfilAdmin struct {
+	out appident.Perfil
+	err error
+}
+
+func (f fakePerfilAdmin) Executar(context.Context, string, string, *string, *string) (appident.Perfil, error) {
+	return f.out, f.err
+}
+
 func routerAdmin(sessao dominio.Sessao, atribuir *fakePapel) *gin.Engine {
 	r := novoRouter()
 	r.Use(adhttp.RequestID())
@@ -135,6 +164,9 @@ func routerAdmin(sessao dominio.Sessao, atribuir *fakePapel) *gin.Engine {
 		fakeCriar{out: appident.UtilizadorCriado{ID: "novo-id", SenhaTemporaria: "senha-temp"}},
 		fakeResetPass{out: appident.CredencialReposta{SenhaTemporaria: "nova-senha"}},
 		fakeResetOtp{},
+		fakeSessoesListar{out: []appident.SessaoActiva{{ID: "sess-1", IP: "10.0.0.5"}}},
+		&fakeSessaoRevogar{},
+		fakePerfilAdmin{out: appident.Perfil{KeycloakID: "u1", Nome: "Ana", Telefone: "+244923456789"}},
 	)
 	adhttp.RegistarAdministracao(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
 	return r
@@ -261,5 +293,64 @@ func TestAdmin_ResetOtp_AdminOk_204(t *testing.T) {
 	r := routerAdmin(dominio.Sessao{Sujeito: "actor-1", Papeis: []dominio.Papel{dominio.PapelAdmin}}, &fakePapel{})
 	if w := pedido(r, "POST", "/api/v1/identidade/utilizadores/u1/reset-otp", "Bearer xyz"); w.Code != nethttp.StatusNoContent {
 		t.Fatalf("esperava 204, obtive %d", w.Code)
+	}
+}
+
+func TestAdmin_ListarSessoes_AuditorPermitido(t *testing.T) {
+	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}}, &fakePapel{})
+	w := pedido(r, "GET", "/api/v1/identidade/utilizadores/u1/sessoes", "Bearer xyz")
+	if w.Code != nethttp.StatusOK {
+		t.Fatalf("Auditor deve poder ver sessões; obtive %d (%s)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"id":"sess-1"`) {
+		t.Fatalf("corpo inesperado: %s", w.Body.String())
+	}
+}
+
+func TestAdmin_ListarSessoes_MedicoProibido(t *testing.T) {
+	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}, &fakePapel{})
+	if w := pedido(r, "GET", "/api/v1/identidade/utilizadores/u1/sessoes", "Bearer xyz"); w.Code != nethttp.StatusForbidden {
+		t.Fatalf("Medico não deve ver sessões; obtive %d", w.Code)
+	}
+}
+
+func TestAdmin_RevogarSessao_AdminOk_204(t *testing.T) {
+	r := routerAdmin(dominio.Sessao{Sujeito: "actor-1", Papeis: []dominio.Papel{dominio.PapelAdmin}}, &fakePapel{})
+	if w := pedido(r, "DELETE", "/api/v1/identidade/sessoes/sess-1", "Bearer xyz"); w.Code != nethttp.StatusNoContent {
+		t.Fatalf("esperava 204, obtive %d (%s)", w.Code, w.Body.String())
+	}
+}
+
+func TestAdmin_RevogarSessao_AuditorProibido(t *testing.T) {
+	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}}, &fakePapel{})
+	if w := pedido(r, "DELETE", "/api/v1/identidade/sessoes/sess-1", "Bearer xyz"); w.Code != nethttp.StatusForbidden {
+		t.Fatalf("Auditor não deve revogar sessões; obtive %d", w.Code)
+	}
+}
+
+func TestAdmin_EditarPerfil_AdminOk_200(t *testing.T) {
+	r := routerAdmin(dominio.Sessao{Sujeito: "actor-1", Papeis: []dominio.Papel{dominio.PapelAdmin}}, &fakePapel{})
+	w := pedidoCorpo(r, "PATCH", "/api/v1/identidade/utilizadores/u1/perfil", `{"telefone":"+244923456789"}`)
+	if w.Code != nethttp.StatusOK {
+		t.Fatalf("esperava 200, obtive %d (%s)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"telefone":"+244923456789"`) {
+		t.Fatalf("corpo inesperado: %s", w.Body.String())
+	}
+}
+
+func TestAdmin_EditarPerfil_MedicoProibido_403(t *testing.T) {
+	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}, &fakePapel{})
+	w := pedidoCorpo(r, "PATCH", "/api/v1/identidade/utilizadores/u1/perfil", `{"telefone":"+244923456789"}`)
+	if w.Code != nethttp.StatusForbidden {
+		t.Fatalf("Medico não deve editar perfil de outros; obtive %d", w.Code)
+	}
+}
+
+func TestAdmin_EditarPerfil_CorpoInvalido_400(t *testing.T) {
+	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAdmin}}, &fakePapel{})
+	w := pedidoCorpo(r, "PATCH", "/api/v1/identidade/utilizadores/u1/perfil", `{`)
+	if w.Code != nethttp.StatusBadRequest {
+		t.Fatalf("esperava 400 para JSON inválido; obtive %d", w.Code)
 	}
 }

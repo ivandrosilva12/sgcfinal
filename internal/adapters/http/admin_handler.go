@@ -46,6 +46,18 @@ type (
 	ServicoResetOtp interface {
 		Executar(ctx context.Context, actor, id string) error
 	}
+	// ServicoListarSessoes lista as sessões activas de um utilizador.
+	ServicoListarSessoes interface {
+		Executar(ctx context.Context, id string) ([]appident.SessaoActiva, error)
+	}
+	// ServicoRevogarSessao revoga uma sessão específica.
+	ServicoRevogarSessao interface {
+		Executar(ctx context.Context, actor, sessionID string) error
+	}
+	// ServicoEditarPerfilAdmin actualiza o perfil (telefone/BI) de outro utilizador.
+	ServicoEditarPerfilAdmin interface {
+		Executar(ctx context.Context, actor, id string, telefone, bi *string) (appident.Perfil, error)
+	}
 )
 
 // AdministracaoHandler expõe os endpoints de gestão de utilizadores/papéis.
@@ -58,6 +70,9 @@ type AdministracaoHandler struct {
 	criar         ServicoCriarUtilizador
 	resetPassword ServicoResetPassword
 	resetOtp      ServicoResetOtp
+	sessoesListar ServicoListarSessoes
+	sessaoRevogar ServicoRevogarSessao
+	perfilAdmin   ServicoEditarPerfilAdmin
 }
 
 // NovoAdministracaoHandler constrói o handler com os casos de uso.
@@ -70,8 +85,15 @@ func NovoAdministracaoHandler(
 	criar ServicoCriarUtilizador,
 	resetPassword ServicoResetPassword,
 	resetOtp ServicoResetOtp,
+	sessoesListar ServicoListarSessoes,
+	sessaoRevogar ServicoRevogarSessao,
+	perfilAdmin ServicoEditarPerfilAdmin,
 ) *AdministracaoHandler {
-	return &AdministracaoHandler{listar: listar, obter: obter, atribuir: atribuir, revogar: revogar, activar: activar, criar: criar, resetPassword: resetPassword, resetOtp: resetOtp}
+	return &AdministracaoHandler{
+		listar: listar, obter: obter, atribuir: atribuir, revogar: revogar,
+		activar: activar, criar: criar, resetPassword: resetPassword, resetOtp: resetOtp,
+		sessoesListar: sessoesListar, sessaoRevogar: sessaoRevogar, perfilAdmin: perfilAdmin,
+	}
 }
 
 // RegistarAdministracao regista as rotas sob /api/v1/identidade/utilizadores. Os
@@ -92,6 +114,13 @@ func RegistarAdministracao(r gin.IRouter, h *AdministracaoHandler, protecao ...g
 	g.PATCH("/:id", escrita, h.definirActivo)
 	g.POST("/:id/reset-password", escrita, h.reporPassword)
 	g.POST("/:id/reset-otp", escrita, h.reporOtp)
+	g.GET("/:id/sessoes", leitura, h.listarSessoes)
+	g.PATCH("/:id/perfil", escrita, h.editarPerfilAdmin)
+
+	// Grupo separado: revogar uma sessão por sessionId (não precisa do userId).
+	gsessoes := r.Group("/api/v1/identidade/sessoes")
+	gsessoes.Use(protecao...)
+	gsessoes.DELETE("/:sessionId", escrita, h.revogarSessao)
 }
 
 func (h *AdministracaoHandler) listarUtilizadores(c *gin.Context) {
@@ -202,4 +231,37 @@ func (h *AdministracaoHandler) reporOtp(c *gin.Context) {
 		return
 	}
 	c.Status(nethttp.StatusNoContent)
+}
+
+func (h *AdministracaoHandler) listarSessoes(c *gin.Context) {
+	out, err := h.sessoesListar.Executar(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		responderErro(c, err)
+		return
+	}
+	c.JSON(nethttp.StatusOK, out)
+}
+
+func (h *AdministracaoHandler) revogarSessao(c *gin.Context) {
+	actor, _ := SessaoDe(c)
+	if err := h.sessaoRevogar.Executar(c.Request.Context(), actor.Sujeito, c.Param("sessionId")); err != nil {
+		responderErro(c, err)
+		return
+	}
+	c.Status(nethttp.StatusNoContent)
+}
+
+func (h *AdministracaoHandler) editarPerfilAdmin(c *gin.Context) {
+	var corpo corpoPerfil
+	if err := c.ShouldBindJSON(&corpo); err != nil {
+		responderErro(c, erros.Novo(erros.CategoriaValidacao, i18n.T(i18n.MsgPedidoInvalido)))
+		return
+	}
+	actor, _ := SessaoDe(c)
+	perfil, err := h.perfilAdmin.Executar(c.Request.Context(), actor.Sujeito, c.Param("id"), corpo.Telefone, corpo.Bi)
+	if err != nil {
+		responderErro(c, err)
+		return
+	}
+	c.JSON(nethttp.StatusOK, perfil)
 }
