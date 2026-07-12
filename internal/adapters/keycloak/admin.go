@@ -7,6 +7,7 @@ import (
 	"fmt"
 	nethttp "net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -324,6 +325,44 @@ func (a *AdminCliente) RevogarSessoes(ctx context.Context, id string) error {
 // ApagarUtilizador remove o utilizador do realm.
 func (a *AdminCliente) ApagarUtilizador(ctx context.Context, id string) error {
 	return a.pedir(ctx, nethttp.MethodDelete, "/users/"+url.PathEscape(id), nil, nil)
+}
+
+// kcSession é a representação de uma sessão de utilizador na Admin API.
+type kcSession struct {
+	ID         string            `json:"id"`
+	IPAddress  string            `json:"ipAddress"`
+	Start      int64             `json:"start"`
+	LastAccess int64             `json:"lastAccess"`
+	Clients    map[string]string `json:"clients"`
+}
+
+// ListarSessoes devolve as sessões activas do utilizador.
+func (a *AdminCliente) ListarSessoes(ctx context.Context, userID string) ([]appident.SessaoActiva, error) {
+	var sessoes []kcSession
+	if err := a.pedir(ctx, nethttp.MethodGet, "/users/"+url.PathEscape(userID)+"/sessions", nil, &sessoes); err != nil {
+		return nil, err
+	}
+	out := make([]appident.SessaoActiva, 0, len(sessoes))
+	for _, s := range sessoes {
+		clientes := make([]string, 0, len(s.Clients))
+		for _, nome := range s.Clients {
+			clientes = append(clientes, nome)
+		}
+		sort.Strings(clientes) // ordem determinística
+		out = append(out, appident.SessaoActiva{
+			ID:           s.ID,
+			IP:           s.IPAddress,
+			Inicio:       time.UnixMilli(s.Start).UTC(),
+			UltimoAcesso: time.UnixMilli(s.LastAccess).UTC(),
+			Clientes:     clientes,
+		})
+	}
+	return out, nil
+}
+
+// RevogarSessao termina uma sessão específica pelo seu sessionId.
+func (a *AdminCliente) RevogarSessao(ctx context.Context, sessionID string) error {
+	return a.pedir(ctx, nethttp.MethodDelete, "/sessions/"+url.PathEscape(sessionID), nil, nil)
 }
 
 // CriarUtilizador cria um utilizador no Keycloak com uma credencial de password

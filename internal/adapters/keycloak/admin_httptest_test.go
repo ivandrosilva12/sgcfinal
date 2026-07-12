@@ -552,3 +552,66 @@ func TestCriarUtilizador_CompensaFalhaDePapel(t *testing.T) {
 		t.Fatal("esperava compensação (DELETE do utilizador criado)")
 	}
 }
+
+func TestListarSessoes_MapeiaJSON(t *testing.T) {
+	srv := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/protocol/openid-connect/token"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 300})
+		case r.Method == nethttp.MethodGet && strings.HasSuffix(r.URL.Path, "/users/u1/sessions"):
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{
+					"id": "sess-1", "ipAddress": "10.0.0.5",
+					"start": int64(1720000000000), "lastAccess": int64(1720000600000),
+					"clients": map[string]string{"sgc-api": "sgc-api"},
+				},
+			})
+		default:
+			w.WriteHeader(nethttp.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	admin, _ := NovoAdmin(srv.URL+"/realms/sgc", "sgc-admin", "segredo")
+
+	out, err := admin.ListarSessoes(context.Background(), "u1")
+	if err != nil {
+		t.Fatalf("ListarSessoes: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("esperava 1 sessão, obtive %d", len(out))
+	}
+	s := out[0]
+	if s.ID != "sess-1" || s.IP != "10.0.0.5" {
+		t.Fatalf("sessão mapeada errada: %+v", s)
+	}
+	if s.Inicio.UnixMilli() != 1720000000000 || s.UltimoAcesso.UnixMilli() != 1720000600000 {
+		t.Fatalf("tempos mapeados errados: %+v", s)
+	}
+	if len(s.Clientes) != 1 || s.Clientes[0] != "sgc-api" {
+		t.Fatalf("clientes = %v; quer [sgc-api]", s.Clientes)
+	}
+}
+
+func TestRevogarSessao_DELETE(t *testing.T) {
+	var revogou bool
+	srv := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/protocol/openid-connect/token"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 300})
+		case r.Method == nethttp.MethodDelete && r.URL.Path == "/admin/realms/sgc/sessions/sess-1":
+			revogou = true
+			w.WriteHeader(nethttp.StatusNoContent)
+		default:
+			w.WriteHeader(nethttp.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	admin, _ := NovoAdmin(srv.URL+"/realms/sgc", "sgc-admin", "segredo")
+
+	if err := admin.RevogarSessao(context.Background(), "sess-1"); err != nil {
+		t.Fatalf("RevogarSessao: %v", err)
+	}
+	if !revogou {
+		t.Fatal("esperava DELETE /sessions/sess-1")
+	}
+}

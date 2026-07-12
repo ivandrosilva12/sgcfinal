@@ -37,6 +37,10 @@ func (f *fakeCriador) DefinirPasswordTemporaria(context.Context, string, string)
 func (f *fakeCriador) ResetOTP(context.Context, string) error                          { return nil }
 func (f *fakeCriador) RevogarSessoes(context.Context, string) error                    { return nil }
 func (f *fakeCriador) ApagarUtilizador(context.Context, string) error                  { return nil }
+func (f *fakeCriador) ListarSessoes(context.Context, string) ([]appident.SessaoActiva, error) {
+	return nil, nil
+}
+func (f *fakeCriador) RevogarSessao(context.Context, string) error { return nil }
 
 func TestCriarUtilizador_PapelComum(t *testing.T) {
 	admin := &fakeCriador{id: "novo-id"}

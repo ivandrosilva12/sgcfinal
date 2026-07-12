@@ -2,6 +2,7 @@ package identidade
 
 import (
 	"context"
+	"time"
 
 	dominio "github.com/ivandrosilva12/sgcfinal/internal/domain/identidade"
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/auditoria"
@@ -66,6 +67,15 @@ type UtilizadorCriado struct {
 	SenhaTemporaria string `json:"senha_temporaria"`
 }
 
+// SessaoActiva é o read-model de uma sessão Keycloak activa de um utilizador.
+type SessaoActiva struct {
+	ID           string    `json:"id"`
+	IP           string    `json:"ip"`
+	Inicio       time.Time `json:"inicio"`
+	UltimoAcesso time.Time `json:"ultimo_acesso"`
+	Clientes     []string  `json:"clientes"`
+}
+
 // AdminIdentidade é a porta de saída para a gestão de utilizadores/papéis no
 // Keycloak (fonte de verdade). Implementada por adapters/keycloak.AdminCliente.
 type AdminIdentidade interface {
@@ -79,6 +89,8 @@ type AdminIdentidade interface {
 	ResetOTP(ctx context.Context, id string) error
 	RevogarSessoes(ctx context.Context, id string) error
 	ApagarUtilizador(ctx context.Context, id string) error
+	ListarSessoes(ctx context.Context, userID string) ([]SessaoActiva, error)
+	RevogarSessao(ctx context.Context, sessionID string) error
 }
 
 // CredencialReposta é a saída de um reset de password: a nova senha temporária,

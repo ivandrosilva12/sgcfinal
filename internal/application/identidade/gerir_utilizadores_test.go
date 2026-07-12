@@ -26,6 +26,9 @@ type fakeAdmin struct {
 	otpReposto       map[string]bool
 	sessoesRevogadas []string
 	apagados         []string
+
+	sessoesPorUtilizador map[string][]appident.SessaoActiva
+	sessoesRevogadas1    []string
 }
 
 func (f *fakeAdmin) ListarUtilizadores(context.Context, appident.FiltroUtilizadores) ([]appident.ResumoUtilizador, error) {
@@ -93,6 +96,19 @@ func (f *fakeAdmin) ApagarUtilizador(_ context.Context, id string) error {
 		return f.err
 	}
 	f.apagados = append(f.apagados, id)
+	return nil
+}
+func (f *fakeAdmin) ListarSessoes(_ context.Context, userID string) ([]appident.SessaoActiva, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.sessoesPorUtilizador[userID], nil
+}
+func (f *fakeAdmin) RevogarSessao(_ context.Context, sessionID string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.sessoesRevogadas1 = append(f.sessoesRevogadas1, sessionID)
 	return nil
 }
 
