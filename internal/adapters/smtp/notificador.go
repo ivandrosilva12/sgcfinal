@@ -60,14 +60,22 @@ func (n *NotificadorSMTP) enviarMensagem(para, assunto, corpo string) error {
 // montarMensagem compõe uma mensagem RFC 5322 de texto simples (UTF-8).
 func montarMensagem(de, para, assunto, corpo string) []byte {
 	var b strings.Builder
-	b.WriteString("From: " + de + "\r\n")
-	b.WriteString("To: " + para + "\r\n")
-	b.WriteString("Subject: " + assunto + "\r\n")
+	b.WriteString("From: " + limparCabecalho(de) + "\r\n")
+	b.WriteString("To: " + limparCabecalho(para) + "\r\n")
+	b.WriteString("Subject: " + limparCabecalho(assunto) + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: text/plain; charset=\"utf-8\"\r\n")
 	b.WriteString("\r\n")
 	b.WriteString(corpo)
 	return []byte(b.String())
+}
+
+// limparCabecalho remove CR/LF de um valor de cabeçalho, como defesa em
+// profundidade contra injecção de cabeçalhos SMTP. O email já é validado por
+// net/mail a montante e o transporte (net/smtp) rejeita CR/LF em endereços;
+// esta é uma salvaguarda adicional para os cabeçalhos escritos no corpo DATA.
+func limparCabecalho(v string) string {
+	return strings.NewReplacer("\r", "", "\n", "").Replace(v)
 }
 
 // Garantia de conformidade com a porta.

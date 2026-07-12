@@ -48,6 +48,21 @@ func TestNotificadorSMTP_PropagaErro(t *testing.T) {
 	}
 }
 
+func TestMontarMensagem_LimpaCabecalhos(t *testing.T) {
+	// Valores com CR/LF não devem introduzir cabeçalhos novos (injecção).
+	msg := string(montarMensagem(
+		"de@sgc.ao",
+		"vitima@sgc.ao\r\nBcc: atacante@mau.ao",
+		"Assunto\r\nX-Injectado: 1",
+		"corpo legítimo",
+	))
+	for _, linha := range strings.Split(msg, "\r\n") {
+		if strings.HasPrefix(linha, "Bcc:") || strings.HasPrefix(linha, "X-Injectado:") {
+			t.Fatalf("cabeçalho injectado não removido: %q\nmensagem:\n%s", linha, msg)
+		}
+	}
+}
+
 func TestNotificadorNulo_DevolveNil(t *testing.T) {
 	n := NovoNotificadorNulo(nil)
 	if err := n.NotificarCriacao(context.Background(), "a@sgc.ao", "A", "s"); err != nil {
