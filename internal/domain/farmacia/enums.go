@@ -10,3 +10,15 @@ const (
 	ReceitaExpirada   EstadoReceita = "EXPIRADA"
 	ReceitaAnulada    EstadoReceita = "ANULADA"
 )
+
+// TipoMovimento classifica um movimento de stock (DDM-001).
+type TipoMovimento string
+
+const (
+	MovimentoEntrada       TipoMovimento = "ENTRADA"
+	MovimentoSaidaDispensa TipoMovimento = "SAIDA_DISPENSA"
+	MovimentoSaidaVenda    TipoMovimento = "SAIDA_VENDA"
+	MovimentoAjuste        TipoMovimento = "AJUSTE"
+	MovimentoExpirado      TipoMovimento = "EXPIRADO"
+	MovimentoTransferencia TipoMovimento = "TRANSFERENCIA"
+)

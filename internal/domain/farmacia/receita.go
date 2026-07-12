@@ -101,6 +101,41 @@ func (r *Receita) Anular() error {
 	return nil
 }
 
+// RegistarDispensa regista a dispensa de `quantidade` de um medicamento da
+// receita: valida que não excede o prescrito (cumulativamente) e recalcula o
+// estado (DISPENSADA se tudo dispensado, senão PARCIAL). Só de EMITIDA/PARCIAL.
+func (r *Receita) RegistarDispensa(medicamentoID string, quantidade int) error {
+	if r.estado != ReceitaEmitida && r.estado != ReceitaParcial {
+		return erros.Novo(erros.CategoriaConflito, "só é possível dispensar uma receita emitida ou parcial")
+	}
+	if quantidade <= 0 {
+		return erros.Novo(erros.CategoriaValidacao, "a quantidade a dispensar deve ser positiva")
+	}
+	for i := range r.itens {
+		if r.itens[i].MedicamentoID == medicamentoID {
+			if r.itens[i].QuantidadeDispensada+quantidade > r.itens[i].QuantidadePrescrita {
+				return erros.Novo(erros.CategoriaRegraNegocio, "a quantidade a dispensar excede a prescrita")
+			}
+			r.itens[i].QuantidadeDispensada += quantidade
+			r.recalcularEstadoDispensa()
+			return nil
+		}
+	}
+	return erros.Novo(erros.CategoriaValidacao, "o medicamento não consta da receita")
+}
+
+// recalcularEstadoDispensa põe a receita em DISPENSADA se todos os itens estão
+// totalmente dispensados, senão em PARCIAL.
+func (r *Receita) recalcularEstadoDispensa() {
+	for _, it := range r.itens {
+		if it.QuantidadeDispensada < it.QuantidadePrescrita {
+			r.estado = ReceitaParcial
+			return
+		}
+	}
+	r.estado = ReceitaDispensada
+}
+
 // EstadoEfectivoReceita devolve o estado tendo em conta a expiração: se
 // EMITIDA/PARCIAL e a data de expiração já passou (comparação por dia), devolve
 // EXPIRADA; caso contrário o estado indicado.

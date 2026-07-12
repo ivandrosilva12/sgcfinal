@@ -39,9 +39,30 @@ type EventoReceitaAnulada struct {
 func (e EventoReceitaAnulada) NomeEvento() string    { return "farmacia.receita.anulada" }
 func (e EventoReceitaAnulada) OcorridoEm() time.Time { return e.Em }
 
+// EventoReceitaDispensada é emitido quando uma receita é (parcial ou totalmente) dispensada.
+type EventoReceitaDispensada struct {
+	ReceitaID string
+	Em        time.Time
+}
+
+func (e EventoReceitaDispensada) NomeEvento() string    { return "farmacia.receita.dispensada" }
+func (e EventoReceitaDispensada) OcorridoEm() time.Time { return e.Em }
+
+// StockEntrado é emitido quando entra um lote de stock.
+type StockEntrado struct {
+	LoteID        string
+	MedicamentoID string
+	Em            time.Time
+}
+
+func (e StockEntrado) NomeEvento() string    { return "farmacia.stock.entrada" }
+func (e StockEntrado) OcorridoEm() time.Time { return e.Em }
+
 // Garantias de conformidade com a interface de evento de domínio.
 var (
 	_ evento.EventoDominio = MedicamentoRegistado{}
 	_ evento.EventoDominio = EventoReceitaEmitida{}
 	_ evento.EventoDominio = EventoReceitaAnulada{}
+	_ evento.EventoDominio = EventoReceitaDispensada{}
+	_ evento.EventoDominio = StockEntrado{}
 )
