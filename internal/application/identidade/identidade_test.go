@@ -41,6 +41,11 @@ func (f *fakeRepo) GuardarComPapeis(_ context.Context, u *dominio.Utilizador) er
 	if f.guardarErr != nil {
 		return f.guardarErr
 	}
+	// Upsert: preserve existing local fields (telefone, BI) if user already exists
+	if f.guardado != nil && f.guardado.KeycloakID == u.KeycloakID {
+		u.Telefone = f.guardado.Telefone
+		u.BI = f.guardado.BI
+	}
 	f.guardado = u
 	return nil
 }

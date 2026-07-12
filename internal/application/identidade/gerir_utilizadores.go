@@ -108,8 +108,8 @@ func NovoCasoDefinirActivo(a AdminIdentidade, aud Auditor) *CasoDefinirActivo {
 	return &CasoDefinirActivo{admin: a, auditor: aud, agora: time.Now}
 }
 
-// Executar aplica o estado no Keycloak e regista a auditoria com a acção
-// correspondente (activado/desactivado).
+// Executar aplica o estado no Keycloak e regista a auditoria. Ao desactivar,
+// revoga também as sessões activas do utilizador (deixa de poder renovar tokens).
 func (c *CasoDefinirActivo) Executar(ctx context.Context, actor, id string, activo bool) error {
 	if err := c.admin.DefinirActivo(ctx, id, activo); err != nil {
 		return err
@@ -118,11 +118,26 @@ func (c *CasoDefinirActivo) Executar(ctx context.Context, actor, id string, acti
 	if activo {
 		accao = "identidade.utilizador.activado"
 	}
-	return c.auditor.Registar(ctx, auditoria.Registo{
+	if err := c.auditor.Registar(ctx, auditoria.Registo{
 		Actor:      actor,
 		Accao:      accao,
 		Entidade:   "utilizador",
 		EntidadeID: id,
 		OcorridoEm: c.agora(),
-	})
+	}); err != nil {
+		return err
+	}
+	if !activo {
+		if err := c.admin.RevogarSessoes(ctx, id); err != nil {
+			return err
+		}
+		return c.auditor.Registar(ctx, auditoria.Registo{
+			Actor:      actor,
+			Accao:      "identidade.sessoes.revogadas",
+			Entidade:   "utilizador",
+			EntidadeID: id,
+			OcorridoEm: c.agora(),
+		})
+	}
+	return nil
 }

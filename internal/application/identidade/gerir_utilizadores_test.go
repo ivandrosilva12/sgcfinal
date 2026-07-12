@@ -173,3 +173,26 @@ func TestObterUtilizador_PropagaErro(t *testing.T) {
 		t.Fatal("esperava erro propagado")
 	}
 }
+
+func TestDefinirActivo_DesactivarRevogaSessoes(t *testing.T) {
+	admin := &fakeAdmin{}
+	aud := &fakeAuditor{}
+	caso := appident.NovoCasoDefinirActivo(admin, aud)
+	if err := caso.Executar(context.Background(), "actor-1", "alvo-1", false); err != nil {
+		t.Fatalf("esperava sucesso, obtive %v", err)
+	}
+	if len(admin.sessoesRevogadas) != 1 || admin.sessoesRevogadas[0] != "alvo-1" {
+		t.Fatalf("esperava revogação de sessões ao desactivar: %v", admin.sessoesRevogadas)
+	}
+}
+
+func TestDefinirActivo_ActivarNaoRevoga(t *testing.T) {
+	admin := &fakeAdmin{}
+	caso := appident.NovoCasoDefinirActivo(admin, &fakeAuditor{})
+	if err := caso.Executar(context.Background(), "actor-1", "alvo-1", true); err != nil {
+		t.Fatalf("esperava sucesso, obtive %v", err)
+	}
+	if len(admin.sessoesRevogadas) != 0 {
+		t.Fatalf("activar não deve revogar sessões: %v", admin.sessoesRevogadas)
+	}
+}
