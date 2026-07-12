@@ -418,7 +418,7 @@ func TestDefinirPasswordTemporaria_PUT(t *testing.T) {
 
 func TestResetOTP_ApagaCredsEExigeConfigure(t *testing.T) {
 	var apagouOTP bool
-	var exigiuConfigure bool
+	var requiredActionsRecebidas []string
 	srv := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/protocol/openid-connect/token"):
@@ -431,13 +431,17 @@ func TestResetOTP_ApagaCredsEExigeConfigure(t *testing.T) {
 		case r.Method == nethttp.MethodDelete && strings.HasSuffix(r.URL.Path, "/users/u1/credentials/cred-otp"):
 			apagouOTP = true
 			w.WriteHeader(nethttp.StatusNoContent)
+		case r.Method == nethttp.MethodGet && strings.HasSuffix(r.URL.Path, "/users/u1"):
+			// Utilizador já com UPDATE_PASSWORD pendente (ex.: password temporária
+			// definida por DefinirPasswordTemporaria) — ResetOTP deve preservá-la.
+			_ = json.NewEncoder(w).Encode(map[string]any{"requiredActions": []string{"UPDATE_PASSWORD"}})
 		case r.Method == nethttp.MethodPut && strings.HasSuffix(r.URL.Path, "/users/u1"):
 			var corpo map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&corpo)
 			if ra, ok := corpo["requiredActions"].([]any); ok {
 				for _, a := range ra {
-					if a == "CONFIGURE_TOTP" {
-						exigiuConfigure = true
+					if s, ok := a.(string); ok {
+						requiredActionsRecebidas = append(requiredActionsRecebidas, s)
 					}
 				}
 			}
@@ -454,8 +458,20 @@ func TestResetOTP_ApagaCredsEExigeConfigure(t *testing.T) {
 	if !apagouOTP {
 		t.Fatal("esperava DELETE da credencial otp")
 	}
-	if !exigiuConfigure {
-		t.Fatal("esperava requiredActions com CONFIGURE_TOTP")
+	var temUpdatePassword, temConfigureTotp bool
+	for _, ra := range requiredActionsRecebidas {
+		if ra == "UPDATE_PASSWORD" {
+			temUpdatePassword = true
+		}
+		if ra == "CONFIGURE_TOTP" {
+			temConfigureTotp = true
+		}
+	}
+	if !temUpdatePassword {
+		t.Fatalf("esperava UPDATE_PASSWORD preservado em requiredActions, obtive %v", requiredActionsRecebidas)
+	}
+	if !temConfigureTotp {
+		t.Fatalf("esperava CONFIGURE_TOTP adicionado a requiredActions, obtive %v", requiredActionsRecebidas)
 	}
 }
 

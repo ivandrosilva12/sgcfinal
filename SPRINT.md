@@ -2,8 +2,9 @@
 
 - **Marco**: M1 — Fundações
 - **Sprint**: 5 (BC Identidade — ciclo de vida do utilizador) — **entregue**
-- **Objectivo**: fatia vertical do BC Identidade — autenticação Keycloak (JWT RS256),
-  RBAC pelos 11 papéis, auditoria de acesso e `GET /api/v1/identidade/perfil`.
+- **Objectivo**: completar o ciclo de vida do utilizador — reset de password/OTP
+  (admin), edição de perfil self-service (telefone/BI), revogação de sessões na
+  desactivação e compensação da criação não-atómica.
 
 ## Sprint 5 — entregue
 

@@ -43,6 +43,9 @@ sem criação de utilizadores. Este sprint fecha ambos.
    directo ao Keycloak) é aceite; fica como seguimento no Sprint 5 uma compensação
    best-effort (limpeza em caso de falha parcial) e/ou devolver o id para a conta
    criada ser endereçável.
+   **RESOLVIDO no Sprint 5 (ver ADR-024):** `CriarUtilizador` apaga best-effort o
+   utilizador Keycloak se a atribuição de papéis falhar a meio, evitando o 409 em
+   novas tentativas.
 2. **Corpo da resposta contém `senha_temporaria`.** É intencional (devolvida uma
    única vez), mas qualquer middleware futuro que serialize/registe corpos de
    resposta não pode fazê-lo para esta rota. Nota para quem adicionar logging de

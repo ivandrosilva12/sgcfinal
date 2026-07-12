@@ -277,7 +277,10 @@ func (a *AdminCliente) DefinirPasswordTemporaria(ctx context.Context, id, senha 
 }
 
 // ResetOTP remove as credenciais OTP do utilizador e exige a re-inscrição
-// (required action CONFIGURE_TOTP) no próximo login.
+// (required action CONFIGURE_TOTP) no próximo login. Preserva outras required
+// actions já pendentes (ex.: UPDATE_PASSWORD de uma password temporária) — faz
+// leitura-modificação-escrita em vez de substituir o array inteiro, pois um PUT
+// com apenas CONFIGURE_TOTP apagaria a exigência de mudança de password.
 func (a *AdminCliente) ResetOTP(ctx context.Context, id string) error {
 	var creds []struct {
 		ID   string `json:"id"`
@@ -294,8 +297,23 @@ func (a *AdminCliente) ResetOTP(ctx context.Context, id string) error {
 			}
 		}
 	}
+
+	var u struct {
+		RequiredActions []string `json:"requiredActions"`
+	}
+	if err := a.pedir(ctx, nethttp.MethodGet, "/users/"+url.PathEscape(id), nil, &u); err != nil {
+		return err
+	}
+	for _, ra := range u.RequiredActions {
+		if ra == "CONFIGURE_TOTP" {
+			// Já presente — reenviar o array tal como está (sem duplicar).
+			return a.pedir(ctx, nethttp.MethodPut, "/users/"+url.PathEscape(id),
+				map[string]any{"requiredActions": u.RequiredActions}, nil)
+		}
+	}
+	u.RequiredActions = append(u.RequiredActions, "CONFIGURE_TOTP")
 	return a.pedir(ctx, nethttp.MethodPut, "/users/"+url.PathEscape(id),
-		map[string]any{"requiredActions": []string{"CONFIGURE_TOTP"}}, nil)
+		map[string]any{"requiredActions": u.RequiredActions}, nil)
 }
 
 // RevogarSessoes termina todas as sessões activas do utilizador.
