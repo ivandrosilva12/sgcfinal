@@ -152,6 +152,16 @@ func TestNovoDoente_ContactosInvalidos(t *testing.T) {
 	}
 }
 
+func TestNovoDoente_ContactosInvalidos_TelefoneFormatoInvalido(t *testing.T) {
+	nasc := time.Date(1990, 5, 20, 0, 0, 0, 0, time.UTC)
+	ident, _ := clinico.NovaIdentificacao("Ana", nasc, clinico.SexoFeminino, ptr("00123456LA042"), nil, nil)
+	mau := clinico.Contactos{Telefone: "999"} // telefone inválido, por literal
+	_, err := clinico.NovoDoente("P-2026-000099", ident, mau, "AO")
+	if erros.CategoriaDe(err) != erros.CategoriaValidacao {
+		t.Fatalf("esperava validação para contactos inválidos, obtive %v", err)
+	}
+}
+
 func TestDoente_AdicionarAlergia_Invalida(t *testing.T) {
 	d := doenteValido(t)
 	if err := d.AdicionarAlergia(clinico.Alergia{}); erros.CategoriaDe(err) != erros.CategoriaValidacao {

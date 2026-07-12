@@ -42,8 +42,9 @@ func NovoDoente(numProcesso string, ident Identificacao, contactos Contactos, na
 	if _, err := NovaIdentificacao(ident.NomeCompleto, ident.DataNascimento, ident.Sexo, ident.BI, ident.NIF, ident.Passaporte); err != nil {
 		return nil, err
 	}
-	if contactos.Telefone == "" {
-		return nil, erros.Novo(erros.CategoriaValidacao, "contactos inválidos")
+	contactosValidados, err := NovosContactos(contactos.Telefone, contactos.Email, contactos.Morada)
+	if err != nil {
+		return nil, err
 	}
 	nac := strings.TrimSpace(nacionalidade)
 	if nac == "" {
@@ -52,7 +53,7 @@ func NovoDoente(numProcesso string, ident Identificacao, contactos Contactos, na
 	return &Doente{
 		numProcesso:   numProcesso,
 		identificacao: ident,
-		contactos:     contactos,
+		contactos:     contactosValidados,
 		nacionalidade: nac,
 		estado:        EstadoActivo,
 	}, nil
@@ -156,10 +157,11 @@ func (d *Doente) AtualizarContactos(ct Contactos) error {
 	if d.estado == EstadoApagado {
 		return erros.Novo(erros.CategoriaConflito, "não é possível alterar um doente apagado")
 	}
-	if ct.Telefone == "" {
-		return erros.Novo(erros.CategoriaValidacao, "contactos inválidos")
+	ctValidados, err := NovosContactos(ct.Telefone, ct.Email, ct.Morada)
+	if err != nil {
+		return err
 	}
-	d.contactos = ct
+	d.contactos = ctValidados
 	return nil
 }
 
