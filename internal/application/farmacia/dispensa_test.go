@@ -12,12 +12,16 @@ import (
 // fakeMotorDispensa simula a persistência transaccional: se tiver um repo,
 // guarda nele a receita recebida (como o motor real faria), para que o re-ler do
 // caso de uso reflicta o novo estado. Devolve um erro configurável.
+// invocado conta as chamadas a Dispensar, para os testes que verificam que o
+// motor NÃO é invocado quando o caso de uso deve falhar antes de lhe chamar.
 type fakeMotorDispensa struct {
-	err  error
-	repo *fakeRepoReceitas
+	err      error
+	repo     *fakeRepoReceitas
+	invocado int
 }
 
 func (m *fakeMotorDispensa) Dispensar(_ context.Context, receita dominio.SnapshotReceita, _ []appfarmacia.ItemDispensa, _ string) ([]dominio.AlocacaoFEFO, error) {
+	m.invocado++
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -98,5 +102,42 @@ func TestDispensar_StockInsuficiente(t *testing.T) {
 	caso := appfarmacia.NovoCasoDispensarReceita(repoRec, repoMed, leitor, motor, &fakeAuditor{})
 	if _, err := caso.Executar(context.Background(), "farm-1", recID, dispensa(medID, 5)); erros.CategoriaDe(err) != erros.CategoriaRegraNegocio {
 		t.Fatalf("esperava RegraNegocio (stock), obtive %v", err)
+	}
+}
+
+// TestDispensar_EstadoInvalido cobre a dispensa de uma receita já ANULADA:
+// tem de falhar com CategoriaConflito ANTES de tocar no motor (o motor não
+// pode ser invocado — não há nada a reverter porque nunca se mexeu em stock).
+func TestDispensar_EstadoInvalido(t *testing.T) {
+	repoRec, repoMed, leitor, recID, medID := prepararDispensa(t)
+	if _, err := appfarmacia.NovoCasoAnularReceita(repoRec, &fakeAuditor{}).Executar(context.Background(), "medico-1", recID, "erro de prescrição"); err != nil {
+		t.Fatalf("anular (preparação): %v", err)
+	}
+	motor := &fakeMotorDispensa{}
+	caso := appfarmacia.NovoCasoDispensarReceita(repoRec, repoMed, leitor, motor, &fakeAuditor{})
+	if _, err := caso.Executar(context.Background(), "farm-1", recID, dispensa(medID, 5)); erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Fatalf("esperava Conflito (receita anulada), obtive %v", err)
+	}
+	if motor.invocado != 0 {
+		t.Fatalf("motor não devia ter sido invocado, foi %d vez(es)", motor.invocado)
+	}
+}
+
+// TestDispensar_OverrideSemJustificacao cobre o override de alerta de
+// alergia sem justificação: tem de falhar com CategoriaValidacao e o motor
+// não pode ser invocado.
+func TestDispensar_OverrideSemJustificacao(t *testing.T) {
+	repoRec, repoMed, leitor, recID, medID := prepararDispensa(t)
+	leitor.alergias = []appfarmacia.AlergiaClinica{{Substancia: "Amoxicilina", Severidade: "GRAVE"}}
+	d := dispensa(medID, 5)
+	d.IgnorarAlertaAlergia = true
+	d.JustificacaoAlerta = "" // em falta
+	motor := &fakeMotorDispensa{}
+	caso := appfarmacia.NovoCasoDispensarReceita(repoRec, repoMed, leitor, motor, &fakeAuditor{})
+	if _, err := caso.Executar(context.Background(), "farm-1", recID, d); erros.CategoriaDe(err) != erros.CategoriaValidacao {
+		t.Fatalf("esperava Validacao (falta justificação), obtive %v", err)
+	}
+	if motor.invocado != 0 {
+		t.Fatalf("motor não devia ter sido invocado, foi %d vez(es)", motor.invocado)
 	}
 }
