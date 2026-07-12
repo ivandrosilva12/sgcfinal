@@ -14,7 +14,7 @@ verificar() {
     local perfil
     perfil="$(mktemp)"
 
-    if ! go test -covermode=set -coverprofile="$perfil" "$alvo" >/dev/null 2>&1; then
+    if ! go test -covermode=set -coverprofile="$perfil" $alvo >/dev/null 2>&1; then
         echo "  ${nome}: testes FALHARAM"
         falhou=1
         return
@@ -42,7 +42,9 @@ verificar() {
 echo "Gate de cobertura por camada:"
 verificar "domínio"     "./internal/domain/..."      85
 verificar "aplicação"   "./internal/application/..." 75
-verificar "adaptadores" "./internal/adapters/..."    60
+# pgrepo é coberto por testes de integração (sem a tag, aparece a 0%): excluído do gate unitário.
+adaptadores_pkgs="$(go list ./internal/adapters/... | grep -v '/pgrepo$' | tr '\n' ' ')"
+verificar "adaptadores" "$adaptadores_pkgs" 60
 
 if [ "$falhou" -ne 0 ]; then
     echo "Gate de cobertura FALHOU."
