@@ -1,0 +1,47 @@
+package farmacia
+
+import (
+	"time"
+
+	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/evento"
+)
+
+// MedicamentoRegistado é emitido quando um medicamento é adicionado ao catálogo.
+type MedicamentoRegistado struct {
+	MedicamentoID string
+	Em            time.Time
+}
+
+func (e MedicamentoRegistado) NomeEvento() string    { return "farmacia.medicamento.registado" }
+func (e MedicamentoRegistado) OcorridoEm() time.Time { return e.Em }
+
+// EventoReceitaEmitida é emitido quando uma receita é emitida.
+// Nota: nomeado com o prefixo "Evento" (e não "ReceitaEmitida") para evitar
+// colidir com a constante farmacia.ReceitaEmitida de EstadoReceita (enums.go);
+// o pacote não compilaria com dois identificadores "ReceitaEmitida".
+type EventoReceitaEmitida struct {
+	ReceitaID string
+	DoenteID  string
+	Em        time.Time
+}
+
+func (e EventoReceitaEmitida) NomeEvento() string    { return "farmacia.receita.emitida" }
+func (e EventoReceitaEmitida) OcorridoEm() time.Time { return e.Em }
+
+// EventoReceitaAnulada é emitido quando uma receita é anulada.
+// Nota: mesmo motivo do prefixo "Evento" que em EventoReceitaEmitida, para não
+// colidir com a constante farmacia.ReceitaAnulada de EstadoReceita.
+type EventoReceitaAnulada struct {
+	ReceitaID string
+	Em        time.Time
+}
+
+func (e EventoReceitaAnulada) NomeEvento() string    { return "farmacia.receita.anulada" }
+func (e EventoReceitaAnulada) OcorridoEm() time.Time { return e.Em }
+
+// Garantias de conformidade com a interface de evento de domínio.
+var (
+	_ evento.EventoDominio = MedicamentoRegistado{}
+	_ evento.EventoDominio = EventoReceitaEmitida{}
+	_ evento.EventoDominio = EventoReceitaAnulada{}
+)
