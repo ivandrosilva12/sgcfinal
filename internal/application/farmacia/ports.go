@@ -121,3 +121,86 @@ type DetalheReceita struct {
 	ExpiraEm   time.Time        `json:"expira_em"`
 	Itens      []ItemReceitaDTO `json:"itens"`
 }
+
+// --- Stock & Dispensa ---
+
+// ItemDispensa é uma linha de dispensa (medicamento + quantidade) passada ao motor.
+type ItemDispensa struct {
+	MedicamentoID string
+	Quantidade    int
+}
+
+// MotorDispensa é a porta transaccional da dispensa: aloca stock por FEFO, regista
+// os movimentos e persiste a receita, atomicamente.
+type MotorDispensa interface {
+	Dispensar(ctx context.Context, receita dominio.SnapshotReceita, itens []ItemDispensa, realizadoPor string) ([]dominio.AlocacaoFEFO, error)
+}
+
+// Reexports dos read-models de stock.
+type (
+	FiltroFornecedores = dominio.FiltroFornecedores
+	PaginaFornecedores = dominio.PaginaFornecedores
+	ResumoFornecedor   = dominio.ResumoFornecedor
+	ResumoLote         = dominio.ResumoLote
+)
+
+// DadosNovoFornecedor é a entrada do registo de fornecedor.
+type DadosNovoFornecedor struct {
+	Nome     string  `json:"nome"`
+	NIF      *string `json:"nif"`
+	Contacto *string `json:"contacto"`
+}
+
+// DetalheFornecedor é o detalhe de um fornecedor numa resposta.
+type DetalheFornecedor struct {
+	ID       string    `json:"id"`
+	Nome     string    `json:"nome"`
+	NIF      *string   `json:"nif,omitempty"`
+	Contacto *string   `json:"contacto,omitempty"`
+	Activo   bool      `json:"activo"`
+	CriadoEm time.Time `json:"criado_em"`
+}
+
+// DadosEntradaStock é a entrada de um lote de stock (UC-FAR-01).
+type DadosEntradaStock struct {
+	MedicamentoID      string
+	NumeroLote         string
+	Validade           time.Time
+	Quantidade         int
+	PrecoUnitarioCusto string
+	FornecedorID       *string
+	Notas              string
+}
+
+// DetalheLote é o detalhe de um lote numa resposta.
+type DetalheLote struct {
+	ID                 string    `json:"id"`
+	MedicamentoID      string    `json:"medicamento_id"`
+	NumeroLote         string    `json:"numero_lote"`
+	Validade           time.Time `json:"validade"`
+	QuantidadeInicial  int       `json:"quantidade_inicial"`
+	QuantidadeActual   int       `json:"quantidade_actual"`
+	PrecoUnitarioCusto string    `json:"preco_unit_custo"`
+	FornecedorID       *string   `json:"fornecedor_id,omitempty"`
+	EntradaEm          time.Time `json:"entrada_em"`
+	Notas              string    `json:"notas,omitempty"`
+}
+
+// StockDTO é o stock disponível total de um medicamento.
+type StockDTO struct {
+	MedicamentoID string `json:"medicamento_id"`
+	Disponivel    int    `json:"disponivel"`
+}
+
+// ItemDispensaDTO é um item num pedido de dispensa.
+type ItemDispensaDTO struct {
+	MedicamentoID string `json:"medicamento_id"`
+	Quantidade    int    `json:"quantidade"`
+}
+
+// DadosDispensa é a entrada da dispensa de uma receita.
+type DadosDispensa struct {
+	Itens                []ItemDispensaDTO
+	IgnorarAlertaAlergia bool
+	JustificacaoAlerta   string
+}
