@@ -10,12 +10,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	adfarmacia "github.com/ivandrosilva12/sgcfinal/internal/adapters/farmacia"
 	adhttp "github.com/ivandrosilva12/sgcfinal/internal/adapters/http"
 	"github.com/ivandrosilva12/sgcfinal/internal/adapters/keycloak"
 	"github.com/ivandrosilva12/sgcfinal/internal/adapters/pgrepo"
 	adredis "github.com/ivandrosilva12/sgcfinal/internal/adapters/redis"
 	adsmtp "github.com/ivandrosilva12/sgcfinal/internal/adapters/smtp"
 	appclinico "github.com/ivandrosilva12/sgcfinal/internal/application/clinico"
+	appfarmacia "github.com/ivandrosilva12/sgcfinal/internal/application/farmacia"
 	appident "github.com/ivandrosilva12/sgcfinal/internal/application/identidade"
 	"github.com/ivandrosilva12/sgcfinal/internal/platform/config"
 	"github.com/ivandrosilva12/sgcfinal/internal/platform/db"
@@ -112,6 +114,22 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		appclinico.NovoCasoObterEHR(repoDoentes, repoEpisodios, repoAuditoria),
 	)
 
+	// BC Farmácia: catálogo de medicamentos e receitas.
+	repoMedicamentos := pgrepo.NovoRepositorioMedicamentos(pool)
+	repoReceitas := pgrepo.NovoRepositorioReceitas(pool)
+	leitorClinico := adfarmacia.NovoLeitorClinico(repoDoentes, repoEpisodios)
+	handlerFarmacia := adhttp.NovoFarmaciaHandler(
+		appfarmacia.NovoCasoRegistarMedicamento(repoMedicamentos, repoAuditoria),
+		appfarmacia.NovoCasoActualizarMedicamento(repoMedicamentos, repoAuditoria),
+		appfarmacia.NovoCasoDefinirEstadoMedicamento(repoMedicamentos, repoAuditoria),
+		appfarmacia.NovoCasoObterMedicamento(repoMedicamentos),
+		appfarmacia.NovoCasoPesquisarMedicamentos(repoMedicamentos),
+		appfarmacia.NovoCasoEmitirReceita(repoReceitas, repoMedicamentos, leitorClinico, repoAuditoria),
+		appfarmacia.NovoCasoAnularReceita(repoReceitas, repoAuditoria),
+		appfarmacia.NovoCasoObterReceita(repoReceitas, repoAuditoria),
+		appfarmacia.NovoCasoListarReceitas(repoReceitas),
+	)
+
 	// Middlewares transversais e do grupo protegido.
 	segurancaMW := adhttp.SegurancaHTTP(cfg.OrigensCORS, cfg.EmProducao())
 	limiteMW := adhttp.LimiteTaxa(redisCli.Limitador(), cfg.LimiteTaxaIP, cfg.JanelaTaxa)
@@ -130,6 +148,7 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		adhttp.RegistarAdministracao(r, handlerAdmin, limiteMW, authMW, mfaMW)
 		adhttp.RegistarDoentes(r, handlerDoentes, limiteMW, authMW)
 		adhttp.RegistarEpisodios(r, handlerEpisodios, limiteMW, authMW)
+		adhttp.RegistarFarmacia(r, handlerFarmacia, limiteMW, authMW)
 	}
 
 	logger.Info("dependências estabelecidas", "ambiente", cfg.Ambiente)
