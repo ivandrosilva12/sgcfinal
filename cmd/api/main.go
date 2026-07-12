@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	nethttp "net/http"
 	"os"
 	"os/signal"
@@ -39,6 +40,8 @@ func main() {
 	}
 
 	logger := log.Novo(os.Getenv("LOG_LEVEL"))
+	// Encaminha os slog.* de pacote (avisos best-effort) para o logger JSON.
+	slog.SetDefault(logger)
 
 	ctx, parar := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer parar()
