@@ -22,6 +22,14 @@ type Auditor interface {
 	Registar(ctx context.Context, r auditoria.Registo) error
 }
 
+// Notificador envia notificações ao utilizador (ex.: email). O envio é
+// best-effort na perspectiva do chamador: um erro devolvido aqui é registado
+// mas não falha a operação de negócio. Implementado por adapters/smtp.
+type Notificador interface {
+	NotificarCriacao(ctx context.Context, email, nome, senhaTemporaria string) error
+	NotificarResetPassword(ctx context.Context, email, nome, senhaTemporaria string) error
+}
+
 // FiltroUtilizadores parametriza a listagem de utilizadores.
 type FiltroUtilizadores struct {
 	Termo        string // pesquisa por nome/email/username (opcional)
