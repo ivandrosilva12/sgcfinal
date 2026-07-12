@@ -23,12 +23,17 @@ CREATE TABLE IF NOT EXISTS farmacia.lotes (
     fornecedor_id      uuid          REFERENCES farmacia.fornecedores(id),
     entrada_em         timestamptz   NOT NULL DEFAULT now(),
     notas              text,
-    UNIQUE (medicamento_id, numero_lote, fornecedor_id)
+    -- NULLS NOT DISTINCT: dois lotes com o mesmo medicamento e número sem
+    -- fornecedor associado (fornecedor_id NULL) também contam como duplicados.
+    UNIQUE NULLS NOT DISTINCT (medicamento_id, numero_lote, fornecedor_id)
 );
 CREATE INDEX IF NOT EXISTS idx_lotes_fefo
     ON farmacia.lotes (medicamento_id, validade ASC) WHERE quantidade_actual > 0;
+-- Nota: o predicado não pode depender de CURRENT_DATE (função STABLE) porque
+-- índices parciais exigem predicados IMMUTABLE; o filtro dos 90 dias
+-- aplica-se em tempo de consulta, não no índice.
 CREATE INDEX IF NOT EXISTS idx_lotes_validade_proxima
-    ON farmacia.lotes (validade) WHERE quantidade_actual > 0 AND validade <= (CURRENT_DATE + INTERVAL '90 days');
+    ON farmacia.lotes (validade) WHERE quantidade_actual > 0;
 
 COMMENT ON TABLE farmacia.lotes IS
     'Lotes de stock por medicamento. FEFO: consumir primeiro a validade mais próxima (mas válida).';
