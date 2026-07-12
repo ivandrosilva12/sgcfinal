@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"log/slog"
 	"net/mail"
 	"strings"
 	"time"
@@ -19,12 +20,13 @@ import (
 type CasoCriarUtilizador struct {
 	admin   AdminIdentidade
 	auditor Auditor
+	notif   Notificador
 	agora   func() time.Time
 }
 
 // NovoCasoCriarUtilizador constrói o caso de uso.
-func NovoCasoCriarUtilizador(a AdminIdentidade, aud Auditor) *CasoCriarUtilizador {
-	return &CasoCriarUtilizador{admin: a, auditor: aud, agora: time.Now}
+func NovoCasoCriarUtilizador(a AdminIdentidade, aud Auditor, notif Notificador) *CasoCriarUtilizador {
+	return &CasoCriarUtilizador{admin: a, auditor: aud, notif: notif, agora: time.Now}
 }
 
 // Executar valida a entrada, gera a senha temporária, delega a criação no Keycloak,
@@ -69,6 +71,11 @@ func (c *CasoCriarUtilizador) Executar(ctx context.Context, actor string, entrad
 		OcorridoEm: c.agora(),
 	}); err != nil {
 		return UtilizadorCriado{}, err
+	}
+
+	// Notificação best-effort: falha de email não falha a criação nem vaza a senha.
+	if err := c.notif.NotificarCriacao(ctx, entrada.Email, entrada.Nome, senha); err != nil {
+		slog.Warn("falha ao notificar criação por email", "utilizador", id, "erro", err)
 	}
 
 	return UtilizadorCriado{ID: id, SenhaTemporaria: senha}, nil

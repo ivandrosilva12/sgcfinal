@@ -45,7 +45,7 @@ func (f *fakeCriador) RevogarSessao(context.Context, string) error { return nil 
 func TestCriarUtilizador_PapelComum(t *testing.T) {
 	admin := &fakeCriador{id: "novo-id"}
 	aud := &fakeAuditor{}
-	caso := appident.NovoCasoCriarUtilizador(admin, aud)
+	caso := appident.NovoCasoCriarUtilizador(admin, aud, &fakeNotificador{})
 
 	out, err := caso.Executar(context.Background(), "actor-1", appident.CriacaoUtilizador{
 		Username: "ana.silva", Nome: "Ana Silva", Email: "ana@sgc.ao",
@@ -70,7 +70,7 @@ func TestCriarUtilizador_PapelComum(t *testing.T) {
 
 func TestCriarUtilizador_PapelSensivel_ExigeOTP(t *testing.T) {
 	admin := &fakeCriador{id: "novo-id"}
-	caso := appident.NovoCasoCriarUtilizador(admin, &fakeAuditor{})
+	caso := appident.NovoCasoCriarUtilizador(admin, &fakeAuditor{}, &fakeNotificador{})
 	if _, err := caso.Executar(context.Background(), "actor-1", appident.CriacaoUtilizador{
 		Username: "chefe", Nome: "Chefe Geral", Email: "chefe@sgc.ao",
 		Papeis: []dominio.Papel{dominio.PapelAdmin},
@@ -83,7 +83,7 @@ func TestCriarUtilizador_PapelSensivel_ExigeOTP(t *testing.T) {
 }
 
 func TestCriarUtilizador_EmailInvalido(t *testing.T) {
-	caso := appident.NovoCasoCriarUtilizador(&fakeCriador{}, &fakeAuditor{})
+	caso := appident.NovoCasoCriarUtilizador(&fakeCriador{}, &fakeAuditor{}, &fakeNotificador{})
 	_, err := caso.Executar(context.Background(), "actor-1", appident.CriacaoUtilizador{
 		Username: "x", Nome: "X", Email: "não-é-email", Papeis: nil,
 	})
@@ -93,7 +93,7 @@ func TestCriarUtilizador_EmailInvalido(t *testing.T) {
 }
 
 func TestCriarUtilizador_PapelInvalido(t *testing.T) {
-	caso := appident.NovoCasoCriarUtilizador(&fakeCriador{}, &fakeAuditor{})
+	caso := appident.NovoCasoCriarUtilizador(&fakeCriador{}, &fakeAuditor{}, &fakeNotificador{})
 	_, err := caso.Executar(context.Background(), "actor-1", appident.CriacaoUtilizador{
 		Username: "x", Nome: "X", Email: "x@sgc.ao", Papeis: []dominio.Papel{"Inexistente"},
 	})
@@ -103,7 +103,7 @@ func TestCriarUtilizador_PapelInvalido(t *testing.T) {
 }
 
 func TestCriarUtilizador_UsernameVazio(t *testing.T) {
-	caso := appident.NovoCasoCriarUtilizador(&fakeCriador{}, &fakeAuditor{})
+	caso := appident.NovoCasoCriarUtilizador(&fakeCriador{}, &fakeAuditor{}, &fakeNotificador{})
 	_, err := caso.Executar(context.Background(), "actor-1", appident.CriacaoUtilizador{
 		Username: "", Nome: "X", Email: "x@sgc.ao",
 	})
@@ -114,11 +114,40 @@ func TestCriarUtilizador_UsernameVazio(t *testing.T) {
 
 func TestCriarUtilizador_PropagaConflito(t *testing.T) {
 	conflito := erros.Novo(erros.CategoriaConflito, "já existe")
-	caso := appident.NovoCasoCriarUtilizador(&fakeCriador{err: conflito}, &fakeAuditor{})
+	caso := appident.NovoCasoCriarUtilizador(&fakeCriador{err: conflito}, &fakeAuditor{}, &fakeNotificador{})
 	_, err := caso.Executar(context.Background(), "actor-1", appident.CriacaoUtilizador{
 		Username: "dup", Nome: "Dup", Email: "dup@sgc.ao",
 	})
 	if !errors.Is(err, conflito) {
 		t.Fatalf("esperava propagação do conflito, obtive %v", err)
+	}
+}
+
+func TestCriarUtilizador_NotificaPorEmail(t *testing.T) {
+	notif := &fakeNotificador{}
+	caso := appident.NovoCasoCriarUtilizador(&fakeCriador{id: "novo-id"}, &fakeAuditor{}, notif)
+	if _, err := caso.Executar(context.Background(), "actor-1", appident.CriacaoUtilizador{
+		Username: "ana.silva", Nome: "Ana Silva", Email: "ana@sgc.ao",
+		Papeis: []dominio.Papel{dominio.PapelMedico},
+	}); err != nil {
+		t.Fatalf("esperava sucesso, obtive %v", err)
+	}
+	if notif.criacoes != 1 {
+		t.Fatalf("esperava 1 notificação de criação, obtive %d", notif.criacoes)
+	}
+}
+
+func TestCriarUtilizador_FalhaEmailNaoFalhaCriacao(t *testing.T) {
+	notif := &fakeNotificador{err: errors.New("smtp em baixo")}
+	caso := appident.NovoCasoCriarUtilizador(&fakeCriador{id: "novo-id"}, &fakeAuditor{}, notif)
+	out, err := caso.Executar(context.Background(), "actor-1", appident.CriacaoUtilizador{
+		Username: "ana.silva", Nome: "Ana Silva", Email: "ana@sgc.ao",
+		Papeis: []dominio.Papel{dominio.PapelMedico},
+	})
+	if err != nil {
+		t.Fatalf("falha de email não deve falhar a criação, obtive %v", err)
+	}
+	if out.ID != "novo-id" || out.SenhaTemporaria == "" {
+		t.Fatalf("criação devia ter tido sucesso: %+v", out)
 	}
 }

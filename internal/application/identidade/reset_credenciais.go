@@ -2,6 +2,7 @@ package identidade
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/auditoria"
@@ -12,12 +13,13 @@ import (
 type CasoResetPassword struct {
 	admin   AdminIdentidade
 	auditor Auditor
+	notif   Notificador
 	agora   func() time.Time
 }
 
 // NovoCasoResetPassword constrói o caso de uso.
-func NovoCasoResetPassword(a AdminIdentidade, aud Auditor) *CasoResetPassword {
-	return &CasoResetPassword{admin: a, auditor: aud, agora: time.Now}
+func NovoCasoResetPassword(a AdminIdentidade, aud Auditor, notif Notificador) *CasoResetPassword {
+	return &CasoResetPassword{admin: a, auditor: aud, notif: notif, agora: time.Now}
 }
 
 // Executar gera uma nova senha temporária, define-a no Keycloak, audita e
@@ -39,6 +41,13 @@ func (c *CasoResetPassword) Executar(ctx context.Context, actor, id string) (Cre
 	}); err != nil {
 		return CredencialReposta{}, err
 	}
+	// Notificação best-effort: obtém o email do alvo e envia; nada disto falha o reset.
+	if det, err := c.admin.ObterUtilizador(ctx, id); err != nil {
+		slog.Warn("não obteve o email do utilizador para notificar o reset", "utilizador", id, "erro", err)
+	} else if err := c.notif.NotificarResetPassword(ctx, det.Email, det.Nome, senha); err != nil {
+		slog.Warn("falha ao notificar reset por email", "utilizador", id, "erro", err)
+	}
+
 	return CredencialReposta{SenhaTemporaria: senha}, nil
 }
 
