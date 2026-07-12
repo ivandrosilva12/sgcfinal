@@ -118,3 +118,21 @@ SET nome = EXCLUDED.nome,
 	}
 	return nil
 }
+
+// AtualizarContacto persiste telefone/BI do utilizador (perfil local). Strings
+// vazias limpam o campo. Devolve NaoEncontrado se a linha não existir.
+func (r *RepositorioUtilizadores) AtualizarContacto(ctx context.Context, keycloakID, telefone, bi string) error {
+	const q = `
+UPDATE identidade.utilizadores
+SET telefone = NULLIF($2, ''), bi = NULLIF($3, ''), actualizado_em = now()
+WHERE keycloak_id = $1`
+
+	ct, err := r.pool.Exec(ctx, q, keycloakID, telefone, bi)
+	if err != nil {
+		return fmt.Errorf("actualizar contacto: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return erros.Novo(erros.CategoriaNaoEncontrado, "utilizador não encontrado")
+	}
+	return nil
+}
