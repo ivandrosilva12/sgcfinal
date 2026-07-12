@@ -1,10 +1,20 @@
 # SPRINT ACTUAL
 
 - **Marco**: M1 — Fundações
-- **Sprint**: 5 (BC Identidade — ciclo de vida do utilizador) — **entregue**
-- **Objectivo**: completar o ciclo de vida do utilizador — reset de password/OTP
-  (admin), edição de perfil self-service (telefone/BI), revogação de sessões na
-  desactivação e compensação da criação não-atómica.
+- **Sprint**: 6 (BC Identidade — loose-ends: sessões, perfil admin, notificações) — **entregue**
+- **Objectivo**: gestão de sessões activas (listar/revogar granular), edição
+  administrativa de perfil (telefone/BI de outros), e notificações por email
+  best-effort com fallback no-op. Encerra os loose-ends do BC Identidade.
+
+## Sprint 6 — entregue
+
+- [x] Gestão de sessões activas: listar por utilizador (Admin/Auditor/DPO),
+      revogar sessão granular por sessionId (Admin). Auditado.
+- [x] Edição administrativa de perfil (`PATCH /utilizadores/:id/perfil`, Admin)
+      com hidratação JIT a partir do Keycloak.
+- [x] Notificações por email (criação e reset de password) best-effort, com
+      fallback no-op quando SMTP não configurado. MailHog no compose.
+- [x] ADR-025.
 
 ## Sprint 5 — entregue
 
