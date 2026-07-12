@@ -138,3 +138,83 @@ type DetalheDoente struct {
 	CriadoEm       time.Time        `json:"criado_em"`
 	ActualizadoEm  time.Time        `json:"actualizado_em"`
 }
+
+// --- Episódio Clínico ---
+
+// Reexports dos read-models de episódio.
+type (
+	FiltroEpisodios = dominio.FiltroEpisodios
+	PaginaEpisodios = dominio.PaginaEpisodios
+	ResumoEpisodio  = dominio.ResumoEpisodio
+)
+
+// DadosNovoEpisodio é a entrada do caso de uso de iniciar episódio. DoenteID vem
+// do caminho do pedido; Inicio é opcional (default: momento da criação).
+type DadosNovoEpisodio struct {
+	DoenteID        string
+	Tipo            string
+	EspecialidadeID string
+	MedicoID        string
+	Inicio          *time.Time
+}
+
+// DadosNotaClinica é a nota clínica num pedido de actualização.
+type DadosNotaClinica struct {
+	QueixaPrincipal string `json:"queixa_principal"`
+	HistoriaDoenca  string `json:"historia_doenca"`
+	ExameObjectivo  string `json:"exame_objectivo"`
+	Diagnostico     string `json:"diagnostico"`
+	Plano           string `json:"plano"`
+}
+
+// DadosDiagnosticoCID é um diagnóstico CID num pedido.
+type DadosDiagnosticoCID struct {
+	CID       string `json:"cid"`
+	Principal bool   `json:"principal"`
+}
+
+// DadosActualizarEpisodio é a entrada da actualização (campos a nil ignorados).
+type DadosActualizarEpisodio struct {
+	Nota            *DadosNotaClinica
+	DiagnosticosCID *[]DadosDiagnosticoCID
+}
+
+// NotaClinicaDTO é a nota clínica numa resposta.
+type NotaClinicaDTO struct {
+	QueixaPrincipal string `json:"queixa_principal,omitempty"`
+	HistoriaDoenca  string `json:"historia_doenca,omitempty"`
+	ExameObjectivo  string `json:"exame_objectivo,omitempty"`
+	Diagnostico     string `json:"diagnostico,omitempty"`
+	Plano           string `json:"plano,omitempty"`
+}
+
+// DiagnosticoCIDDTO é um diagnóstico CID numa resposta.
+type DiagnosticoCIDDTO struct {
+	CID       string `json:"cid"`
+	Principal bool   `json:"principal"`
+}
+
+// DetalheEpisodio é o detalhe completo de um episódio numa resposta.
+type DetalheEpisodio struct {
+	ID              string              `json:"id"`
+	DoenteID        string              `json:"doente_id"`
+	Tipo            string              `json:"tipo"`
+	EspecialidadeID string              `json:"especialidade_id"`
+	MedicoID        string              `json:"medico_id"`
+	Inicio          time.Time           `json:"inicio"`
+	Fim             *time.Time          `json:"fim,omitempty"`
+	Nota            NotaClinicaDTO      `json:"nota"`
+	DiagnosticosCID []DiagnosticoCIDDTO `json:"diagnosticos_cid"`
+	Estado          string              `json:"estado"`
+	CriadoEm        time.Time           `json:"criado_em"`
+	ActualizadoEm   time.Time           `json:"actualizado_em"`
+	FechadoEm       *time.Time          `json:"fechado_em,omitempty"`
+	FechadoPor      string              `json:"fechado_por,omitempty"`
+}
+
+// EHR é a projecção de leitura do registo clínico: doente (com alergias e
+// antecedentes) + episódios paginados.
+type EHR struct {
+	Doente    DetalheDoente   `json:"doente"`
+	Episodios PaginaEpisodios `json:"episodios"`
+}
