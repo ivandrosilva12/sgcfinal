@@ -23,6 +23,8 @@ const (
 	CategoriaMFAObrigatorio
 	// CategoriaInterno — falha inesperada (→ 500).
 	CategoriaInterno
+	// CategoriaRegraNegocio — violação de regra de negócio (→ 422).
+	CategoriaRegraNegocio
 )
 
 // ErroDominio é um erro de negócio com categoria e mensagem PT-PT.

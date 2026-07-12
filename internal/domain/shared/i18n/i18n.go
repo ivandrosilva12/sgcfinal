@@ -39,6 +39,8 @@ const (
 	MsgUtilizadorJaExiste Chave = "erro.utilizador_ja_existe"
 	// MsgCriacaoInvalida — dados de criação inválidos.
 	MsgCriacaoInvalida Chave = "erro.criacao_invalida"
+	// MsgRegraNegocio — violação de regra de negócio (422).
+	MsgRegraNegocio Chave = "erro.regra_negocio"
 )
 
 // mensagensPtAO é o catálogo pt-AO.
@@ -57,6 +59,7 @@ var mensagensPtAO = map[Chave]string{
 	MsgUtilizadorNaoEncontrado: "Utilizador não encontrado.",
 	MsgUtilizadorJaExiste:      "Já existe um utilizador com este nome de utilizador ou email.",
 	MsgCriacaoInvalida:         "Dados de criação inválidos.",
+	MsgRegraNegocio:            "Não foi possível processar o pedido por violar uma regra de negócio.",
 }
 
 // T devolve a mensagem pt-AO para a chave. Se a chave for desconhecida, devolve

@@ -30,6 +30,13 @@ func TestUnwrap(t *testing.T) {
 	}
 }
 
+func TestCategoriaRegraNegocio_RoundTrip(t *testing.T) {
+	err := dominioerros.Novo(dominioerros.CategoriaRegraNegocio, "regra violada")
+	if dominioerros.CategoriaDe(err) != dominioerros.CategoriaRegraNegocio {
+		t.Fatalf("esperava CategoriaRegraNegocio, obtive %v", dominioerros.CategoriaDe(err))
+	}
+}
+
 func TestCategoriaDe(t *testing.T) {
 	casos := []struct {
 		nome     string

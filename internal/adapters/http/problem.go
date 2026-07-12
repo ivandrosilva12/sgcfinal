@@ -68,6 +68,8 @@ func estadoDe(cat erros.Categoria) int {
 		return nethttp.StatusNotFound
 	case erros.CategoriaConflito:
 		return nethttp.StatusConflict
+	case erros.CategoriaRegraNegocio:
+		return nethttp.StatusUnprocessableEntity
 	default:
 		return nethttp.StatusInternalServerError
 	}
@@ -87,6 +89,8 @@ func tituloDe(cat erros.Categoria) string {
 		return i18n.T(i18n.MsgRecursoNaoEncontrado)
 	case erros.CategoriaConflito:
 		return i18n.T(i18n.MsgConflito)
+	case erros.CategoriaRegraNegocio:
+		return i18n.T(i18n.MsgRegraNegocio)
 	default:
 		return i18n.T(i18n.MsgErroInterno)
 	}
