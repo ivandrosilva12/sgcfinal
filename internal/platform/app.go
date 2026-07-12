@@ -130,6 +130,19 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		appfarmacia.NovoCasoListarReceitas(repoReceitas),
 	)
 
+	// BC Farmácia: stock e dispensa.
+	repoFornecedores := pgrepo.NovoRepositorioFornecedores(pool)
+	repoLotes := pgrepo.NovoRepositorioLotes(pool)
+	motorDispensa := pgrepo.NovoMotorDispensa(pool)
+	handlerFarmaciaStock := adhttp.NovoFarmaciaStockHandler(
+		appfarmacia.NovoCasoRegistarFornecedor(repoFornecedores, repoAuditoria),
+		appfarmacia.NovoCasoListarFornecedores(repoFornecedores),
+		appfarmacia.NovoCasoRegistarEntradaStock(repoLotes, repoMedicamentos, repoFornecedores, repoAuditoria),
+		appfarmacia.NovoCasoConsultarStock(repoLotes),
+		appfarmacia.NovoCasoListarLotes(repoLotes),
+		appfarmacia.NovoCasoDispensarReceita(repoReceitas, repoMedicamentos, leitorClinico, motorDispensa, repoAuditoria),
+	)
+
 	// Middlewares transversais e do grupo protegido.
 	segurancaMW := adhttp.SegurancaHTTP(cfg.OrigensCORS, cfg.EmProducao())
 	limiteMW := adhttp.LimiteTaxa(redisCli.Limitador(), cfg.LimiteTaxaIP, cfg.JanelaTaxa)
@@ -149,6 +162,7 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		adhttp.RegistarDoentes(r, handlerDoentes, limiteMW, authMW)
 		adhttp.RegistarEpisodios(r, handlerEpisodios, limiteMW, authMW)
 		adhttp.RegistarFarmacia(r, handlerFarmacia, limiteMW, authMW)
+		adhttp.RegistarFarmaciaStock(r, handlerFarmaciaStock, limiteMW, authMW)
 	}
 
 	logger.Info("dependências estabelecidas", "ambiente", cfg.Ambiente)
