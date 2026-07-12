@@ -14,6 +14,7 @@ func TestFS_ContemMigrationsEsperadas(t *testing.T) {
 		"auditoria/0001_auditoria_eventos.sql",
 		"clinico/0002_episodios.sql",
 		"farmacia/0001_medicamentos_receitas.sql",
+		"farmacia/0002_stock.sql",
 		"identidade/0001_utilizadores.sql",
 		"identidade/0002_utilizadores_papeis.sql",
 		"identidade/0003_papeis.sql",
