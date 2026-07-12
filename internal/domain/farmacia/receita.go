@@ -101,14 +101,21 @@ func (r *Receita) Anular() error {
 	return nil
 }
 
+// EstadoEfectivoReceita devolve o estado tendo em conta a expiração: se
+// EMITIDA/PARCIAL e a data de expiração já passou (comparação por dia), devolve
+// EXPIRADA; caso contrário o estado indicado.
+func EstadoEfectivoReceita(estado EstadoReceita, expiraEm, agora time.Time) EstadoReceita {
+	if (estado == ReceitaEmitida || estado == ReceitaParcial) && agora.Truncate(24*time.Hour).After(expiraEm.Truncate(24*time.Hour)) {
+		return ReceitaExpirada
+	}
+	return estado
+}
+
 // EstadoEfectivo devolve o estado tendo em conta a expiração: se EMITIDA/PARCIAL e
 // a data de expiração já passou, devolve EXPIRADA (não persistido — calculado na
 // leitura). Compara por data.
 func (r *Receita) EstadoEfectivo(agora time.Time) EstadoReceita {
-	if (r.estado == ReceitaEmitida || r.estado == ReceitaParcial) && agora.Truncate(24*time.Hour).After(r.expiraEm.Truncate(24*time.Hour)) {
-		return ReceitaExpirada
-	}
-	return r.estado
+	return EstadoEfectivoReceita(r.estado, r.expiraEm, agora)
 }
 
 // SnapshotReceita carrega o estado completo para persistência/rehidratação.

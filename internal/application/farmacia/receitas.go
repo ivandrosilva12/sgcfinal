@@ -156,13 +156,16 @@ func (c *CasoObterReceita) Executar(ctx context.Context, actor, id string) (Deta
 	return paraDetalheReceita(receita, c.agora()), nil
 }
 
-// CasoListarReceitas lista as receitas de um doente (não audita).
+// CasoListarReceitas lista as receitas de um doente (não audita). O estado de
+// cada item reflecte o estado efectivo (considerando a expiração), tal como o
+// detalhe devolvido por CasoObterReceita.
 type CasoListarReceitas struct {
 	receitas dominio.RepositorioReceitas
+	agora    func() time.Time
 }
 
 func NovoCasoListarReceitas(receitas dominio.RepositorioReceitas) *CasoListarReceitas {
-	return &CasoListarReceitas{receitas: receitas}
+	return &CasoListarReceitas{receitas: receitas, agora: time.Now}
 }
 func (c *CasoListarReceitas) Executar(ctx context.Context, filtro FiltroReceitas) (PaginaReceitas, error) {
 	if filtro.Limite <= 0 {
@@ -174,5 +177,14 @@ func (c *CasoListarReceitas) Executar(ctx context.Context, filtro FiltroReceitas
 	if filtro.Deslocamento < 0 {
 		filtro.Deslocamento = 0
 	}
-	return c.receitas.ListarPorDoente(ctx, filtro)
+	pagina, err := c.receitas.ListarPorDoente(ctx, filtro)
+	if err != nil {
+		return PaginaReceitas{}, err
+	}
+	agora := c.agora()
+	for i := range pagina.Itens {
+		it := &pagina.Itens[i]
+		it.Estado = string(dominio.EstadoEfectivoReceita(dominio.EstadoReceita(it.Estado), it.ExpiraEm, agora))
+	}
+	return pagina, nil
 }

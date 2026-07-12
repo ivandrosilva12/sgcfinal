@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 	"testing"
+	"time"
 
 	appfarmacia "github.com/ivandrosilva12/sgcfinal/internal/application/farmacia"
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/farmacia"
@@ -164,6 +165,29 @@ func TestAnularReceita(t *testing.T) {
 	}
 	if len(aud.registos) != 1 || aud.registos[0].Accao != "farmacia.receita.anulada" || aud.registos[0].Detalhe == "" {
 		t.Fatalf("auditoria em falta ou sem motivo: %+v", aud.registos)
+	}
+}
+
+func TestListarReceitas_EstadoEfectivo(t *testing.T) {
+	repoRec := novoFakeRepoReceitas()
+	repoRec.pagina = farmacia.PaginaReceitas{
+		Itens: []farmacia.ResumoReceita{
+			{
+				ID:        "rec-1",
+				Estado:    "EMITIDA",
+				EmitidaEm: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+				ExpiraEm:  time.Date(2026, 1, 31, 0, 0, 0, 0, time.UTC), // no passado face a "hoje"
+			},
+		},
+		Total: 1,
+	}
+	caso := appfarmacia.NovoCasoListarReceitas(repoRec)
+	out, err := caso.Executar(context.Background(), appfarmacia.FiltroReceitas{DoenteID: "doente-1"})
+	if err != nil {
+		t.Fatalf("listar: %v", err)
+	}
+	if len(out.Itens) != 1 || out.Itens[0].Estado != "EXPIRADA" {
+		t.Fatalf("esperava item com estado efectivo EXPIRADA, obtive: %+v", out.Itens)
 	}
 }
 

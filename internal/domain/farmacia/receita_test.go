@@ -84,6 +84,22 @@ func TestReceita_EstadoEfectivoExpira(t *testing.T) {
 	}
 }
 
+func TestEstadoEfectivoReceita_Funcao(t *testing.T) {
+	expiraEm := time.Date(2026, 7, 31, 0, 0, 0, 0, time.UTC)
+	depois := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	antes := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
+
+	if got := farmacia.EstadoEfectivoReceita(farmacia.ReceitaEmitida, expiraEm, depois); got != farmacia.ReceitaExpirada {
+		t.Fatalf("EMITIDA expirada: esperava EXPIRADA, obtive %q", got)
+	}
+	if got := farmacia.EstadoEfectivoReceita(farmacia.ReceitaEmitida, expiraEm, antes); got != farmacia.ReceitaEmitida {
+		t.Fatalf("EMITIDA não expirada: esperava EMITIDA, obtive %q", got)
+	}
+	if got := farmacia.EstadoEfectivoReceita(farmacia.ReceitaAnulada, expiraEm, depois); got != farmacia.ReceitaAnulada {
+		t.Fatalf("ANULADA expirada: esperava ANULADA, obtive %q", got)
+	}
+}
+
 func TestReconstruirReceita_PreservaEstado(t *testing.T) {
 	orig := receitaValida(t)
 	_ = orig.Anular()
