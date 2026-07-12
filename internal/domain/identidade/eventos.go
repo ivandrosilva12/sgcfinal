@@ -161,6 +161,19 @@ func (e PerfilActualizado) NomeEvento() string { return "identidade.perfil.actua
 // OcorridoEm implementa evento.EventoDominio.
 func (e PerfilActualizado) OcorridoEm() time.Time { return e.Em }
 
+// SessaoRevogada é emitido quando um administrador revoga uma sessão específica.
+type SessaoRevogada struct {
+	Actor     string
+	SessionID string
+	Em        time.Time
+}
+
+// NomeEvento implementa evento.EventoDominio.
+func (e SessaoRevogada) NomeEvento() string { return "identidade.sessao.revogada" }
+
+// OcorridoEm implementa evento.EventoDominio.
+func (e SessaoRevogada) OcorridoEm() time.Time { return e.Em }
+
 // Garantias de conformidade com a interface de evento de domínio.
 var (
 	_ evento.EventoDominio = UtilizadorAutenticado{}
@@ -175,4 +188,5 @@ var (
 	_ evento.EventoDominio = OtpReposto{}
 	_ evento.EventoDominio = SessoesRevogadas{}
 	_ evento.EventoDominio = PerfilActualizado{}
+	_ evento.EventoDominio = SessaoRevogada{}
 )
