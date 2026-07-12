@@ -15,6 +15,7 @@ import (
 	"github.com/ivandrosilva12/sgcfinal/internal/adapters/pgrepo"
 	adredis "github.com/ivandrosilva12/sgcfinal/internal/adapters/redis"
 	adsmtp "github.com/ivandrosilva12/sgcfinal/internal/adapters/smtp"
+	appclinico "github.com/ivandrosilva12/sgcfinal/internal/application/clinico"
 	appident "github.com/ivandrosilva12/sgcfinal/internal/application/identidade"
 	"github.com/ivandrosilva12/sgcfinal/internal/platform/config"
 	"github.com/ivandrosilva12/sgcfinal/internal/platform/db"
@@ -87,6 +88,18 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		casoResetPass, casoResetOTP, casoListarSessoes, casoRevogarSessao, casoEditarPerfilAdmin,
 	)
 
+	// BC Clínico: repositório, casos de uso e handler do agregado Doente.
+	repoDoentes := pgrepo.NovoRepositorioDoentes(pool)
+	handlerDoentes := adhttp.NovoDoentesHandler(
+		appclinico.NovoCasoRegistarDoente(repoDoentes, repoAuditoria),
+		appclinico.NovoCasoObterDoente(repoDoentes, repoAuditoria),
+		appclinico.NovoCasoPesquisarDoentes(repoDoentes),
+		appclinico.NovoCasoActualizarDoente(repoDoentes, repoAuditoria),
+		appclinico.NovoCasoGerirEstadoDoente(repoDoentes, repoAuditoria),
+		appclinico.NovoCasoRegistarAlergia(repoDoentes, repoAuditoria),
+		appclinico.NovoCasoRegistarAntecedente(repoDoentes, repoAuditoria),
+	)
+
 	// Middlewares transversais e do grupo protegido.
 	segurancaMW := adhttp.SegurancaHTTP(cfg.OrigensCORS, cfg.EmProducao())
 	limiteMW := adhttp.LimiteTaxa(redisCli.Limitador(), cfg.LimiteTaxaIP, cfg.JanelaTaxa)
@@ -103,6 +116,7 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 	registarRotas := func(r gin.IRouter) {
 		adhttp.RegistarIdentidade(r, handlerIdentidade, limiteMW, authMW, mfaMW)
 		adhttp.RegistarAdministracao(r, handlerAdmin, limiteMW, authMW, mfaMW)
+		adhttp.RegistarDoentes(r, handlerDoentes, limiteMW, authMW)
 	}
 
 	logger.Info("dependências estabelecidas", "ambiente", cfg.Ambiente)
