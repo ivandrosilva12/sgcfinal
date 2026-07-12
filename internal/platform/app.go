@@ -58,7 +58,8 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 	repoAuditoria := pgrepo.NovoRepositorioAuditoria(pool)
 	casoAutenticar := appident.NovoCasoAutenticar(verificador)
 	casoPerfil := appident.NovoCasoObterPerfil(repoUtilizadores, repoAuditoria)
-	handlerIdentidade := adhttp.NovoIdentidadeHandler(casoPerfil)
+	casoAtualizarPerfil := appident.NovoCasoAtualizarPerfil(repoUtilizadores, repoAuditoria)
+	handlerIdentidade := adhttp.NovoIdentidadeHandler(casoPerfil, casoAtualizarPerfil)
 
 	casoListar := appident.NovoCasoListarUtilizadores(adminKC)
 	casoObter := appident.NovoCasoObterUtilizador(adminKC)
@@ -66,7 +67,9 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 	casoRevogar := appident.NovoCasoRevogarPapel(adminKC, repoAuditoria)
 	casoActivo := appident.NovoCasoDefinirActivo(adminKC, repoAuditoria)
 	casoCriar := appident.NovoCasoCriarUtilizador(adminKC, repoAuditoria)
-	handlerAdmin := adhttp.NovoAdministracaoHandler(casoListar, casoObter, casoAtribuir, casoRevogar, casoActivo, casoCriar)
+	casoResetPass := appident.NovoCasoResetPassword(adminKC, repoAuditoria)
+	casoResetOTP := appident.NovoCasoResetOTP(adminKC, repoAuditoria)
+	handlerAdmin := adhttp.NovoAdministracaoHandler(casoListar, casoObter, casoAtribuir, casoRevogar, casoActivo, casoCriar, casoResetPass, casoResetOTP)
 
 	// Middlewares transversais e do grupo protegido.
 	segurancaMW := adhttp.SegurancaHTTP(cfg.OrigensCORS, cfg.EmProducao())
