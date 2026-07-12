@@ -1,0 +1,35 @@
+# Normalização de fins de linha do SGC Angola.
+#
+# Por omissão, o Git detecta ficheiros de texto e guarda-os com LF no
+# repositório. Para os ficheiros de código e configuração forçamos também LF no
+# working-tree (eol=lf), independentemente de core.autocrlf — isto elimina o
+# ruído do CRLF no Windows e os falsos positivos do gofmt/golangci-lint.
+
+* text=auto
+
+# Código e configuração — sempre LF no working-tree.
+*.go     text eol=lf
+*.mod    text eol=lf
+*.sum    text eol=lf
+*.sh     text eol=lf
+*.sql    text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.json   text eol=lf
+*.md     text eol=lf
+*.env    text eol=lf
+.env.example text eol=lf
+Dockerfile   text eol=lf
+Makefile     text eol=lf
+.golangci.yml       text eol=lf
+.go-arch-lint.yml   text eol=lf
+.editorconfig       text eol=lf
+
+# Binários — nunca normalizar.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.docx binary
