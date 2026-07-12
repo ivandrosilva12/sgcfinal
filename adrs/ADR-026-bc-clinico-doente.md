@@ -59,3 +59,11 @@ foi extraído verbatim do DDM-001 v2.0.
   `clinico.doentes(id)`.
 - O contador por ano exige atenção em cenários multi-instância (o
   `ON CONFLICT ... RETURNING` é atómico, pelo que é seguro sob concorrência).
+- **Limitação conhecida — churn de entidades-filho:** O repositório persiste as
+  entidades-filho (alergias, antecedentes) por *delete-and-reinsert* em cada
+  `Guardar()`, o que significa que qualquer actualização do doente (demografia,
+  contactos ou transição de estado) regenera os `id` dos filhos e repõe as
+  colunas `criada_em`/`criado_em` para `now()`. As datas clínicas
+  (`confirmada_em`, `data_inicio`) são preservadas, e o instante real de registo
+  é recuperável através da auditoria append-only. A migração para *upsert por
+  chave natural* fica diferida para uma fatia futura.

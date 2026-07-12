@@ -79,9 +79,9 @@ func TestDoente_DeclararFalecido(t *testing.T) {
 	if d.Estado() != clinico.EstadoFalecido {
 		t.Fatalf("estado=%q, esperava FALECIDO", d.Estado())
 	}
-	// Um doente falecido não pode ser desactivado.
-	if d.Desactivar("x", time.Now()) == nil {
-		t.Fatal("esperava erro ao desactivar um falecido")
+	// Um doente falecido não pode ser desactivado (conflito de estado).
+	if erros.CategoriaDe(d.Desactivar("x", time.Now())) != erros.CategoriaConflito {
+		t.Fatal("esperava CategoriaConflito ao desactivar um falecido")
 	}
 }
 
