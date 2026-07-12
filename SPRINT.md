@@ -1,9 +1,19 @@
 # SPRINT ACTUAL
 
 - **Marco**: M1 — Fundações
-- **Sprint**: 4 (BC Identidade — MFA positivo + criação de utilizadores) — **entregue**
+- **Sprint**: 5 (BC Identidade — ciclo de vida do utilizador) — **entregue**
 - **Objectivo**: fatia vertical do BC Identidade — autenticação Keycloak (JWT RS256),
   RBAC pelos 11 papéis, auditoria de acesso e `GET /api/v1/identidade/perfil`.
+
+## Sprint 5 — entregue
+
+- [x] Reset de password (admin): nova senha temporária devolvida 1x; reset de OTP
+      (remove credenciais + `CONFIGURE_TOTP`). Auditados.
+- [x] Edição de perfil self-service (`PATCH /perfil`): telefone/BI validados pelos VOs
+      Angola; omitido preserva, vazio limpa.
+- [x] Revogação de sessões na desactivação; compensação da criação não-atómica
+      (ADR-023 fechada).
+- [x] ADR-024.
 
 ## Sprint 4 — entregue
 
