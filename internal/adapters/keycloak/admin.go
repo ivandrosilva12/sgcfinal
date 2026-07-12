@@ -269,6 +269,45 @@ func (a *AdminCliente) DefinirActivo(ctx context.Context, id string, activo bool
 	return a.pedir(ctx, nethttp.MethodPut, "/users/"+url.PathEscape(id), map[string]any{"enabled": activo}, nil)
 }
 
+// DefinirPasswordTemporaria define uma nova password temporária (o utilizador é
+// forçado a mudá-la no próximo login).
+func (a *AdminCliente) DefinirPasswordTemporaria(ctx context.Context, id, senha string) error {
+	corpo := map[string]any{"type": "password", "value": senha, "temporary": true}
+	return a.pedir(ctx, nethttp.MethodPut, "/users/"+url.PathEscape(id)+"/reset-password", corpo, nil)
+}
+
+// ResetOTP remove as credenciais OTP do utilizador e exige a re-inscrição
+// (required action CONFIGURE_TOTP) no próximo login.
+func (a *AdminCliente) ResetOTP(ctx context.Context, id string) error {
+	var creds []struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+	}
+	if err := a.pedir(ctx, nethttp.MethodGet, "/users/"+url.PathEscape(id)+"/credentials", nil, &creds); err != nil {
+		return err
+	}
+	for _, c := range creds {
+		if c.Type == "otp" {
+			if err := a.pedir(ctx, nethttp.MethodDelete,
+				"/users/"+url.PathEscape(id)+"/credentials/"+url.PathEscape(c.ID), nil, nil); err != nil {
+				return err
+			}
+		}
+	}
+	return a.pedir(ctx, nethttp.MethodPut, "/users/"+url.PathEscape(id),
+		map[string]any{"requiredActions": []string{"CONFIGURE_TOTP"}}, nil)
+}
+
+// RevogarSessoes termina todas as sessões activas do utilizador.
+func (a *AdminCliente) RevogarSessoes(ctx context.Context, id string) error {
+	return a.pedir(ctx, nethttp.MethodPost, "/users/"+url.PathEscape(id)+"/logout", nil, nil)
+}
+
+// ApagarUtilizador remove o utilizador do realm.
+func (a *AdminCliente) ApagarUtilizador(ctx context.Context, id string) error {
+	return a.pedir(ctx, nethttp.MethodDelete, "/users/"+url.PathEscape(id), nil, nil)
+}
+
 // CriarUtilizador cria um utilizador no Keycloak com uma credencial de password
 // temporária e, se pedido, a required action CONFIGURE_TOTP; devolve o id lido do
 // cabeçalho Location. Depois atribui os papéis indicados. Mapeia 409 (já existe)
@@ -325,6 +364,9 @@ func (a *AdminCliente) CriarUtilizador(ctx context.Context, dados appident.Dados
 
 	for _, p := range dados.Papeis {
 		if err := a.AtribuirPapel(ctx, id, p); err != nil {
+			// Compensação best-effort: apagar o utilizador criado para que uma
+			// nova tentativa não bata em 409 (ver ADR-023/024).
+			_ = a.ApagarUtilizador(ctx, id)
 			return "", err
 		}
 	}

@@ -390,3 +390,149 @@ func srvBase(r *nethttp.Request) string {
 	}
 	return esquema + "://" + r.Host
 }
+
+func TestDefinirPasswordTemporaria_PUT(t *testing.T) {
+	var recebeuTemporary bool
+	srv := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/protocol/openid-connect/token"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 300})
+		case r.Method == nethttp.MethodPut && strings.HasSuffix(r.URL.Path, "/users/u1/reset-password"):
+			var corpo map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&corpo)
+			recebeuTemporary, _ = corpo["temporary"].(bool)
+			w.WriteHeader(nethttp.StatusNoContent)
+		default:
+			w.WriteHeader(nethttp.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	admin, _ := NovoAdmin(srv.URL+"/realms/sgc", "sgc-admin", "segredo")
+	if err := admin.DefinirPasswordTemporaria(context.Background(), "u1", "nova-senha"); err != nil {
+		t.Fatalf("DefinirPasswordTemporaria: %v", err)
+	}
+	if !recebeuTemporary {
+		t.Fatal("esperava temporary:true no corpo")
+	}
+}
+
+func TestResetOTP_ApagaCredsEExigeConfigure(t *testing.T) {
+	var apagouOTP bool
+	var exigiuConfigure bool
+	srv := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/protocol/openid-connect/token"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 300})
+		case r.Method == nethttp.MethodGet && strings.HasSuffix(r.URL.Path, "/users/u1/credentials"):
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "cred-otp", "type": "otp"},
+				{"id": "cred-pwd", "type": "password"},
+			})
+		case r.Method == nethttp.MethodDelete && strings.HasSuffix(r.URL.Path, "/users/u1/credentials/cred-otp"):
+			apagouOTP = true
+			w.WriteHeader(nethttp.StatusNoContent)
+		case r.Method == nethttp.MethodPut && strings.HasSuffix(r.URL.Path, "/users/u1"):
+			var corpo map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&corpo)
+			if ra, ok := corpo["requiredActions"].([]any); ok {
+				for _, a := range ra {
+					if a == "CONFIGURE_TOTP" {
+						exigiuConfigure = true
+					}
+				}
+			}
+			w.WriteHeader(nethttp.StatusNoContent)
+		default:
+			w.WriteHeader(nethttp.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	admin, _ := NovoAdmin(srv.URL+"/realms/sgc", "sgc-admin", "segredo")
+	if err := admin.ResetOTP(context.Background(), "u1"); err != nil {
+		t.Fatalf("ResetOTP: %v", err)
+	}
+	if !apagouOTP {
+		t.Fatal("esperava DELETE da credencial otp")
+	}
+	if !exigiuConfigure {
+		t.Fatal("esperava requiredActions com CONFIGURE_TOTP")
+	}
+}
+
+func TestRevogarSessoes_POSTLogout(t *testing.T) {
+	var fezLogout bool
+	srv := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/protocol/openid-connect/token"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 300})
+		case r.Method == nethttp.MethodPost && strings.HasSuffix(r.URL.Path, "/users/u1/logout"):
+			fezLogout = true
+			w.WriteHeader(nethttp.StatusNoContent)
+		default:
+			w.WriteHeader(nethttp.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	admin, _ := NovoAdmin(srv.URL+"/realms/sgc", "sgc-admin", "segredo")
+	if err := admin.RevogarSessoes(context.Background(), "u1"); err != nil {
+		t.Fatalf("RevogarSessoes: %v", err)
+	}
+	if !fezLogout {
+		t.Fatal("esperava POST logout")
+	}
+}
+
+func TestApagarUtilizador_DELETE(t *testing.T) {
+	var apagou bool
+	srv := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/protocol/openid-connect/token"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 300})
+		case r.Method == nethttp.MethodDelete && strings.HasSuffix(r.URL.Path, "/users/u1"):
+			apagou = true
+			w.WriteHeader(nethttp.StatusNoContent)
+		default:
+			w.WriteHeader(nethttp.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	admin, _ := NovoAdmin(srv.URL+"/realms/sgc", "sgc-admin", "segredo")
+	if err := admin.ApagarUtilizador(context.Background(), "u1"); err != nil {
+		t.Fatalf("ApagarUtilizador: %v", err)
+	}
+	if !apagou {
+		t.Fatal("esperava DELETE do utilizador")
+	}
+}
+
+func TestCriarUtilizador_CompensaFalhaDePapel(t *testing.T) {
+	var apagou bool
+	srv := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/protocol/openid-connect/token"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 300})
+		case r.Method == nethttp.MethodPost && strings.HasSuffix(r.URL.Path, "/admin/realms/sgc/users"):
+			w.Header().Set("Location", srvBase(r)+"/admin/realms/sgc/users/novo-id")
+			w.WriteHeader(nethttp.StatusCreated)
+		case r.Method == nethttp.MethodGet && strings.HasSuffix(r.URL.Path, "/roles/Medico"):
+			w.WriteHeader(nethttp.StatusInternalServerError) // falha ao obter o papel
+		case r.Method == nethttp.MethodDelete && strings.HasSuffix(r.URL.Path, "/users/novo-id"):
+			apagou = true
+			w.WriteHeader(nethttp.StatusNoContent)
+		default:
+			w.WriteHeader(nethttp.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	admin, _ := NovoAdmin(srv.URL+"/realms/sgc", "sgc-admin", "segredo")
+	_, err := admin.CriarUtilizador(context.Background(), appident.DadosNovoUtilizador{
+		Username: "x", Nome: "X Y", Email: "x@sgc.ao", SenhaTemporaria: "t",
+		Papeis: []dominio.Papel{dominio.PapelMedico},
+	})
+	if err == nil {
+		t.Fatal("esperava erro na atribuição de papel")
+	}
+	if !apagou {
+		t.Fatal("esperava compensação (DELETE do utilizador criado)")
+	}
+}
