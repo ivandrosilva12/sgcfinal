@@ -44,8 +44,13 @@ func TestRevogarSessao_Audita(t *testing.T) {
 
 func TestRevogarSessao_PropagaErro(t *testing.T) {
 	admin := &fakeAdmin{err: errors.New("kc down")}
-	caso := appident.NovoCasoRevogarSessao(admin, &fakeAuditor{})
+	aud := &fakeAuditor{}
+	caso := appident.NovoCasoRevogarSessao(admin, aud)
 	if err := caso.Executar(context.Background(), "actor-1", "sess-1"); err == nil {
 		t.Fatal("esperava erro propagado")
+	}
+	// Se a revogação falha, não deve haver auditoria.
+	if len(aud.registos) != 0 {
+		t.Fatalf("não devia auditar quando a revogação falha: %v", aud.registos)
 	}
 }

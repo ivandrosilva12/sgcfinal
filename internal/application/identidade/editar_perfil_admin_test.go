@@ -88,11 +88,19 @@ func TestEditarPerfilAdmin_HidrataDoKeycloak(t *testing.T) {
 func TestEditarPerfilAdmin_TelefoneInvalido(t *testing.T) {
 	base, _ := dominio.NovoUtilizador("u1", "Ana", "ana@sgc.ao", "", "", nil)
 	repo := &fakeRepoPerfil{existe: true, u: base}
-	caso := appident.NovoCasoEditarPerfilAdmin(&fakeAdmin{}, repo, &fakeAuditor{})
+	aud := &fakeAuditor{}
+	caso := appident.NovoCasoEditarPerfilAdmin(&fakeAdmin{}, repo, aud)
 
 	mau := "não-é-telefone"
 	_, err := caso.Executar(context.Background(), "admin-1", "u1", &mau, nil)
 	if erros.CategoriaDe(err) != erros.CategoriaValidacao {
 		t.Fatalf("esperava validação, obtive %v", err)
+	}
+	// Entrada inválida: não deve persistir nem auditar.
+	if repo.telefone != "" || repo.bi != "" {
+		t.Fatalf("não devia persistir com telefone inválido: telefone=%q bi=%q", repo.telefone, repo.bi)
+	}
+	if len(aud.registos) != 0 {
+		t.Fatalf("não devia auditar com telefone inválido: %v", aud.registos)
 	}
 }

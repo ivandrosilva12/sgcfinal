@@ -39,12 +39,17 @@ func TestListarERevogarSessoes_ViaKeycloak(t *testing.T) {
 	}
 	ctx := context.Background()
 
+	const username = "sessoes.teste.sprint6"
+	// Remove resíduo de uma corrida anterior abortada, para que uma falha de
+	// criação signifique de facto infra indisponível (e não um 409 mascarado).
+	limparResiduoUtilizador(ctx, admin, username)
+
 	id, err := admin.CriarUtilizador(ctx, appident.DadosNovoUtilizador{
-		Username: "sessoes.teste.sprint6", Nome: "Sessoes Teste", Email: "sessoes.teste.sprint6@sgc.ao",
+		Username: username, Nome: "Sessoes Teste", Email: "sessoes.teste.sprint6@sgc.ao",
 		SenhaTemporaria: "Temp-1234", Papeis: []dominio.Papel{dominio.PapelMedico}, ConfigurarOTP: false,
 	})
 	if err != nil {
-		t.Skipf("Admin API indisponível ou utilizador já existe: %v", err)
+		t.Skipf("Admin API indisponível: %v", err)
 	}
 	defer apagarUtilizador(t, issuer, id)
 
@@ -73,6 +78,20 @@ func TestListarERevogarSessoes_ViaKeycloak(t *testing.T) {
 		if s.ID == alvo.ID {
 			t.Fatalf("sessão %q ainda presente após revogação", alvo.ID)
 		}
+	}
+}
+
+// limparResiduoUtilizador apaga (best-effort) qualquer utilizador cujo termo de
+// pesquisa corresponda ao username indicado, para limpar resíduos de corridas
+// anteriores. Silencioso se a Admin API estiver em baixo — nesse caso o próprio
+// CriarUtilizador tratará do SKIP.
+func limparResiduoUtilizador(ctx context.Context, admin *keycloak.AdminCliente, username string) {
+	lista, err := admin.ListarUtilizadores(ctx, appident.FiltroUtilizadores{Termo: username})
+	if err != nil {
+		return
+	}
+	for _, u := range lista {
+		_ = admin.ApagarUtilizador(ctx, u.ID)
 	}
 }
 
@@ -171,6 +190,16 @@ func TestNotificacaoCriacao_ViaMailHog(t *testing.T) {
 	if err := notificador.NotificarCriacao(ctx, destinatario, "Teste", "senha-x"); err != nil {
 		t.Skipf("MailHog (SMTP) indisponível: %v", err)
 	}
+	// Limpa a caixa do MailHog no fim, para não acumular mensagens entre corridas.
+	t.Cleanup(func() {
+		req, err := nethttp.NewRequest(nethttp.MethodDelete, "http://localhost:8025/api/v1/messages", nil)
+		if err != nil {
+			return
+		}
+		if resp, err := (&nethttp.Client{Timeout: 5 * time.Second}).Do(req); err == nil {
+			_ = resp.Body.Close()
+		}
+	})
 
 	cliente := nethttp.Client{Timeout: 5 * time.Second}
 	resp, err := cliente.Get("http://localhost:8025/api/v2/messages")
