@@ -42,10 +42,23 @@ type AlergiaRegistada struct {
 func (e AlergiaRegistada) NomeEvento() string    { return "clinico.alergia.registada" }
 func (e AlergiaRegistada) OcorridoEm() time.Time { return e.Em }
 
+// ProcedimentoCirurgicoConcluido é emitido quando um procedimento é concluído.
+// Consumido futuramente por Financeiro (linha de factura) e reporting (MINSA).
+type ProcedimentoCirurgicoConcluido struct {
+	ProcedimentoID string
+	EpisodioID     string
+	Codigo         string
+	Em             time.Time
+}
+
+func (e ProcedimentoCirurgicoConcluido) NomeEvento() string    { return "clinico.procedimento.concluido" }
+func (e ProcedimentoCirurgicoConcluido) OcorridoEm() time.Time { return e.Em }
+
 // Garantias de conformidade com a interface de evento de domínio.
 var (
 	_ evento.EventoDominio = DoenteRegistado{}
 	_ evento.EventoDominio = DoenteDesactivado{}
 	_ evento.EventoDominio = DoenteFalecido{}
 	_ evento.EventoDominio = AlergiaRegistada{}
+	_ evento.EventoDominio = ProcedimentoCirurgicoConcluido{}
 )
