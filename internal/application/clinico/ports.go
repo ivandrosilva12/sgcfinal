@@ -248,3 +248,48 @@ type DetalheConsentimento struct {
 	RevogadoEm   *time.Time `json:"revogado_em,omitempty"`
 	Vigente      bool       `json:"vigente"`
 }
+
+// --- Procedimento Cirúrgico ---
+
+// Reexport do read-model de procedimento.
+type ResumoProcedimento = dominio.ResumoProcedimento
+
+// DadosAgendarProcedimento é a entrada do agendamento. EpisodioID vem do caminho.
+type DadosAgendarProcedimento struct {
+	EpisodioID      string
+	Codigo          string
+	Descricao       string
+	Sala            string
+	CirurgiaoID     string
+	AuxiliarID      string
+	Anestesia       string
+	AnestesistaID   string
+	ConsentimentoID string
+	Observacoes     string
+}
+
+// DadosConcluirProcedimento é a entrada da conclusão.
+type DadosConcluirProcedimento struct {
+	Complicacoes string
+	Observacoes  string
+}
+
+// DetalheProcedimento é o detalhe de um procedimento numa resposta.
+type DetalheProcedimento struct {
+	ID              string     `json:"id"`
+	EpisodioID      string     `json:"episodio_id"`
+	Codigo          string     `json:"codigo_procedimento"`
+	Descricao       string     `json:"descricao"`
+	Sala            string     `json:"sala,omitempty"`
+	CirurgiaoID     string     `json:"cirurgiao_id"`
+	AuxiliarID      string     `json:"auxiliar_id,omitempty"`
+	Anestesia       string     `json:"anestesia"`
+	AnestesistaID   string     `json:"anestesista_id,omitempty"`
+	ConsentimentoID string     `json:"consentimento_id"`
+	Inicio          *time.Time `json:"inicio,omitempty"`
+	Fim             *time.Time `json:"fim,omitempty"`
+	Complicacoes    string     `json:"complicacoes,omitempty"`
+	Observacoes     string     `json:"observacoes,omitempty"`
+	Estado          string     `json:"estado"`
+	CriadoEm        time.Time  `json:"criado_em"`
+}
