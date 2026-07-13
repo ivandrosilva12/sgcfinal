@@ -218,3 +218,33 @@ type EHR struct {
 	Doente    DetalheDoente   `json:"doente"`
 	Episodios PaginaEpisodios `json:"episodios"`
 }
+
+// --- Consentimento (LPDP) ---
+
+// Reexports dos read-models de consentimento.
+type (
+	FiltroConsentimentos = dominio.FiltroConsentimentos
+	ResumoConsentimento  = dominio.ResumoConsentimento
+)
+
+// DadosNovoConsentimento é a entrada do registo de consentimento. DoenteID vem do
+// caminho; ConcedidoEm é opcional (default: momento do registo).
+type DadosNovoConsentimento struct {
+	DoenteID     string
+	Finalidade   string
+	Concedido    bool
+	DocumentoURL string
+	ConcedidoEm  *time.Time
+}
+
+// DetalheConsentimento é o detalhe de um consentimento numa resposta.
+type DetalheConsentimento struct {
+	ID           string     `json:"id"`
+	DoenteID     string     `json:"doente_id"`
+	Finalidade   string     `json:"finalidade"`
+	Concedido    bool       `json:"concedido"`
+	DocumentoURL string     `json:"documento_url,omitempty"`
+	ConcedidoEm  time.Time  `json:"concedido_em"`
+	RevogadoEm   *time.Time `json:"revogado_em,omitempty"`
+	Vigente      bool       `json:"vigente"`
+}
