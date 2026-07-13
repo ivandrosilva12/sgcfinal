@@ -103,6 +103,9 @@ func (p *ProcedimentoCirurgico) Concluir(em time.Time, complicacoes, observacoes
 	if p.estado != ProcEmCurso {
 		return erros.Novo(erros.CategoriaConflito, "só é possível concluir um procedimento em curso")
 	}
+	if p.inicio == nil {
+		return erros.Novo(erros.CategoriaConflito, "procedimento em curso sem início registado (estado incoerente)")
+	}
 	if em.Before(*p.inicio) {
 		return erros.Novo(erros.CategoriaValidacao, "o fim do procedimento não pode ser anterior ao início")
 	}
@@ -120,6 +123,9 @@ func (p *ProcedimentoCirurgico) Concluir(em time.Time, complicacoes, observacoes
 func (p *ProcedimentoCirurgico) Cancelar(em time.Time, motivo string) error {
 	if p.estado != ProcEmCurso {
 		return erros.Novo(erros.CategoriaConflito, "só é possível cancelar um procedimento em curso")
+	}
+	if p.inicio == nil {
+		return erros.Novo(erros.CategoriaConflito, "procedimento em curso sem início registado (estado incoerente)")
 	}
 	if em.Before(*p.inicio) {
 		return erros.Novo(erros.CategoriaValidacao, "o fim do procedimento não pode ser anterior ao início")

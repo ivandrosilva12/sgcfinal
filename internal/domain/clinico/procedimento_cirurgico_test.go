@@ -104,3 +104,30 @@ func TestProcedimento_Cancelar_SoEmCurso(t *testing.T) {
 		t.Fatalf("esperado CANCELADO, veio %s", p.Estado())
 	}
 }
+
+func procedimentoCorrompidoEmCursoSemInicio() *dominio.ProcedimentoCirurgico {
+	// Simula uma rehidratação a partir de um snapshot corrompido (ex.: bug de
+	// mapeamento no pgrepo que não faz Scan da coluna "inicio"): estado
+	// EM_CURSO mas sem início registado.
+	return dominio.ReconstruirProcedimento(dominio.SnapshotProcedimento{
+		ID: "proc-1", EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura",
+		CirurgiaoID: "cir-1", Anestesia: dominio.AnestesiaLocal, AnestesistaID: "an-1",
+		Estado: dominio.ProcEmCurso, Inicio: nil,
+	})
+}
+
+func TestProcedimento_Concluir_EmCursoSemInicio_NaoEntraEmPanic(t *testing.T) {
+	p := procedimentoCorrompidoEmCursoSemInicio()
+	err := p.Concluir(time.Now(), "", "")
+	if err == nil || erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Fatalf("concluir EM_CURSO sem início devia falhar com Conflito, veio %v", err)
+	}
+}
+
+func TestProcedimento_Cancelar_EmCursoSemInicio_NaoEntraEmPanic(t *testing.T) {
+	p := procedimentoCorrompidoEmCursoSemInicio()
+	err := p.Cancelar(time.Now(), "motivo")
+	if err == nil || erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Fatalf("cancelar EM_CURSO sem início devia falhar com Conflito, veio %v", err)
+	}
+}
