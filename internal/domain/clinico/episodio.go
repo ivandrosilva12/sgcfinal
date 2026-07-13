@@ -64,6 +64,9 @@ func (e *EpisodioClinico) ID() string { return e.id }
 // DoenteID devolve o id do doente a que o episódio pertence.
 func (e *EpisodioClinico) DoenteID() string { return e.doenteID }
 
+// Tipo devolve o tipo do episódio.
+func (e *EpisodioClinico) Tipo() TipoEpisodio { return e.tipo }
+
 // Estado devolve o estado actual do episódio.
 func (e *EpisodioClinico) Estado() EstadoEpisodio { return e.estado }
 

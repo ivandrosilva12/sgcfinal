@@ -14,3 +14,13 @@ func TestParseTipoEpisodio(t *testing.T) {
 		t.Fatal("esperava erro para tipo inválido")
 	}
 }
+
+func TestParseTipoEpisodio_CirurgiaAmbulatoria(t *testing.T) {
+	tipo, err := clinico.ParseTipoEpisodio("cirurgia_ambulatoria")
+	if err != nil {
+		t.Fatalf("CIRURGIA_AMBULATORIA devia ser válida: %v", err)
+	}
+	if tipo != clinico.EpisodioCirurgiaAmbulatoria {
+		t.Fatalf("esperado EpisodioCirurgiaAmbulatoria, veio %s", tipo)
+	}
+}
