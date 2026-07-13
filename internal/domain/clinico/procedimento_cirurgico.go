@@ -121,6 +121,10 @@ func (p *ProcedimentoCirurgico) Concluir(em time.Time, complicacoes, observacoes
 // Cancelar transita EM_CURSO → CANCELADO (cancelamento intra-operatório, DDM
 // estrito). O motivo é guardado nas observações e auditado na aplicação.
 func (p *ProcedimentoCirurgico) Cancelar(em time.Time, motivo string) error {
+	motivo = strings.TrimSpace(motivo)
+	if motivo == "" {
+		return erros.Novo(erros.CategoriaValidacao, "o motivo do cancelamento é obrigatório")
+	}
 	if p.estado != ProcEmCurso {
 		return erros.Novo(erros.CategoriaConflito, "só é possível cancelar um procedimento em curso")
 	}
@@ -132,9 +136,7 @@ func (p *ProcedimentoCirurgico) Cancelar(em time.Time, motivo string) error {
 	}
 	p.estado = ProcCancelado
 	p.fim = &em
-	if m := strings.TrimSpace(motivo); m != "" {
-		p.observacoes = m
-	}
+	p.observacoes = motivo
 	return nil
 }
 

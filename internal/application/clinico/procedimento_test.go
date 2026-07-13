@@ -178,6 +178,39 @@ func TestCancelarProcedimento_LevaMotivoNoDetalhe(t *testing.T) {
 	}
 }
 
+func TestCancelarProcedimento_MotivoVazio_PropagaValidacao(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	repoP := novoFakeProcedimentos()
+	aud := &fakeAuditor{}
+
+	agendar := app.NovoCasoAgendarProcedimento(repoP, repoE, repoC, novoFakeCatalogo(), aud)
+	det, err := agendar.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: consID,
+	})
+	if err != nil {
+		t.Fatalf("agendar devia funcionar: %v", err)
+	}
+	iniciar := app.NovoCasoIniciarProcedimento(repoP, aud)
+	if _, err := iniciar.Executar(context.Background(), "actor-1", det.ID); err != nil {
+		t.Fatalf("iniciar devia funcionar: %v", err)
+	}
+	registosAntes := len(aud.registos)
+
+	cancelar := app.NovoCasoCancelarProcedimento(repoP, aud)
+	_, err = cancelar.Executar(context.Background(), "actor-1", det.ID, "   ")
+	if err == nil || erros.CategoriaDe(err) != erros.CategoriaValidacao {
+		t.Fatalf("cancelar com motivo vazio devia propagar Validacao do domínio, veio %v", err)
+	}
+	// O caso de uso não deve auditar nem persistir uma tentativa falhada.
+	if len(aud.registos) != registosAntes {
+		t.Fatalf("cancelamento falhado não devia auditar, veio %v", aud.registos)
+	}
+}
+
 func TestObterProcedimento_NaoAudita(t *testing.T) {
 	repoP := novoFakeProcedimentos()
 	repoE := novoFakeRepoEpisodios()

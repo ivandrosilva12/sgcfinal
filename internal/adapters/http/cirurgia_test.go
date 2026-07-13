@@ -205,6 +205,47 @@ func TestCirurgia_Cancelar_Proibido(t *testing.T) {
 	}
 }
 
+// TestCirurgia_Cancelar_CorpoInvalido_400 prova que um JSON malformado é
+// rejeitado directamente pelo handler (antes de chegar ao caso de uso): o
+// fakeCancelarProc está configurado com sucesso, mas nunca chega a ser chamado.
+func TestCirurgia_Cancelar_CorpoInvalido_400(t *testing.T) {
+	r := routerCirurgia(dominio.Sessao{Sujeito: "m1", Papeis: []dominio.Papel{dominio.PapelMedico}})
+	w := pedidoCorpo(r, "POST", "/api/v1/procedimentos/proc-1/cancelar", `{`)
+	if w.Code != nethttp.StatusBadRequest {
+		t.Fatalf("esperava 400, obtive %d (%s)", w.Code, w.Body.String())
+	}
+}
+
+// TestCirurgia_Cancelar_SemCorpo_400 prova que um pedido sem corpo nenhum
+// (ao contrário de concluir) é rejeitado: ao cancelar o motivo é obrigatório.
+func TestCirurgia_Cancelar_SemCorpo_400(t *testing.T) {
+	r := routerCirurgia(dominio.Sessao{Sujeito: "m1", Papeis: []dominio.Papel{dominio.PapelMedico}})
+	w := pedidoCorpo(r, "POST", "/api/v1/procedimentos/proc-1/cancelar", ``)
+	if w.Code != nethttp.StatusBadRequest {
+		t.Fatalf("esperava 400, obtive %d (%s)", w.Code, w.Body.String())
+	}
+}
+
+// TestCirurgia_Cancelar_MotivoEmFalta_400 prova que, quando o corpo é JSON
+// válido mas sem motivo (`{}`), o handler chega a chamar o caso de uso — e é a
+// validação do domínio (propagada pelo caso de uso) que produz o 400. O fake
+// aqui simula essa propagação (CategoriaValidacao), porque um fake que
+// devolvesse sempre sucesso não provaria nada sobre a obrigatoriedade do motivo.
+func TestCirurgia_Cancelar_MotivoEmFalta_400(t *testing.T) {
+	r := novoRouter()
+	r.Use(adhttp.RequestID())
+	h := adhttp.NovoCirurgiaHandler(
+		fakeAgendar{}, fakeIniciarProc{}, fakeConcluirProc{},
+		fakeCancelarProc{err: erros.Novo(erros.CategoriaValidacao, "o motivo do cancelamento é obrigatório")},
+		fakeObterProc{}, fakeListarProc{},
+	)
+	adhttp.RegistarCirurgia(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Sujeito: "m1", Papeis: []dominio.Papel{dominio.PapelMedico}}}))
+	w := pedidoCorpo(r, "POST", "/api/v1/procedimentos/proc-1/cancelar", `{}`)
+	if w.Code != nethttp.StatusBadRequest {
+		t.Fatalf("esperava 400, obtive %d (%s)", w.Code, w.Body.String())
+	}
+}
+
 func TestCirurgia_Agendar_ErroConflito_409(t *testing.T) {
 	r := novoRouter()
 	r.Use(adhttp.RequestID())

@@ -164,7 +164,10 @@ func (h *CirurgiaHandler) concluirProcedimento(c *gin.Context) {
 
 func (h *CirurgiaHandler) cancelarProcedimento(c *gin.Context) {
 	var corpo corpoCancelar
-	_ = c.ShouldBindJSON(&corpo)
+	if err := c.ShouldBindJSON(&corpo); err != nil {
+		responderErro(c, erros.Novo(erros.CategoriaValidacao, i18n.T(i18n.MsgPedidoInvalido)))
+		return
+	}
 	actor, _ := SessaoDe(c)
 	out, err := h.cancelar.Executar(c.Request.Context(), actor.Sujeito, c.Param("pid"), corpo.Motivo)
 	if err != nil {

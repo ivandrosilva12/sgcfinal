@@ -131,3 +131,21 @@ func TestProcedimento_Cancelar_EmCursoSemInicio_NaoEntraEmPanic(t *testing.T) {
 		t.Fatalf("cancelar EM_CURSO sem início devia falhar com Conflito, veio %v", err)
 	}
 }
+
+func TestProcedimento_Cancelar_MotivoObrigatorio(t *testing.T) {
+	p, _ := dominio.NovoProcedimento(dadosProc(), consentimentoCirurgiaValido(t))
+	inicio := time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)
+	_ = p.Iniciar(inicio)
+	// Motivo vazio → Validacao.
+	if err := p.Cancelar(inicio.Add(time.Minute), ""); err == nil || erros.CategoriaDe(err) != erros.CategoriaValidacao {
+		t.Fatalf("cancelar sem motivo devia falhar com Validacao, veio %v", err)
+	}
+	// Motivo só com espaços → Validacao.
+	if err := p.Cancelar(inicio.Add(time.Minute), "   "); err == nil || erros.CategoriaDe(err) != erros.CategoriaValidacao {
+		t.Fatalf("cancelar com motivo só de espaços devia falhar com Validacao, veio %v", err)
+	}
+	// O procedimento continua EM_CURSO — a tentativa falhada não muda o estado.
+	if p.Estado() != dominio.ProcEmCurso {
+		t.Fatalf("esperado EM_CURSO após tentativas falhadas, veio %s", p.Estado())
+	}
+}
