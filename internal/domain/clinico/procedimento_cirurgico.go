@@ -26,7 +26,11 @@ type ProcedimentoCirurgico struct {
 	complicacoes    string
 	observacoes     string
 	estado          EstadoProcedimento
-	criadoEm        time.Time
+	// estadoAnterior é o estado com que o agregado foi rehidratado da persistência
+	// (vazio num agregado novo). Serve de guarda compare-and-set no UPDATE de
+	// transição: o repositório só escreve se a linha ainda estiver nesse estado.
+	estadoAnterior EstadoProcedimento
+	criadoEm       time.Time
 }
 
 // DadosNovoProcedimento agrupa os parâmetros de construção.
@@ -112,9 +116,7 @@ func (p *ProcedimentoCirurgico) Concluir(em time.Time, complicacoes, observacoes
 	p.estado = ProcConcluido
 	p.fim = &em
 	p.complicacoes = strings.TrimSpace(complicacoes)
-	if obs := strings.TrimSpace(observacoes); obs != "" {
-		p.observacoes = obs
-	}
+	p.observacoes = anexarObservacao(p.observacoes, observacoes)
 	return nil
 }
 
@@ -136,8 +138,23 @@ func (p *ProcedimentoCirurgico) Cancelar(em time.Time, motivo string) error {
 	}
 	p.estado = ProcCancelado
 	p.fim = &em
-	p.observacoes = motivo
+	p.observacoes = anexarObservacao(p.observacoes, motivo)
 	return nil
+}
+
+// anexarObservacao acrescenta um novo texto às observações já registadas, em vez
+// de o sobrepor: a nota pré-operatória é registo clínico e não pode desaparecer
+// da linha quando se conclui ou cancela (não há versionamento da linha). Um novo
+// texto vazio deixa o anterior intacto; sem texto anterior, fica só o novo.
+func anexarObservacao(anterior, novo string) string {
+	novo = strings.TrimSpace(novo)
+	if novo == "" {
+		return anterior
+	}
+	if strings.TrimSpace(anterior) == "" {
+		return novo
+	}
+	return anterior + "\n" + novo
 }
 
 // ID devolve o identificador atribuído pela base de dados.
@@ -169,7 +186,11 @@ type SnapshotProcedimento struct {
 	Complicacoes    string
 	Observacoes     string
 	Estado          EstadoProcedimento
-	CriadoEm        time.Time
+	// EstadoAnterior é o estado lido da persistência (vazio num agregado novo).
+	// O repositório usa-o como guarda compare-and-set no UPDATE de transição.
+	// É derivado — quem reconstrói não o preenche.
+	EstadoAnterior EstadoProcedimento
+	CriadoEm       time.Time
 }
 
 // Snapshot devolve o estado completo do agregado.
@@ -179,18 +200,21 @@ func (p *ProcedimentoCirurgico) Snapshot() SnapshotProcedimento {
 		Sala: p.sala, CirurgiaoID: p.cirurgiaoID, AuxiliarID: p.auxiliarID,
 		Anestesia: p.anestesia, AnestesistaID: p.anestesistaID, Inicio: p.inicio, Fim: p.fim,
 		ConsentimentoID: p.consentimentoID, Complicacoes: p.complicacoes,
-		Observacoes: p.observacoes, Estado: p.estado, CriadoEm: p.criadoEm,
+		Observacoes: p.observacoes, Estado: p.estado, EstadoAnterior: p.estadoAnterior,
+		CriadoEm: p.criadoEm,
 	}
 }
 
 // ReconstruirProcedimento reconstrói um agregado a partir de um snapshot persistido.
+// O estado lido fica guardado como estado anterior (guarda compare-and-set).
 func ReconstruirProcedimento(s SnapshotProcedimento) *ProcedimentoCirurgico {
 	return &ProcedimentoCirurgico{
 		id: s.ID, episodioID: s.EpisodioID, codigo: s.Codigo, descricao: s.Descricao,
 		sala: s.Sala, cirurgiaoID: s.CirurgiaoID, auxiliarID: s.AuxiliarID,
 		anestesia: s.Anestesia, anestesistaID: s.AnestesistaID, inicio: s.Inicio, fim: s.Fim,
 		consentimentoID: s.ConsentimentoID, complicacoes: s.Complicacoes,
-		observacoes: s.Observacoes, estado: s.Estado, criadoEm: s.CriadoEm,
+		observacoes: s.Observacoes, estado: s.Estado, estadoAnterior: s.Estado,
+		criadoEm: s.CriadoEm,
 	}
 }
 

@@ -1,6 +1,7 @@
 package clinico_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -147,5 +148,100 @@ func TestProcedimento_Cancelar_MotivoObrigatorio(t *testing.T) {
 	// O procedimento continua EM_CURSO — a tentativa falhada não muda o estado.
 	if p.Estado() != dominio.ProcEmCurso {
 		t.Fatalf("esperado EM_CURSO após tentativas falhadas, veio %s", p.Estado())
+	}
+}
+
+// dadosProcComObservacoes devolve os dados de agendamento com uma nota
+// pré-operatória (registo clínico que não pode perder-se).
+func dadosProcComObservacoes() dominio.DadosNovoProcedimento {
+	d := dadosProc()
+	d.Observacoes = "doente anticoagulado — varfarina suspensa a 5/7"
+	return d
+}
+
+// TestProcedimento_Cancelar_PreservaObservacoesPreOperatorias prova que o motivo
+// do cancelamento é ANEXADO às observações e não as sobrepõe: antes da correcção,
+// a nota pré-operatória desaparecia definitivamente da linha (não há versionamento).
+func TestProcedimento_Cancelar_PreservaObservacoesPreOperatorias(t *testing.T) {
+	p, err := dominio.NovoProcedimento(dadosProcComObservacoes(), consentimentoCirurgiaValido(t))
+	if err != nil {
+		t.Fatalf("novo procedimento: %v", err)
+	}
+	inicio := time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)
+	if err := p.Iniciar(inicio); err != nil {
+		t.Fatalf("iniciar: %v", err)
+	}
+	if err := p.Cancelar(inicio.Add(20*time.Minute), "instabilidade hemodinâmica"); err != nil {
+		t.Fatalf("cancelar: %v", err)
+	}
+	obs := p.Snapshot().Observacoes
+	if !strings.Contains(obs, "varfarina suspensa a 5/7") {
+		t.Fatalf("a nota pré-operatória devia manter-se, veio %q", obs)
+	}
+	if !strings.Contains(obs, "instabilidade hemodinâmica") {
+		t.Fatalf("o motivo do cancelamento devia ficar registado, veio %q", obs)
+	}
+}
+
+// TestProcedimento_Concluir_ObservacoesAnexadas cobre os três casos do anexar:
+// (a) sem texto anterior fica só o novo; (b) com texto anterior e novo, ficam os
+// dois; (c) novo vazio mantém o anterior intacto.
+func TestProcedimento_Concluir_ObservacoesAnexadas(t *testing.T) {
+	inicio := time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)
+	fim := inicio.Add(time.Hour)
+
+	// (a) sem observações prévias → fica só a nova.
+	p, _ := dominio.NovoProcedimento(dadosProc(), consentimentoCirurgiaValido(t))
+	_ = p.Iniciar(inicio)
+	if err := p.Concluir(fim, "", "sem intercorrências"); err != nil {
+		t.Fatalf("concluir: %v", err)
+	}
+	if obs := p.Snapshot().Observacoes; obs != "sem intercorrências" {
+		t.Fatalf("esperado apenas a nova observação, veio %q", obs)
+	}
+
+	// (b) com observações prévias → ficam as duas.
+	p2, _ := dominio.NovoProcedimento(dadosProcComObservacoes(), consentimentoCirurgiaValido(t))
+	_ = p2.Iniciar(inicio)
+	if err := p2.Concluir(fim, "", "sem intercorrências"); err != nil {
+		t.Fatalf("concluir: %v", err)
+	}
+	obs := p2.Snapshot().Observacoes
+	if !strings.Contains(obs, "varfarina suspensa a 5/7") || !strings.Contains(obs, "sem intercorrências") {
+		t.Fatalf("esperadas as duas observações, veio %q", obs)
+	}
+
+	// (c) nova observação vazia (conclusão sem corpo) → mantém a anterior intacta.
+	p3, _ := dominio.NovoProcedimento(dadosProcComObservacoes(), consentimentoCirurgiaValido(t))
+	_ = p3.Iniciar(inicio)
+	if err := p3.Concluir(fim, "nenhuma", "   "); err != nil {
+		t.Fatalf("concluir: %v", err)
+	}
+	if obs := p3.Snapshot().Observacoes; obs != "doente anticoagulado — varfarina suspensa a 5/7" {
+		t.Fatalf("esperada a observação pré-operatória intacta, veio %q", obs)
+	}
+}
+
+// TestProcedimento_Snapshot_EstadoAnterior prova a base da guarda compare-and-set
+// do repositório: um agregado novo não tem estado anterior; um agregado
+// rehidratado expõe o estado com que foi lido, mesmo depois de transitar.
+func TestProcedimento_Snapshot_EstadoAnterior(t *testing.T) {
+	novo, _ := dominio.NovoProcedimento(dadosProc(), consentimentoCirurgiaValido(t))
+	if ea := novo.Snapshot().EstadoAnterior; ea != "" {
+		t.Fatalf("um procedimento novo não devia ter estado anterior, veio %q", ea)
+	}
+
+	inicio := time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)
+	lido := dominio.ReconstruirProcedimento(dominio.SnapshotProcedimento{
+		ID: "proc-1", EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura",
+		CirurgiaoID: "cir-1", Anestesia: dominio.AnestesiaLocal, AnestesistaID: "an-1",
+		ConsentimentoID: "cons-1", Estado: dominio.ProcEmCurso, Inicio: &inicio,
+	})
+	if err := lido.Concluir(inicio.Add(time.Hour), "", ""); err != nil {
+		t.Fatalf("concluir: %v", err)
+	}
+	s := lido.Snapshot()
+	if s.Estado != dominio.ProcConcluido || s.EstadoAnterior != dominio.ProcEmCurso {
+		t.Fatalf("esperado estado CONCLUIDO com estado anterior EM_CURSO, veio %s/%s", s.Estado, s.EstadoAnterior)
 	}
 }
