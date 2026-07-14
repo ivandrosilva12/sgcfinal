@@ -57,6 +57,9 @@ FROM laboratorio.resultados WHERE id=$1`
 // resultado (requisicao_id, codigo_analise, unidade).
 func (r *RepositorioResultados) Transitar(ctx context.Context, res *dominio.Resultado) error {
 	s := res.Snapshot()
+	if s.ID == "" {
+		return erros.Novo(erros.CategoriaNaoEncontrado, "resultado não encontrado")
+	}
 	const q = `
 UPDATE laboratorio.resultados SET
     estado=$2, valor=NULLIF($3,''), observacoes=NULLIF($4,''), motivo_recusa=NULLIF($5,''),
@@ -111,20 +114,26 @@ SELECT res.id::text, res.requisicao_id::text, req.episodio_id::text, res.codigo_
 FROM laboratorio.resultados res
 JOIN laboratorio.requisicoes req ON req.id = res.requisicao_id
 WHERE ($1::text[] IS NULL OR res.estado = ANY($1))
-ORDER BY res.criado_em`
+ORDER BY res.criado_em, res.id`
 	return r.consultar(ctx, q, estadosTexto(estados))
 }
 
-// ListarPorEpisodio devolve os resultados de um episódio nos estados dados.
+// ListarPorEpisodio devolve os resultados de um episódio nos estados dados. Ao
+// contrário de ListarFila, uma lista de estados vazia/nil devolve zero linhas — é a
+// rede de segurança que impede um preliminar (PROCESSADA) de vazar para a vista
+// clínica do médico caso o filtro de estados alguma vez chegue vazio.
 func (r *RepositorioResultados) ListarPorEpisodio(ctx context.Context, episodioID string, estados []dominio.EstadoResultado) ([]dominio.ResumoResultado, error) {
+	if len(estados) == 0 {
+		return nil, nil
+	}
 	const q = `
 SELECT res.id::text, res.requisicao_id::text, req.episodio_id::text, res.codigo_analise,
        COALESCE(res.valor,''), res.unidade, res.estado, res.valor_critico,
        res.colhida_em, res.submetida_em, res.criado_em
 FROM laboratorio.resultados res
 JOIN laboratorio.requisicoes req ON req.id = res.requisicao_id
-WHERE req.episodio_id = $2 AND ($1::text[] IS NULL OR res.estado = ANY($1))
-ORDER BY res.criado_em`
+WHERE req.episodio_id = $2 AND res.estado = ANY($1)
+ORDER BY res.criado_em, res.id`
 	return r.consultar(ctx, q, estadosTexto(estados), episodioID)
 }
 

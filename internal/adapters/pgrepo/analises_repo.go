@@ -48,7 +48,10 @@ VALUES ($1,$2,$3,$4,$5,$6)`
 	return nil
 }
 
-// naoNil garante `[]` em vez de `null` no jsonb (a coluna é NOT NULL).
+// naoNil garante `[]` em vez de `null` no jsonb — não por imposição do NOT NULL da
+// coluna (json.Marshal de um slice nil dá o JSON `null`, que é um jsonb válido e não
+// viola NOT NULL nenhum), mas por coerência com o DEFAULT '[]'::jsonb da coluna e com
+// qualquer jsonb_array_length() que venha a ser usado sobre ela.
 func naoNil(v []dominio.IntervaloReferencia) []dominio.IntervaloReferencia {
 	if v == nil {
 		return []dominio.IntervaloReferencia{}
@@ -67,7 +70,7 @@ func naoNilCriticos(v []dominio.ValorCritico) []dominio.ValorCritico {
 func (r *RepositorioAnalises) ObterPorCodigo(ctx context.Context, codigo string) (*dominio.Analise, error) {
 	const q = `
 SELECT codigo, nome, unidade, intervalos_referencia, valores_criticos, activo, criado_em
-FROM laboratorio.analises WHERE codigo=$1`
+FROM laboratorio.analises WHERE codigo = upper($1)`
 	var s dominio.SnapshotAnalise
 	var intervalos, criticos []byte
 	err := r.pool.QueryRow(ctx, q, codigo).Scan(&s.Codigo, &s.Nome, &s.Unidade,

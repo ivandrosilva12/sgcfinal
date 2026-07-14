@@ -217,8 +217,12 @@ type ResumoResultado struct {
 // RepositorioResultados é a porta de saída de persistência de resultados.
 //
 // Transitar aplica a transição com guarda compare-and-set (usa EstadoAnterior do
-// snapshot); uma lista de estados vazia em ListarFila/ListarPorEpisodio significa
-// "todos os estados".
+// snapshot). A semântica de uma lista de estados vazia é assimétrica entre as duas
+// listagens, por desenho: em ListarFila, vazio/nil significa "todos os estados" — é o
+// que a fila de trabalho de quem executa precisa. Em ListarPorEpisodio, vazio/nil
+// significa "nenhum estado" (zero linhas) — é fail-closed de propósito, porque é o
+// único filtro que impede um resultado PROCESSADA (preliminar, ainda não validado) de
+// vazar para a vista clínica do médico.
 type RepositorioResultados interface {
 	ObterPorID(ctx context.Context, id string) (*Resultado, error)
 	Transitar(ctx context.Context, r *Resultado) error
