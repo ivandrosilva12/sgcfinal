@@ -76,9 +76,14 @@ seeds/  tests/  docs/  adrs/  docker/
 
 ## 6. Marco Actual
 
-**M2 — Clínico Core** (Sprints 7–11; ver `SPRINT.md`). Entrega: BC Clínico (doente,
-episódio clínico + EHR, cirurgia ambulatória com consentimento LPDP) e BC Farmácia
-(catálogo, receita, stock e dispensa FEFO). Critérios de saída M2 cumpridos.
+**M3 — Laboratório** (Sprints 12–13; ver `SPRINT.md`). Entrega o BC Laboratório:
+catálogo de análises, requisição (via ACL sobre o Clínico), amostra e resultado com
+state machine; a validação com segregação de funções (técnico ≠ patologista) e os
+valores críticos fecham o marco no Sprint 13.
+
+**M2 — Clínico Core** (entregue; Sprints 7–11): BC Clínico (doente, episódio + EHR,
+cirurgia ambulatória com consentimento LPDP) e BC Farmácia (catálogo, receita, stock
+e dispensa FEFO).
 
 **M1 — Fundações** (entregue; ver `docs/PLANO-M1-Fundacao-Identidade.md`): esqueleto
 arquitectural + infra (Docker Compose) + fatia vertical do BC Identidade (Keycloak
@@ -114,5 +119,6 @@ confirmação humana**. Nunca improvisar decisão arquitectural ou de conformida
 `adrs/ADR-025-sessoes-perfil-admin-notificacoes.md`, `adrs/ADR-026-bc-clinico-doente.md`,
 `adrs/ADR-027-bc-clinico-episodio.md`, `adrs/ADR-028-bc-farmacia-receita.md`,
 `adrs/ADR-029-farmacia-stock-dispensa.md`,
-`adrs/ADR-030-cirurgia-ambulatoria-consentimento.md`.
-Próximo ADR: **ADR-031**.
+`adrs/ADR-030-cirurgia-ambulatoria-consentimento.md`,
+`adrs/ADR-031-bc-laboratorio.md`.
+Próximo ADR: **ADR-032**.

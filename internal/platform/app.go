@@ -13,12 +13,14 @@ import (
 	adfarmacia "github.com/ivandrosilva12/sgcfinal/internal/adapters/farmacia"
 	adhttp "github.com/ivandrosilva12/sgcfinal/internal/adapters/http"
 	"github.com/ivandrosilva12/sgcfinal/internal/adapters/keycloak"
+	adlaboratorio "github.com/ivandrosilva12/sgcfinal/internal/adapters/laboratorio"
 	"github.com/ivandrosilva12/sgcfinal/internal/adapters/pgrepo"
 	adredis "github.com/ivandrosilva12/sgcfinal/internal/adapters/redis"
 	adsmtp "github.com/ivandrosilva12/sgcfinal/internal/adapters/smtp"
 	appclinico "github.com/ivandrosilva12/sgcfinal/internal/application/clinico"
 	appfarmacia "github.com/ivandrosilva12/sgcfinal/internal/application/farmacia"
 	appident "github.com/ivandrosilva12/sgcfinal/internal/application/identidade"
+	applaboratorio "github.com/ivandrosilva12/sgcfinal/internal/application/laboratorio"
 	"github.com/ivandrosilva12/sgcfinal/internal/platform/config"
 	"github.com/ivandrosilva12/sgcfinal/internal/platform/db"
 	"github.com/ivandrosilva12/sgcfinal/internal/platform/observ"
@@ -162,6 +164,25 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		appfarmacia.NovoCasoDispensarReceita(repoReceitas, repoMedicamentos, leitorClinico, motorDispensa, repoAuditoria),
 	)
 
+	// BC Laboratório (M3): catálogo, requisição, amostra e resultado preliminar.
+	repoAnalises := pgrepo.NovoRepositorioAnalises(pool)
+	repoRequisicoes := pgrepo.NovoRepositorioRequisicoes(pool)
+	repoResultados := pgrepo.NovoRepositorioResultados(pool)
+	// ACL: o Laboratório lê o Clínico apenas através deste adaptador.
+	leitorClinicoLab := adlaboratorio.NovoLeitorClinico(repoDoentes, repoEpisodios)
+	handlerLaboratorio := adhttp.NovoLaboratorioHandler(
+		applaboratorio.NovoCasoRegistarAnalise(repoAnalises, repoAuditoria),
+		applaboratorio.NovoCasoListarAnalises(repoAnalises),
+		applaboratorio.NovoCasoEmitirRequisicao(repoRequisicoes, repoAnalises, leitorClinicoLab, repoAuditoria),
+		applaboratorio.NovoCasoObterRequisicao(repoRequisicoes),
+		applaboratorio.NovoCasoListarRequisicoesDoEpisodio(repoRequisicoes),
+		applaboratorio.NovoCasoColherAmostra(repoResultados, repoAuditoria),
+		applaboratorio.NovoCasoRecusarAmostra(repoResultados, repoAuditoria),
+		applaboratorio.NovoCasoSubmeterPreliminar(repoResultados, repoAuditoria),
+		applaboratorio.NovoCasoListarFila(repoResultados),
+		applaboratorio.NovoCasoListarResultadosDoEpisodio(repoResultados),
+	)
+
 	// Middlewares transversais e do grupo protegido.
 	segurancaMW := adhttp.SegurancaHTTP(cfg.OrigensCORS, cfg.EmProducao())
 	limiteMW := adhttp.LimiteTaxa(redisCli.Limitador(), cfg.LimiteTaxaIP, cfg.JanelaTaxa)
@@ -184,6 +205,7 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		adhttp.RegistarCirurgia(r, handlerCirurgia, limiteMW, authMW)
 		adhttp.RegistarFarmacia(r, handlerFarmacia, limiteMW, authMW)
 		adhttp.RegistarFarmaciaStock(r, handlerFarmaciaStock, limiteMW, authMW)
+		adhttp.RegistarLaboratorio(r, handlerLaboratorio, limiteMW, authMW)
 	}
 
 	logger.Info("dependências estabelecidas", "ambiente", cfg.Ambiente)

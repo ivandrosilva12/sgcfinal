@@ -1,10 +1,22 @@
 # SPRINT ACTUAL
 
-- **Marco**: M2 — Clínico Core
-- **Sprint**: 11 (Cirurgia ambulatória + Consentimento LPDP) — **entregue**
-- **Objectivo**: fechar o critério de saída M2 construindo, no BC Clínico, o
-  agregado Consentimento (LPDP), o tipo de episódio CIRURGIA_AMBULATORIA, o
-  agregado ProcedimentoCirurgico com state machine e o catálogo de procedimentos.
+- **Marco**: M3 — Laboratório
+- **Sprint**: 12 (BC Laboratório — catálogo, requisição, amostra, preliminar) — **entregue**
+- **Objectivo**: abrir o BC Laboratório até ao resultado preliminar submetido pelo
+  técnico — que não é visível ao médico. A validação com segregação de funções e os
+  valores críticos são o Sprint 13.
+
+## Sprint 12 — entregue
+
+- [x] Catálogo de análises (intervalos de referência, valores críticos) com seed.
+- [x] Requisição no BC Laboratório via ACL sobre o Clínico (doente activo, episódio
+      aberto); um resultado PENDENTE por análise, em transacção única.
+- [x] Colheita, recusa (motivo obrigatório) e submissão do preliminar; o técnico
+      gravado é sempre o sujeito autenticado.
+- [x] O preliminar **não** é visível ao médico: a leitura clínica filtra por
+      VALIDADA/CONCLUIDA na aplicação.
+- [x] Guarda compare-and-set nas transições; CHECK de coerência estado↔timestamps.
+- [x] ADR-031.
 
 ## Sprint 11 — entregue
 
@@ -138,6 +150,15 @@
 - [x] Gates de cobertura verdes em todas as fatias (domínio ≥85%, aplicação ≥75%,
       adaptadores ≥60%; pgrepo coberto por integração).
 - [x] ADRs 026–030 registadas.
+
+## Critérios de saída M3 — Laboratório
+
+- [x] Médico requisita análises para um episódio aberto. — Sprint 12
+- [x] Técnico colhe/recusa amostra e submete resultado preliminar. — Sprint 12
+- [x] O preliminar não é visível ao médico. — Sprint 12
+- [ ] Validação pelo patologista com segregação (submissor ≠ validador). — Sprint 13
+- [ ] Valores críticos detectados e notificados (SMS auditado). — Sprint 13
+- [ ] Correcção cria novo resultado preservando o original. — Sprint 13
 
 ## Critérios de saída M1
 
