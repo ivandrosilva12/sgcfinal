@@ -287,3 +287,18 @@ func TestCirurgia_Obter_ErroNaoEncontrado_404(t *testing.T) {
 		t.Fatalf("esperava 404, obtive %d", w.Code)
 	}
 }
+
+// TestCirurgia_Concluir_CorpoInvalido_400 prova que um corpo presente mas
+// malformado é rejeitado pelo handler (400) em vez de ser ignorado em silêncio: o
+// fakeConcluirProc está configurado com sucesso e nunca chega a ser chamado. Sem
+// esta guarda, `{"complicacoes":"hemorragia intra-operatória"` (JSON truncado)
+// devolvia 200 e concluía o procedimento com complicações vazias. O corpo ausente
+// (io.EOF) continua a ser aceite — ver TestCirurgia_Concluir_SemCorpo_200.
+func TestCirurgia_Concluir_CorpoInvalido_400(t *testing.T) {
+	r := routerCirurgia(dominio.Sessao{Sujeito: "m1", Papeis: []dominio.Papel{dominio.PapelMedico}})
+	w := pedidoCorpo(r, "POST", "/api/v1/procedimentos/proc-1/concluir",
+		`{"complicacoes":"hemorragia intra-operatória"`)
+	if w.Code != nethttp.StatusBadRequest {
+		t.Fatalf("esperava 400, obtive %d (%s)", w.Code, w.Body.String())
+	}
+}

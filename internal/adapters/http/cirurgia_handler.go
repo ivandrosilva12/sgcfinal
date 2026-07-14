@@ -2,6 +2,8 @@ package http
 
 import (
 	"context"
+	"errors"
+	"io"
 	nethttp "net/http"
 
 	"github.com/gin-gonic/gin"
@@ -149,8 +151,14 @@ func (h *CirurgiaHandler) iniciarProcedimento(c *gin.Context) {
 
 func (h *CirurgiaHandler) concluirProcedimento(c *gin.Context) {
 	var corpo corpoConcluir
-	// Corpo opcional: um pedido vazio é aceite.
-	_ = c.ShouldBindJSON(&corpo)
+	// O corpo é opcional — um pedido sem corpo (io.EOF no bind) é aceite e conclui
+	// sem complicações nem observações. Mas um corpo presente e malformado tem de
+	// falhar: aceitá-lo em silêncio devolveria 200 ao cliente, confirmando o registo
+	// de complicações que na verdade se perderam.
+	if err := c.ShouldBindJSON(&corpo); err != nil && !errors.Is(err, io.EOF) {
+		responderErro(c, erros.Novo(erros.CategoriaValidacao, i18n.T(i18n.MsgPedidoInvalido)))
+		return
+	}
 	actor, _ := SessaoDe(c)
 	out, err := h.concluir.Executar(c.Request.Context(), actor.Sujeito, c.Param("pid"), appclinico.DadosConcluirProcedimento{
 		Complicacoes: corpo.Complicacoes, Observacoes: corpo.Observacoes,
