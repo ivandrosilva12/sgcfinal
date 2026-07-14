@@ -62,8 +62,12 @@ func (uc *CasoAgendarProcedimento) Executar(ctx context.Context, actor string, d
 	if cat.RequerAnestesista && strings.TrimSpace(dados.AnestesistaID) == "" {
 		return DetalheProcedimento{}, erros.Novo(erros.CategoriaValidacao, "este procedimento exige anestesista")
 	}
+	// O código gravado é o canónico do catálogo (fonte de verdade), não o que o
+	// cliente enviou: a pesquisa do catálogo normaliza (maiúsculas), mas o agregado
+	// gravaria "prc001" tal e qual — e, como não há FK para o catálogo (ADR-030), a
+	// BD não protestaria, partindo os consumidores por código (Facturação, MINSA).
 	proc, err := dominio.NovoProcedimento(dominio.DadosNovoProcedimento{
-		EpisodioID: dados.EpisodioID, Codigo: dados.Codigo, Descricao: dados.Descricao,
+		EpisodioID: dados.EpisodioID, Codigo: cat.Codigo, Descricao: dados.Descricao,
 		Sala: dados.Sala, CirurgiaoID: dados.CirurgiaoID, AuxiliarID: dados.AuxiliarID,
 		Anestesia: anestesia, AnestesistaID: dados.AnestesistaID, Observacoes: dados.Observacoes,
 	}, cons)

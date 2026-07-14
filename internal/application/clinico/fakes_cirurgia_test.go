@@ -3,6 +3,7 @@ package clinico_test
 import (
 	"context"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -113,8 +114,11 @@ func novoFakeCatalogo() *fakeCatalogo {
 	}}
 }
 
+// ObterPorCodigo normaliza a chave de pesquisa (maiúsculas, sem espaços) tal como
+// o repositório pgx real — o caso de uso tem de continuar a funcionar quando o
+// cliente envia o código em minúsculas.
 func (f *fakeCatalogo) ObterPorCodigo(_ context.Context, codigo string) (*clinico.CatalogoProcedimento, error) {
-	c, ok := f.porCodigo[codigo]
+	c, ok := f.porCodigo[strings.ToUpper(strings.TrimSpace(codigo))]
 	if !ok {
 		return nil, erros.Novo(erros.CategoriaNaoEncontrado, "procedimento do catálogo não encontrado")
 	}

@@ -64,7 +64,11 @@ func TestRevogarConsentimento(t *testing.T) {
 	}
 }
 
-func TestListarConsentimentos_NaoAudita(t *testing.T) {
+// TestListarConsentimentos_DevolveOsResumosDoRepositorio prova o pass-through da
+// listagem: o caso de uso devolve, sem os alterar, os resumos que o repositório
+// produz. (Não afirma nada sobre auditoria — `CasoListarConsentimentos` nem sequer
+// recebe um Auditor, logo auditar seria estruturalmente impossível.)
+func TestListarConsentimentos_DevolveOsResumosDoRepositorio(t *testing.T) {
 	repoC := novoFakeConsentimentos()
 	repoC.lista = []clinico.ResumoConsentimento{{ID: "cons-1", DoenteID: "doente-1"}}
 	uc := app.NovoCasoListarConsentimentos(repoC)

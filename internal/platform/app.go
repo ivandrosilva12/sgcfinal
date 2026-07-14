@@ -126,7 +126,7 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 	)
 	handlerCirurgia := adhttp.NovoCirurgiaHandler(
 		appclinico.NovoCasoAgendarProcedimento(repoProcedimentos, repoEpisodios, repoConsentimentos, repoCatalogo, repoAuditoria),
-		appclinico.NovoCasoIniciarProcedimento(repoProcedimentos, repoAuditoria),
+		appclinico.NovoCasoIniciarProcedimento(repoProcedimentos, repoEpisodios, repoConsentimentos, repoAuditoria),
 		appclinico.NovoCasoConcluirProcedimento(repoProcedimentos, repoAuditoria),
 		appclinico.NovoCasoCancelarProcedimento(repoProcedimentos, repoAuditoria),
 		appclinico.NovoCasoObterProcedimento(repoProcedimentos),
