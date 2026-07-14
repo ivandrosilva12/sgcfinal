@@ -76,10 +76,14 @@ seeds/  tests/  docs/  adrs/  docker/
 
 ## 6. Marco Actual
 
-**M1 — Fundações** (ver `docs/PLANO-M1-Fundacao-Identidade.md` e `SPRINT.md`).
-Entrega: esqueleto arquitectural + infra (Docker Compose) + fatia vertical do BC
-Identidade (Keycloak OIDC + JWT RS256 + RBAC 11 papéis — DDM-001, ver
-`docs/ERRATA-001-papeis.md`) + audit log + observabilidade.
+**M2 — Clínico Core** (Sprints 7–11; ver `SPRINT.md`). Entrega: BC Clínico (doente,
+episódio clínico + EHR, cirurgia ambulatória com consentimento LPDP) e BC Farmácia
+(catálogo, receita, stock e dispensa FEFO). Critérios de saída M2 cumpridos.
+
+**M1 — Fundações** (entregue; ver `docs/PLANO-M1-Fundacao-Identidade.md`): esqueleto
+arquitectural + infra (Docker Compose) + fatia vertical do BC Identidade (Keycloak
+OIDC + JWT RS256 + RBAC 11 papéis — DDM-001, ver `docs/ERRATA-001-papeis.md`) +
+audit log + observabilidade. Pendente: deploy de staging em CI/CD.
 
 ## 7. Antipadrões a Rejeitar
 
