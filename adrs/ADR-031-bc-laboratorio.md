@@ -19,9 +19,13 @@ original (secção "Desvios ao plano" abaixo).
    `episodio_id` e `doente_id` por id, sem FK cross-context (ver
    `migrations/laboratorio/0002_requisicoes_resultados.sql`); a existência e o estado
    do episódio são validados por uma ACL (`applaboratorio.LeitorClinico`) na camada de
-   aplicação, com o adaptador `internal/adapters/laboratorio.LeitorClinico` a ler os
-   repositórios `clinico.RepositorioDoentes`/`clinico.RepositorioEpisodios` — o
-   Laboratório nunca importa tipos do domínio Clínico, só responde a duas perguntas
+   aplicação, com o adaptador `internal/adapters/laboratorio.LeitorClinico`
+   (`internal/adapters/laboratorio/leitor_clinico.go`) a ler os repositórios
+   `clinico.RepositorioDoentes`/`clinico.RepositorioEpisodios` — este adaptador importa,
+   sim, tipos do domínio Clínico, porque traduzi-los é precisamente o seu trabalho de
+   ACL. A garantia que interessa é outra e mais estrita: **o domínio e a aplicação do
+   Laboratório nunca importam o Clínico** — só o adaptador conhece `clinico`, e do
+   outro lado da porta `applaboratorio.LeitorClinico` só chegam duas perguntas
    booleanas (`DoenteActivo`, `EpisodioAbertoDoDoente`). É exactamente o desenho da
    Receita (ADR-028): um segundo padrão para o mesmo problema só criaria confusão.
 2. **Emitir uma requisição cria um `Resultado` PENDENTE por análise pedida**, na mesma

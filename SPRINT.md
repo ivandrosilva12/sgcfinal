@@ -8,7 +8,9 @@
 
 ## Sprint 12 — entregue
 
-- [x] Catálogo de análises (intervalos de referência, valores críticos) com seed.
+- [x] Catálogo de análises (intervalos de referência, valores críticos), com os 5
+      registos de referência (HB, HEMOG, GLIC, CREAT, UREIA) semeados na própria
+      migração (`migrations/laboratorio/0001_catalogo_analises.sql`).
 - [x] Requisição no BC Laboratório via ACL sobre o Clínico (doente activo, episódio
       aberto); um resultado PENDENTE por análise, em transacção única.
 - [x] Colheita, recusa (motivo obrigatório) e submissão do preliminar; o técnico
