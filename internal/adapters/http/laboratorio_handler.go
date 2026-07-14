@@ -102,8 +102,15 @@ func RegistarLaboratorio(r gin.IRouter, h *LaboratorioHandler, protecao ...gin.H
 	// handler da Cirurgia) porque a composição é diferente: decisão do dono do
 	// produto de minimização LPDP — o Admin é um papel técnico/de administração de
 	// sistema e não figura aqui; não precisa de ver análises de doentes (ADR-031).
+	// Protege só as rotas de dados clínicos do doente (requisições e resultados).
 	leituraClinicaLaboratorio := RBAC(dominio.PapelMedico, dominio.PapelEnfermeiro, dominio.PapelDirector,
 		dominio.PapelTecnicoLab, dominio.PapelPatologista)
+	// catalogoLeitura é distinto de leituraClinicaLaboratorio porque o catálogo de
+	// análises é dado de referência/configuração, não dado clínico de um doente — a
+	// minimização LPDP que afasta o Admin da leitura clínica não se aplica aqui, pelo
+	// que o Admin (e o Director) mantêm-se ao lado do pessoal clínico (ADR-031).
+	catalogoLeitura := RBAC(dominio.PapelMedico, dominio.PapelEnfermeiro, dominio.PapelTecnicoLab,
+		dominio.PapelPatologista, dominio.PapelDirector, dominio.PapelAdmin)
 	catalogoEscrita := RBAC(dominio.PapelAdmin, dominio.PapelDirector)
 	soMedico := RBAC(dominio.PapelMedico)
 	soTecnico := RBAC(dominio.PapelTecnicoLab)
@@ -115,7 +122,7 @@ func RegistarLaboratorio(r gin.IRouter, h *LaboratorioHandler, protecao ...gin.H
 	ga := r.Group("/api/v1/analises")
 	ga.Use(protecao...)
 	ga.POST("", catalogoEscrita, h.registarAnaliseHTTP)
-	ga.GET("", leituraClinicaLaboratorio, h.listarAnalisesHTTP)
+	ga.GET("", catalogoLeitura, h.listarAnalisesHTTP)
 
 	ge := r.Group("/api/v1/episodios")
 	ge.Use(protecao...)

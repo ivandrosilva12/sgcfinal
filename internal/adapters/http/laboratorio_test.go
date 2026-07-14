@@ -377,6 +377,21 @@ func TestListarAnalises_LeituraClinica_200(t *testing.T) {
 	}
 }
 
+// TestListarAnalises_Admin_200 prova que a correcção não confundiu leitura de
+// catálogo com leitura clínica: o catálogo de análises é dado de configuração, não
+// dado clínico de um doente, pelo que o Admin continua a poder listá-lo — tal como já
+// podia registá-lo (POST /analises, catalogoEscrita). Ver TestResultadosEpisodio_
+// Admin_Proibido: é aí, na leitura clínica, que o Admin continua vedado.
+func TestListarAnalises_Admin_200(t *testing.T) {
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("adm-1", identidade.PapelAdmin))
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/analises", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("esperava 200 para o Admin a listar o catálogo de análises, veio %d (%s)", w.Code, w.Body.String())
+	}
+}
+
 func TestObterRequisicao_LeituraClinica_200(t *testing.T) {
 	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("med-1", identidade.PapelMedico))
 	w := httptest.NewRecorder()
