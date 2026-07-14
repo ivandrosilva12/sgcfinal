@@ -114,6 +114,25 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		appclinico.NovoCasoObterEHR(repoDoentes, repoEpisodios, repoAuditoria),
 	)
 
+	// BC Clínico: cirurgia ambulatória + consentimentos (LPDP).
+	repoConsentimentos := pgrepo.NovoRepositorioConsentimentos(pool)
+	repoProcedimentos := pgrepo.NovoRepositorioProcedimentos(pool)
+	repoCatalogo := pgrepo.NovoRepositorioCatalogoProcedimentos(pool)
+	handlerConsentimentos := adhttp.NovoConsentimentosHandler(
+		appclinico.NovoCasoRegistarConsentimento(repoConsentimentos, repoDoentes, repoAuditoria),
+		appclinico.NovoCasoRevogarConsentimento(repoConsentimentos, repoAuditoria),
+		appclinico.NovoCasoListarConsentimentos(repoConsentimentos),
+		appclinico.NovoCasoObterConsentimento(repoConsentimentos),
+	)
+	handlerCirurgia := adhttp.NovoCirurgiaHandler(
+		appclinico.NovoCasoAgendarProcedimento(repoProcedimentos, repoEpisodios, repoConsentimentos, repoCatalogo, repoAuditoria),
+		appclinico.NovoCasoIniciarProcedimento(repoProcedimentos, repoEpisodios, repoConsentimentos, repoAuditoria),
+		appclinico.NovoCasoConcluirProcedimento(repoProcedimentos, repoAuditoria),
+		appclinico.NovoCasoCancelarProcedimento(repoProcedimentos, repoAuditoria),
+		appclinico.NovoCasoObterProcedimento(repoProcedimentos),
+		appclinico.NovoCasoListarProcedimentos(repoProcedimentos),
+	)
+
 	// BC Farmácia: catálogo de medicamentos e receitas.
 	repoMedicamentos := pgrepo.NovoRepositorioMedicamentos(pool)
 	repoReceitas := pgrepo.NovoRepositorioReceitas(pool)
@@ -161,6 +180,8 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		adhttp.RegistarAdministracao(r, handlerAdmin, limiteMW, authMW, mfaMW)
 		adhttp.RegistarDoentes(r, handlerDoentes, limiteMW, authMW)
 		adhttp.RegistarEpisodios(r, handlerEpisodios, limiteMW, authMW)
+		adhttp.RegistarConsentimentos(r, handlerConsentimentos, limiteMW, authMW)
+		adhttp.RegistarCirurgia(r, handlerCirurgia, limiteMW, authMW)
 		adhttp.RegistarFarmacia(r, handlerFarmacia, limiteMW, authMW)
 		adhttp.RegistarFarmaciaStock(r, handlerFarmaciaStock, limiteMW, authMW)
 	}

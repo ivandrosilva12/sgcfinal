@@ -10,20 +10,22 @@ import (
 type TipoEpisodio string
 
 const (
-	EpisodioConsulta     TipoEpisodio = "CONSULTA"
-	EpisodioUrgencia     TipoEpisodio = "URGENCIA"
-	EpisodioInternamento TipoEpisodio = "INTERNAMENTO"
+	EpisodioConsulta            TipoEpisodio = "CONSULTA"
+	EpisodioUrgencia            TipoEpisodio = "URGENCIA"
+	EpisodioInternamento        TipoEpisodio = "INTERNAMENTO"
+	EpisodioCirurgiaAmbulatoria TipoEpisodio = "CIRURGIA_AMBULATORIA"
 )
 
 var tiposEpisodioValidos = map[TipoEpisodio]bool{
 	EpisodioConsulta: true, EpisodioUrgencia: true, EpisodioInternamento: true,
+	EpisodioCirurgiaAmbulatoria: true,
 }
 
 // ParseTipoEpisodio valida e normaliza um tipo de episódio (aceita minúsculas).
 func ParseTipoEpisodio(codigo string) (TipoEpisodio, error) {
 	t := TipoEpisodio(strings.ToUpper(strings.TrimSpace(codigo)))
 	if !tiposEpisodioValidos[t] {
-		return "", erros.Novo(erros.CategoriaValidacao, "tipo de episódio inválido (esperado CONSULTA, URGENCIA ou INTERNAMENTO)")
+		return "", erros.Novo(erros.CategoriaValidacao, "tipo de episódio inválido (esperado CONSULTA, URGENCIA, INTERNAMENTO ou CIRURGIA_AMBULATORIA)")
 	}
 	return t, nil
 }

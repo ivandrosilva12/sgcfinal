@@ -1,10 +1,58 @@
 # SPRINT ACTUAL
 
-- **Marco**: M1 — Fundações
-- **Sprint**: 6 (BC Identidade — loose-ends: sessões, perfil admin, notificações) — **entregue**
-- **Objectivo**: gestão de sessões activas (listar/revogar granular), edição
-  administrativa de perfil (telefone/BI de outros), e notificações por email
-  best-effort com fallback no-op. Encerra os loose-ends do BC Identidade.
+- **Marco**: M2 — Clínico Core
+- **Sprint**: 11 (Cirurgia ambulatória + Consentimento LPDP) — **entregue**
+- **Objectivo**: fechar o critério de saída M2 construindo, no BC Clínico, o
+  agregado Consentimento (LPDP), o tipo de episódio CIRURGIA_AMBULATORIA, o
+  agregado ProcedimentoCirurgico com state machine e o catálogo de procedimentos.
+
+## Sprint 11 — entregue
+
+- [x] Agregado `Consentimento` (LPDP): 5 finalidades, registar/revogar/listar/obter,
+      escritas auditadas. Migration `clinico/0003_consentimentos.sql`.
+- [x] Invariante-estrela: um procedimento exige consentimento de finalidade CIRURGIA,
+      concedido e com anexo — verificada no agendamento e **revalidada no início**
+      (o doente pode revogar e o episódio pode fechar entretanto).
+- [x] Agregado `ProcedimentoCirurgico` com state machine AGENDADO → EM_CURSO →
+      CONCLUIDO/CANCELADO (cancelamento DDM-estrito, só intra-operatório), VO
+      `Anestesia` e tipo de episódio `CIRURGIA_AMBULATORIA`.
+- [x] Catálogo de procedimentos (read model, seed PRC001–PRC007), repositórios pgx,
+      handlers HTTP com RBAC e testes de integração contra Postgres.
+- [x] Guardas de concorrência: compare-and-set nos UPDATE de transição e de revogação.
+- [x] ADR-030.
+
+## Sprint 10 — entregue
+
+- [x] BC Farmácia — stock: agregados `Fornecedor` e `Lote`, movimentos de stock
+      append-only (ADR-017), migration própria.
+- [x] Motor de dispensa transaccional com alocação FEFO, validação de alergias e
+      serialização da dispensa da mesma receita (não-exceder revalidado na transacção).
+- [x] Repositórios pgx, handler HTTP com RBAC e testes de integração.
+- [x] ADR-029.
+
+## Sprint 9 — entregue
+
+- [x] BC Farmácia — receita: agregados `Medicamento` (catálogo) e `Receita` (itens,
+      estado, eventos), casos de uso com validação de alergias e override justificado.
+- [x] Adaptador `LeitorClinico` (camada anti-corrupção sobre o BC Clínico).
+- [x] Categoria de erro `RegraNegocio` no Shared Kernel, mapeada para 422.
+- [x] ADR-028.
+
+## Sprint 8 — entregue
+
+- [x] BC Clínico — agregado `EpisodioClinico`: estados, diagnósticos CID, notas,
+      iniciar/actualizar/fechar/cancelar, e projecção EHR do doente.
+- [x] Repositório pgx, handler HTTP com RBAC clínico, integração.
+- [x] ADR-027.
+
+## Sprint 7 — entregue
+
+- [x] BC Clínico — agregado `Doente`: VOs de identificação e contactos, entidades-filho
+      (alergia, antecedente), estados e eventos.
+- [x] Casos de uso de registo, pesquisa, obtenção auditada, actualização e gestão de
+      estado; validador de NIF angolano no Shared Kernel.
+- [x] Repositório pgx, handler HTTP com RBAC clínico/administrativo, integração.
+- [x] ADR-026.
 
 ## Sprint 6 — entregue
 
@@ -81,11 +129,15 @@
 - [x] Validadores Angola (BI, telefone, AOA) no Shared Kernel, testados (domínio ≥85%).
 - [x] Errata-001 resolvida (11 papéis) e docs reconciliados.
 
-## Próximas sprints M1
+## Critérios de saída M2 — Clínico Core
 
-- **Sprint 3**: MFA para papéis sensíveis (Director, Admin, DPO, Auditor), gestão
-  administrativa de utilizadores/papéis, endpoints protegidos por papel (aplicar `RBAC`),
-  smoke tests e2e de login. Ver `docs/ERRATA-001-papeis.md`.
+- [x] BC Clínico: doente, episódio clínico e EHR. — Sprints 7/8
+- [x] BC Farmácia: catálogo, receita, stock e dispensa (FEFO). — Sprints 9/10
+- [x] Cirurgia ambulatória: tipo de episódio, procedimento cirúrgico e consentimento
+      com anexo obrigatório. — Sprint 11
+- [x] Gates de cobertura verdes em todas as fatias (domínio ≥85%, aplicação ≥75%,
+      adaptadores ≥60%; pgrepo coberto por integração).
+- [x] ADRs 026–030 registadas.
 
 ## Critérios de saída M1
 

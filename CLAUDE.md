@@ -76,10 +76,14 @@ seeds/  tests/  docs/  adrs/  docker/
 
 ## 6. Marco Actual
 
-**M1 — Fundações** (ver `docs/PLANO-M1-Fundacao-Identidade.md` e `SPRINT.md`).
-Entrega: esqueleto arquitectural + infra (Docker Compose) + fatia vertical do BC
-Identidade (Keycloak OIDC + JWT RS256 + RBAC 11 papéis — DDM-001, ver
-`docs/ERRATA-001-papeis.md`) + audit log + observabilidade.
+**M2 — Clínico Core** (Sprints 7–11; ver `SPRINT.md`). Entrega: BC Clínico (doente,
+episódio clínico + EHR, cirurgia ambulatória com consentimento LPDP) e BC Farmácia
+(catálogo, receita, stock e dispensa FEFO). Critérios de saída M2 cumpridos.
+
+**M1 — Fundações** (entregue; ver `docs/PLANO-M1-Fundacao-Identidade.md`): esqueleto
+arquitectural + infra (Docker Compose) + fatia vertical do BC Identidade (Keycloak
+OIDC + JWT RS256 + RBAC 11 papéis — DDM-001, ver `docs/ERRATA-001-papeis.md`) +
+audit log + observabilidade. Pendente: deploy de staging em CI/CD.
 
 ## 7. Antipadrões a Rejeitar
 
@@ -107,5 +111,8 @@ confirmação humana**. Nunca improvisar decisão arquitectural ou de conformida
 80 documentos + 19 ADRs). ADRs registadas: `adrs/ADR-020-fundacao-m1.md`,
 `adrs/ADR-021-identidade-oidc-rbac.md`, `adrs/ADR-022-mfa-gestao-admin.md`,
 `adrs/ADR-023-mfa-positivo-criar-utilizadores.md`, `adrs/ADR-024-ciclo-vida-utilizador.md`,
-`adrs/ADR-025-sessoes-perfil-admin-notificacoes.md`.
-Próximo ADR: **ADR-026**.
+`adrs/ADR-025-sessoes-perfil-admin-notificacoes.md`, `adrs/ADR-026-bc-clinico-doente.md`,
+`adrs/ADR-027-bc-clinico-episodio.md`, `adrs/ADR-028-bc-farmacia-receita.md`,
+`adrs/ADR-029-farmacia-stock-dispensa.md`,
+`adrs/ADR-030-cirurgia-ambulatoria-consentimento.md`.
+Próximo ADR: **ADR-031**.
