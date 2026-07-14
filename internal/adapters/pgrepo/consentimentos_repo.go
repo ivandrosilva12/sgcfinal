@@ -37,15 +37,34 @@ VALUES ($1,$2,$3,NULLIF($4,''),$5,$6) RETURNING id::text`
 		}
 		return id, nil
 	}
-	const q = `UPDATE clinico.consentimentos SET revogado_em=$2 WHERE id=$1`
+	// Guarda compare-and-set: a revogação só se aplica a um consentimento ainda não
+	// revogado. Duas revogações concorrentes lêem ambas um consentimento vigente e
+	// passam ambas a guarda do domínio — sem esta condição, ambas escreviam e o
+	// trilho de auditoria (imutável) ficava com dois `clinico.consentimento.revogado`
+	// para o mesmo consentimento.
+	const q = `UPDATE clinico.consentimentos SET revogado_em=$2 WHERE id=$1 AND revogado_em IS NULL`
 	ct, err := r.pool.Exec(ctx, q, s.ID, s.RevogadoEm)
 	if err != nil {
 		return "", fmt.Errorf("actualizar consentimento: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return "", erros.Novo(erros.CategoriaNaoEncontrado, "consentimento não encontrado")
+		return "", r.erroRevogacaoFalhada(ctx, s.ID)
 	}
 	return s.ID, nil
+}
+
+// erroRevogacaoFalhada distingue "o consentimento não existe" (NaoEncontrado/404)
+// de "já estava revogado" (Conflito/409, corrida perdida).
+func (r *RepositorioConsentimentos) erroRevogacaoFalhada(ctx context.Context, id string) error {
+	const q = `SELECT EXISTS (SELECT 1 FROM clinico.consentimentos WHERE id=$1)`
+	var existe bool
+	if err := r.pool.QueryRow(ctx, q, id).Scan(&existe); err != nil {
+		return fmt.Errorf("verificar consentimento: %w", err)
+	}
+	if !existe {
+		return erros.Novo(erros.CategoriaNaoEncontrado, "consentimento não encontrado")
+	}
+	return erros.Novo(erros.CategoriaConflito, "o consentimento já foi revogado entretanto")
 }
 
 // ObterPorID reconstrói o consentimento. NaoEncontrado se não existir.

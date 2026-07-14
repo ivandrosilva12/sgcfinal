@@ -47,18 +47,40 @@ INSERT INTO clinico.procedimentos_cirurgicos (
 	// Transição de estado: escreve apenas estado/inicio/fim/complicacoes/observacoes —
 	// nunca as colunas de identidade do procedimento (episodio_id, codigo, consentimento_id,
 	// cirurgiao_id, etc.), que não fazem parte de nenhuma transição.
+	//
+	// Guarda compare-and-set (defesa em profundidade, como no MotorDispensa): o
+	// UPDATE só se aplica se a linha ainda estiver no estado com que o agregado foi
+	// lido. Duas transições concorrentes a partir do mesmo estado (p.ex. concluir e
+	// cancelar em simultâneo, ou duplo-clique em iniciar) passam ambas as guardas do
+	// domínio — mas só uma escreve; a outra perde a corrida e devolve Conflito.
 	const q = `
 UPDATE clinico.procedimentos_cirurgicos SET
     estado=$2, inicio=$3, fim=$4, complicacoes=NULLIF($5,''), observacoes=NULLIF($6,'')
-WHERE id=$1`
-	ct, err := r.pool.Exec(ctx, q, s.ID, string(s.Estado), s.Inicio, s.Fim, s.Complicacoes, s.Observacoes)
+WHERE id=$1 AND estado=$7`
+	ct, err := r.pool.Exec(ctx, q, s.ID, string(s.Estado), s.Inicio, s.Fim, s.Complicacoes, s.Observacoes,
+		string(s.EstadoAnterior))
 	if err != nil {
 		return "", fmt.Errorf("actualizar procedimento: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
-		return "", erros.Novo(erros.CategoriaNaoEncontrado, "procedimento não encontrado")
+		return "", r.erroTransicaoFalhada(ctx, s.ID)
 	}
 	return s.ID, nil
+}
+
+// erroTransicaoFalhada distingue "a linha não existe" (NaoEncontrado/404) de "a
+// linha existe mas já não está no estado esperado" (Conflito/409, corrida perdida).
+func (r *RepositorioProcedimentos) erroTransicaoFalhada(ctx context.Context, id string) error {
+	const q = `SELECT EXISTS (SELECT 1 FROM clinico.procedimentos_cirurgicos WHERE id=$1)`
+	var existe bool
+	if err := r.pool.QueryRow(ctx, q, id).Scan(&existe); err != nil {
+		return fmt.Errorf("verificar procedimento: %w", err)
+	}
+	if !existe {
+		return erros.Novo(erros.CategoriaNaoEncontrado, "procedimento não encontrado")
+	}
+	return erros.Novo(erros.CategoriaConflito,
+		"o estado do procedimento mudou entretanto; recarregue o procedimento e repita a operação")
 }
 
 // ObterPorID reconstrói o procedimento. NaoEncontrado se não existir.
