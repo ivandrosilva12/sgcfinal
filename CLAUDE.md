@@ -107,5 +107,8 @@ confirmação humana**. Nunca improvisar decisão arquitectural ou de conformida
 80 documentos + 19 ADRs). ADRs registadas: `adrs/ADR-020-fundacao-m1.md`,
 `adrs/ADR-021-identidade-oidc-rbac.md`, `adrs/ADR-022-mfa-gestao-admin.md`,
 `adrs/ADR-023-mfa-positivo-criar-utilizadores.md`, `adrs/ADR-024-ciclo-vida-utilizador.md`,
-`adrs/ADR-025-sessoes-perfil-admin-notificacoes.md`.
-Próximo ADR: **ADR-026**.
+`adrs/ADR-025-sessoes-perfil-admin-notificacoes.md`, `adrs/ADR-026-bc-clinico-doente.md`,
+`adrs/ADR-027-bc-clinico-episodio.md`, `adrs/ADR-028-bc-farmacia-receita.md`,
+`adrs/ADR-029-farmacia-stock-dispensa.md`,
+`adrs/ADR-030-cirurgia-ambulatoria-consentimento.md`.
+Próximo ADR: **ADR-031**.
