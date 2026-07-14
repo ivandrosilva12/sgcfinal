@@ -165,6 +165,49 @@ func TestResultado_Snapshot_EstadoAnterior(t *testing.T) {
 	}
 }
 
+// TestResultado_Snapshot_EstadoAnterior_DuasTransicoesEmMemoria garante que
+// EstadoAnterior fica fixado no estado lido da base de dados mesmo depois de DUAS
+// transições em memória — não no estado intermédio (COLHIDA) por onde o agregado
+// passou a caminho de PROCESSADA. Se EstadoAnterior fosse actualizado a cada
+// transição (por exemplo, reintroduzindo "r.estadoAnterior = r.estado" em
+// SubmeterPreliminar), este teste apanhava-o: o compare-and-set do pgrepo faria
+// UPDATE ... WHERE estado='COLHIDA', um estado que nunca existiu na base de dados.
+func TestResultado_Snapshot_EstadoAnterior_DuasTransicoesEmMemoria(t *testing.T) {
+	quando := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
+
+	lido := resultadoEmEstado(t, dominio.ResPendente)
+	if err := lido.ColherAmostra("tec-1", quando); err != nil {
+		t.Fatalf("colher devia funcionar: %v", err)
+	}
+	if err := lido.SubmeterPreliminar("tec-1", "12.5", "", quando.Add(time.Hour)); err != nil {
+		t.Fatalf("submeter preliminar devia funcionar: %v", err)
+	}
+	if s := lido.Snapshot(); s.EstadoAnterior != dominio.ResPendente {
+		t.Fatalf("esperado estado anterior PENDENTE (o que está na base de dados), veio %s", s.EstadoAnterior)
+	}
+}
+
+// TestResultado_RecusarAmostra_DesdeColhida afirma o segundo caso válido de
+// RecusarAmostra: um agregado rehidratado em COLHIDA (não só PENDENTE) também
+// transita para RECUSADA e guarda o motivo. A matriz table-driven salta este caso
+// por ser válido, e TestResultado_RecusarAmostra só cobre PENDENTE — sem este
+// teste, uma guarda restrita só a PENDENTE (por exemplo, "if r.estado !=
+// dominio.ResPendente") passava a suite inteira sem ser apanhada.
+func TestResultado_RecusarAmostra_DesdeColhida(t *testing.T) {
+	quando := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
+
+	r := resultadoEmEstado(t, dominio.ResColhida)
+	if err := r.RecusarAmostra("amostra hemolisada", quando); err != nil {
+		t.Fatalf("recusar em COLHIDA devia funcionar: %v", err)
+	}
+	if r.Estado() != dominio.ResRecusada {
+		t.Fatalf("esperava RECUSADA, veio %s", r.Estado())
+	}
+	if s := r.Snapshot(); s.MotivoRecusa != "amostra hemolisada" {
+		t.Fatalf("esperava motivo %q, veio %q", "amostra hemolisada", s.MotivoRecusa)
+	}
+}
+
 // TestResultado_Transicoes_ConflitoForaDoEstadoValido é a matriz table-driven
 // (estado de partida × método → CategoriaConflito): para cada um dos três métodos
 // de transição, cobre TODOS os estados de partida inválidos — incluindo o
