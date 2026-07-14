@@ -98,8 +98,12 @@ func NovoLaboratorioHandler(
 // vive na aplicação, ver CasoListarResultadosDoEpisodio) é que ficam abertos ao
 // pessoal clínico.
 func RegistarLaboratorio(r gin.IRouter, h *LaboratorioHandler, protecao ...gin.HandlerFunc) {
-	leituraClinica := RBAC(dominio.PapelMedico, dominio.PapelEnfermeiro, dominio.PapelDirector,
-		dominio.PapelTecnicoLab, dominio.PapelPatologista, dominio.PapelAdmin)
+	// leituraClinicaLaboratorio tem nome próprio (distinto do `leituraClinica` do
+	// handler da Cirurgia) porque a composição é diferente: decisão do dono do
+	// produto de minimização LPDP — o Admin é um papel técnico/de administração de
+	// sistema e não figura aqui; não precisa de ver análises de doentes (ADR-031).
+	leituraClinicaLaboratorio := RBAC(dominio.PapelMedico, dominio.PapelEnfermeiro, dominio.PapelDirector,
+		dominio.PapelTecnicoLab, dominio.PapelPatologista)
 	catalogoEscrita := RBAC(dominio.PapelAdmin, dominio.PapelDirector)
 	soMedico := RBAC(dominio.PapelMedico)
 	soTecnico := RBAC(dominio.PapelTecnicoLab)
@@ -111,17 +115,17 @@ func RegistarLaboratorio(r gin.IRouter, h *LaboratorioHandler, protecao ...gin.H
 	ga := r.Group("/api/v1/analises")
 	ga.Use(protecao...)
 	ga.POST("", catalogoEscrita, h.registarAnaliseHTTP)
-	ga.GET("", leituraClinica, h.listarAnalisesHTTP)
+	ga.GET("", leituraClinicaLaboratorio, h.listarAnalisesHTTP)
 
 	ge := r.Group("/api/v1/episodios")
 	ge.Use(protecao...)
 	ge.POST("/:eid/requisicoes", soMedico, h.emitirRequisicaoHTTP)
-	ge.GET("/:eid/requisicoes", leituraClinica, h.listarRequisicoesHTTP)
-	ge.GET("/:eid/resultados", leituraClinica, h.listarResultadosDoEpisodioHTTP)
+	ge.GET("/:eid/requisicoes", leituraClinicaLaboratorio, h.listarRequisicoesHTTP)
+	ge.GET("/:eid/resultados", leituraClinicaLaboratorio, h.listarResultadosDoEpisodioHTTP)
 
 	gr := r.Group("/api/v1/requisicoes")
 	gr.Use(protecao...)
-	gr.GET("/:rid", leituraClinica, h.obterRequisicaoHTTP)
+	gr.GET("/:rid", leituraClinicaLaboratorio, h.obterRequisicaoHTTP)
 
 	gl := r.Group("/api/v1/laboratorio")
 	gl.Use(protecao...)

@@ -275,6 +275,19 @@ func TestResultadosEpisodio_Farmaceutico_Proibido(t *testing.T) {
 	}
 }
 
+// TestResultadosEpisodio_Admin_Proibido prova a decisão de minimização LPDP do dono
+// do produto: o Admin é um papel técnico/de administração de sistema e deixa de ter
+// leitura clínica no BC Laboratório — não vê análises de doentes (ADR-031).
+func TestResultadosEpisodio_Admin_Proibido(t *testing.T) {
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("adm-1", identidade.PapelAdmin))
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/episodios/ep-1/resultados", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != 403 {
+		t.Fatalf("esperava 403 para o Admin nos resultados do episódio, veio %d (%s)", w.Code, w.Body.String())
+	}
+}
+
 func TestColherAmostra_TecnicoLab_200(t *testing.T) {
 	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("tec-1", identidade.PapelTecnicoLab))
 	w := httptest.NewRecorder()
