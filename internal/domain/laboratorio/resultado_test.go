@@ -1,6 +1,7 @@
 package laboratorio_test
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -17,6 +18,17 @@ func novoRes(t *testing.T) *dominio.Resultado {
 	return r
 }
 
+// resultadoEmEstado devolve um agregado rehidratado directamente num dado estado,
+// como se tivesse sido lido da base de dados — é assim que se constroem os casos de
+// partida da matriz de transições e do teste de fidelidade do round-trip.
+func resultadoEmEstado(t *testing.T, estado dominio.EstadoResultado) *dominio.Resultado {
+	t.Helper()
+	return dominio.ReconstruirResultado(dominio.SnapshotResultado{
+		ID: "res-1", RequisicaoID: "req-1", CodigoAnalise: "HB", Unidade: "g/dL",
+		Estado: estado,
+	})
+}
+
 func TestNovoResultado_NasceEmPendente(t *testing.T) {
 	r := novoRes(t)
 	if r.Estado() != dominio.ResPendente {
@@ -27,25 +39,15 @@ func TestNovoResultado_NasceEmPendente(t *testing.T) {
 	}
 }
 
-func TestResultado_CicloAteAoPreliminar(t *testing.T) {
+func TestResultado_FluxoFeliz_AteAoPreliminar(t *testing.T) {
 	r := novoRes(t)
 	quando := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 
-	// Submeter sem colher → Conflito.
-	if err := r.SubmeterPreliminar("tec-1", "12.5", "", quando); err == nil ||
-		erros.CategoriaDe(err) != erros.CategoriaConflito {
-		t.Fatalf("submeter sem colher devia falhar com Conflito, veio %v", err)
-	}
 	if err := r.ColherAmostra("tec-1", quando); err != nil {
 		t.Fatalf("colher devia funcionar: %v", err)
 	}
 	if r.Estado() != dominio.ResColhida {
 		t.Fatalf("esperava COLHIDA, veio %s", r.Estado())
-	}
-	// Colher de novo → Conflito.
-	if err := r.ColherAmostra("tec-1", quando); err == nil ||
-		erros.CategoriaDe(err) != erros.CategoriaConflito {
-		t.Fatalf("colher duas vezes devia falhar com Conflito, veio %v", err)
 	}
 	// Submeter sem valor → Validacao.
 	if err := r.SubmeterPreliminar("tec-1", "  ", "", quando); err == nil ||
@@ -67,10 +69,6 @@ func TestResultado_CicloAteAoPreliminar(t *testing.T) {
 	if r.TecnicoSubmissorID() != "tec-1" {
 		t.Fatalf("esperava submissor tec-1, veio %q", r.TecnicoSubmissorID())
 	}
-	s := r.Snapshot()
-	if s.EstadoAnterior != dominio.ResColhida {
-		t.Fatalf("o snapshot devia expor o estado anterior COLHIDA (compare-and-set), veio %s", s.EstadoAnterior)
-	}
 }
 
 func TestResultado_RecusarAmostra(t *testing.T) {
@@ -87,20 +85,6 @@ func TestResultado_RecusarAmostra(t *testing.T) {
 	}
 	if r.Estado() != dominio.ResRecusada {
 		t.Fatalf("esperava RECUSADA, veio %s", r.Estado())
-	}
-	// Recusar de novo → Conflito.
-	if err := r.RecusarAmostra("outra razão", quando); err == nil ||
-		erros.CategoriaDe(err) != erros.CategoriaConflito {
-		t.Fatalf("recusar duas vezes devia falhar com Conflito, veio %v", err)
-	}
-
-	// Depois de processada já não se recusa.
-	p := novoRes(t)
-	_ = p.ColherAmostra("tec-1", quando)
-	_ = p.SubmeterPreliminar("tec-1", "12.5", "", quando)
-	if err := p.RecusarAmostra("tarde demais", quando); err == nil ||
-		erros.CategoriaDe(err) != erros.CategoriaConflito {
-		t.Fatalf("recusar uma amostra já processada devia falhar com Conflito, veio %v", err)
 	}
 }
 
@@ -139,13 +123,6 @@ func TestResultado_RecusarAmostra_DataEmFalta(t *testing.T) {
 	}
 }
 
-func TestResultado_RequisicaoID(t *testing.T) {
-	r := novoRes(t)
-	if r.RequisicaoID() != "req-1" {
-		t.Fatalf("esperava requisicao req-1, veio %q", r.RequisicaoID())
-	}
-}
-
 func TestResultado_ReconstruirPreservaEstado(t *testing.T) {
 	quando := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
 	r := novoRes(t)
@@ -159,5 +136,136 @@ func TestResultado_ReconstruirPreservaEstado(t *testing.T) {
 	// Um agregado reconstruído tem EstadoAnterior = Estado: ainda não transitou.
 	if b.Snapshot().EstadoAnterior != dominio.ResColhida {
 		t.Fatalf("o estado anterior de um agregado recém-lido é o próprio estado")
+	}
+}
+
+// TestResultado_Snapshot_EstadoAnterior prova a base da guarda compare-and-set do
+// repositório (Task 8): um agregado novo (via NovoResultado, nunca persistido) não
+// tem estado anterior — vai por INSERT, não por compare-and-set; um agregado
+// rehidratado expõe o estado com que foi lido, mesmo depois de transitar.
+func TestResultado_Snapshot_EstadoAnterior(t *testing.T) {
+	quando := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
+
+	novo := novoRes(t)
+	_ = novo.ColherAmostra("tec-1", quando)
+	if ea := novo.Snapshot().EstadoAnterior; ea != "" {
+		t.Fatalf("um resultado novo não devia ter estado anterior, veio %q", ea)
+	}
+
+	lido := dominio.ReconstruirResultado(dominio.SnapshotResultado{
+		ID: "res-1", RequisicaoID: "req-1", CodigoAnalise: "HB", Unidade: "g/dL",
+		Estado: dominio.ResColhida, TecnicoColheitaID: "tec-1", ColhidaEm: &quando,
+	})
+	if err := lido.SubmeterPreliminar("tec-2", "12.5", "", quando); err != nil {
+		t.Fatalf("submeter preliminar: %v", err)
+	}
+	// EstadoAnterior tem de continuar ResColhida — é o estado que está na BD.
+	if s := lido.Snapshot(); s.EstadoAnterior != dominio.ResColhida {
+		t.Fatalf("esperado estado anterior COLHIDA (compare-and-set), veio %s", s.EstadoAnterior)
+	}
+}
+
+// TestResultado_Transicoes_ConflitoForaDoEstadoValido é a matriz table-driven
+// (estado de partida × método → CategoriaConflito): para cada um dos três métodos
+// de transição, cobre TODOS os estados de partida inválidos — incluindo o
+// duplo-submit (PROCESSADA → SubmeterPreliminar outra vez), o caso clássico do
+// duplo-clique numa fila de laboratório. Os agregados de partida são construídos
+// com ReconstruirResultado, como se tivessem sido lidos da base de dados.
+func TestResultado_Transicoes_ConflitoForaDoEstadoValido(t *testing.T) {
+	quando := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
+
+	todos := []dominio.EstadoResultado{
+		dominio.ResPendente, dominio.ResColhida, dominio.ResProcessada,
+		dominio.ResValidada, dominio.ResConcluida, dominio.ResRecusada,
+	}
+
+	casos := []struct {
+		metodo   string
+		validos  []dominio.EstadoResultado
+		executar func(r *dominio.Resultado) error
+	}{
+		{
+			metodo:  "ColherAmostra",
+			validos: []dominio.EstadoResultado{dominio.ResPendente},
+			executar: func(r *dominio.Resultado) error {
+				return r.ColherAmostra("tec-1", quando)
+			},
+		},
+		{
+			metodo:  "RecusarAmostra",
+			validos: []dominio.EstadoResultado{dominio.ResPendente, dominio.ResColhida},
+			executar: func(r *dominio.Resultado) error {
+				return r.RecusarAmostra("amostra coagulada", quando)
+			},
+		},
+		{
+			metodo:  "SubmeterPreliminar",
+			validos: []dominio.EstadoResultado{dominio.ResColhida},
+			executar: func(r *dominio.Resultado) error {
+				return r.SubmeterPreliminar("tec-2", "12.5", "", quando)
+			},
+		},
+	}
+
+	ehValido := func(estado dominio.EstadoResultado, validos []dominio.EstadoResultado) bool {
+		for _, v := range validos {
+			if estado == v {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, c := range casos {
+		for _, estado := range todos {
+			if ehValido(estado, c.validos) {
+				continue
+			}
+			t.Run(c.metodo+"_desde_"+string(estado), func(t *testing.T) {
+				r := resultadoEmEstado(t, estado)
+				err := c.executar(r)
+				if err == nil || erros.CategoriaDe(err) != erros.CategoriaConflito {
+					t.Fatalf("%s desde %s devia falhar com Conflito, veio %v", c.metodo, estado, err)
+				}
+			})
+		}
+	}
+}
+
+// TestResultado_ReconstruirRoundTrip garante que ReconstruirResultado(s).Snapshot()
+// devolve s para TODOS os campos: a Task 8 depende de fidelidade total, e um
+// esquecimento no mapeamento (ex.: motivoRecusa ou valorCritico a cair) não seria
+// apanhado por nenhum outro teste. EstadoAnterior é o caso especial — é derivado do
+// Estado por ReconstruirResultado, nunca transportado do snapshot de origem.
+func TestResultado_ReconstruirRoundTrip(t *testing.T) {
+	colhidaEm := time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC)
+	submetidaEm := colhidaEm.Add(time.Hour)
+	validadaEm := submetidaEm.Add(time.Hour)
+
+	original := dominio.SnapshotResultado{
+		ID:                     "res-1",
+		RequisicaoID:           "req-1",
+		CodigoAnalise:          "HB",
+		Valor:                  "12.5",
+		Unidade:                "g/dL",
+		Observacoes:            "amostra hemolisada",
+		MotivoRecusa:           "amostra coagulada",
+		Estado:                 dominio.ResValidada,
+		TecnicoColheitaID:      "tec-1",
+		TecnicoSubmissorID:     "tec-2",
+		PatologistaValidadorID: "pat-1",
+		ColhidaEm:              &colhidaEm,
+		SubmetidaEm:            &submetidaEm,
+		ValidadaEm:             &validadaEm,
+		ValorCritico:           true,
+		CriadoEm:               colhidaEm,
+	}
+	// EstadoAnterior não é transportado — é derivado do Estado na reconstrução.
+	esperado := original
+	esperado.EstadoAnterior = original.Estado
+
+	obtido := dominio.ReconstruirResultado(original).Snapshot()
+	if !reflect.DeepEqual(esperado, obtido) {
+		t.Fatalf("round-trip não preservou o snapshot:\nesperado %+v\nveio     %+v", esperado, obtido)
 	}
 }

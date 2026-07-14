@@ -64,7 +64,7 @@ func NovoResultado(requisicaoID, codigoAnalise, unidade string) (*Resultado, err
 	}
 	return &Resultado{
 		requisicaoID: requisicaoID, codigoAnalise: codigoAnalise, unidade: unidade,
-		estado: ResPendente, estadoAnterior: ResPendente,
+		estado: ResPendente,
 	}, nil
 }
 
@@ -80,7 +80,6 @@ func (r *Resultado) ColherAmostra(tecnicoID string, em time.Time) error {
 	if em.IsZero() {
 		return erros.Novo(erros.CategoriaValidacao, "data da colheita em falta")
 	}
-	r.estadoAnterior = r.estado
 	r.estado = ResColhida
 	r.tecnicoColheitaID = tecnicoID
 	r.colhidaEm = &em
@@ -101,7 +100,8 @@ func (r *Resultado) RecusarAmostra(motivo string, em time.Time) error {
 	if em.IsZero() {
 		return erros.Novo(erros.CategoriaValidacao, "data da recusa em falta")
 	}
-	r.estadoAnterior = r.estado
+	// em só sobrevive no evento AmostraRecusada — não há coluna "recusada_em" no
+	// agregado, por isso não é guardado em campo nenhum aqui.
 	r.estado = ResRecusada
 	r.motivoRecusa = motivo
 	return nil
@@ -126,7 +126,6 @@ func (r *Resultado) SubmeterPreliminar(tecnicoID, valor, observacoes string, em 
 	if em.IsZero() {
 		return erros.Novo(erros.CategoriaValidacao, "data da submissão em falta")
 	}
-	r.estadoAnterior = r.estado
 	r.estado = ResProcessada
 	r.tecnicoSubmissorID = tecnicoID
 	r.valor = valor
@@ -149,9 +148,9 @@ func (r *Resultado) TecnicoSubmissorID() string { return r.tecnicoSubmissorID }
 
 // SnapshotResultado carrega o estado completo para persistência ou rehidratação.
 //
-// EstadoAnterior é o estado com que o agregado foi lido da base de dados: é o que o
-// repositório usa na guarda compare-and-set do UPDATE de transição. Num agregado
-// recém-lido (ou recém-criado) é igual a Estado.
+// EstadoAnterior é o estado lido da base de dados (vazio num agregado novo). O
+// repositório usa-o como guarda compare-and-set no UPDATE de transição. É
+// derivado — quem reconstrói não o preenche.
 type SnapshotResultado struct {
 	ID                     string
 	RequisicaoID           string

@@ -1,6 +1,10 @@
 package laboratorio
 
-import "time"
+import (
+	"time"
+
+	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/evento"
+)
 
 // AmostraColhida é emitido quando o técnico regista a colheita.
 type AmostraColhida struct {
@@ -37,3 +41,9 @@ func (e ResultadoPreliminarSubmetido) NomeEvento() string {
 	return "laboratorio.resultado.preliminar_submetido"
 }
 func (e ResultadoPreliminarSubmetido) OcorridoEm() time.Time { return e.Em }
+
+var (
+	_ evento.EventoDominio = AmostraColhida{}
+	_ evento.EventoDominio = AmostraRecusada{}
+	_ evento.EventoDominio = ResultadoPreliminarSubmetido{}
+)
