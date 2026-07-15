@@ -10,19 +10,18 @@ import (
 
 // EstadoMarcacao é o estado do ciclo de vida de uma marcação.
 //
-//	MARCADA ─┬─ Cancelar ─────► CANCELADA
-//	         ├─ Remarcar ─────► REMARCADA  (+ nova Marcacao MARCADA)
-//	         └─ RegistarFalta ► FALTOU
-//
-// A chegada do doente (COMPARECEU) não faz parte deste sub-projecto — será marcada
-// pelo módulo Recepção (check-in) num ciclo futuro.
+//	MARCADA ─┬─ Cancelar ──────────► CANCELADA
+//	         ├─ Remarcar ──────────► REMARCADA  (+ nova Marcacao MARCADA)
+//	         ├─ RegistarFalta ─────► FALTOU
+//	         └─ RegistarComparencia► COMPARECEU (check-in do doente)
 type EstadoMarcacao string
 
 const (
-	MarcMarcada   EstadoMarcacao = "MARCADA"
-	MarcCancelada EstadoMarcacao = "CANCELADA"
-	MarcRemarcada EstadoMarcacao = "REMARCADA"
-	MarcFaltou    EstadoMarcacao = "FALTOU"
+	MarcMarcada    EstadoMarcacao = "MARCADA"
+	MarcCancelada  EstadoMarcacao = "CANCELADA"
+	MarcRemarcada  EstadoMarcacao = "REMARCADA"
+	MarcFaltou     EstadoMarcacao = "FALTOU"
+	MarcCompareceu EstadoMarcacao = "COMPARECEU"
 )
 
 // Marcacao é o agregado raiz do BC Recepção: uma consulta agendada para um doente,
@@ -121,6 +120,18 @@ func (m *Marcacao) RegistarFalta(em time.Time) error {
 		return erros.Novo(erros.CategoriaRegraNegocio, "só é possível registar falta depois da hora marcada")
 	}
 	m.estado = MarcFaltou
+	m.actualizadoEm = em
+	return nil
+}
+
+// RegistarComparencia transita MARCADA → COMPARECEU (o doente chegou e fez check-in).
+// Desfecho simétrico ao FALTOU: depois de comparecer, a marcação já não pode ser
+// cancelada, remarcada nem dar falta (essas transições continuam a exigir MARCADA).
+func (m *Marcacao) RegistarComparencia(em time.Time) error {
+	if m.estado != MarcMarcada {
+		return erros.Novo(erros.CategoriaConflito, "só é possível registar a comparência de uma marcação em estado MARCADA")
+	}
+	m.estado = MarcCompareceu
 	m.actualizadoEm = em
 	return nil
 }

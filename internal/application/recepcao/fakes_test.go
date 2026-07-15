@@ -162,6 +162,76 @@ func resumo(m *dominio.Marcacao) dominio.ResumoMarcacao {
 	}
 }
 
+// fakeChegadas guarda chegadas em memória. RegistarChegadaAgendada também transita a
+// marcação no fakeMarcacoes injectado (coordenação cross-agregado).
+type fakeChegadas struct {
+	dados     map[string]*dominio.Chegada
+	seq       int
+	marcacoes *fakeMarcacoes // para a coordenação transaccional
+}
+
+func novoFakeChegadas(m *fakeMarcacoes) *fakeChegadas {
+	return &fakeChegadas{dados: map[string]*dominio.Chegada{}, marcacoes: m}
+}
+
+func (f *fakeChegadas) Guardar(_ context.Context, c *dominio.Chegada) (string, error) {
+	f.seq++
+	id := "cheg-" + itoa(f.seq)
+	s := c.Snapshot()
+	s.ID = id
+	f.dados[id] = dominio.ReconstruirChegada(s)
+	return id, nil
+}
+
+func (f *fakeChegadas) RegistarChegadaAgendada(ctx context.Context, chegada *dominio.Chegada, marcacao *dominio.Marcacao) (string, error) {
+	// Transita a marcação (guarda CAS via o fakeMarcacoes) e só depois grava a chegada.
+	if err := f.marcacoes.Transitar(ctx, marcacao); err != nil {
+		return "", err
+	}
+	return f.Guardar(ctx, chegada)
+}
+
+func (f *fakeChegadas) ObterPorID(_ context.Context, id string) (*dominio.Chegada, error) {
+	c, ok := f.dados[id]
+	if !ok {
+		return nil, erros.Novo(erros.CategoriaNaoEncontrado, "chegada não encontrada")
+	}
+	return dominio.ReconstruirChegada(c.Snapshot()), nil
+}
+
+func (f *fakeChegadas) Transitar(_ context.Context, c *dominio.Chegada) error {
+	s := c.Snapshot()
+	cur, ok := f.dados[s.ID]
+	if !ok {
+		return erros.Novo(erros.CategoriaNaoEncontrado, "chegada não encontrada")
+	}
+	if cur.Estado() != s.EstadoAnterior {
+		return erros.Novo(erros.CategoriaConflito, "o estado da chegada mudou entretanto")
+	}
+	f.dados[s.ID] = dominio.ReconstruirChegada(s)
+	return nil
+}
+
+func (f *fakeChegadas) ListarFila(_ context.Context, especialidadeID string) ([]dominio.ResumoChegada, error) {
+	var out []dominio.ResumoChegada
+	for _, c := range f.dados {
+		s := c.Snapshot()
+		if s.Estado != dominio.ChegAguarda {
+			continue
+		}
+		if especialidadeID != "" && s.EspecialidadeID != especialidadeID {
+			continue
+		}
+		out = append(out, dominio.ResumoChegada{
+			ID: s.ID, DoenteID: s.DoenteID, MarcacaoID: s.MarcacaoID, MedicoID: s.MedicoID,
+			EspecialidadeID: s.EspecialidadeID, Estado: string(s.Estado), HoraChegada: s.HoraChegada,
+		})
+	}
+	return out, nil
+}
+
+var _ dominio.RepositorioChegadas = (*fakeChegadas)(nil)
+
 // fakeLeitorDoente responde à ACL sobre o Clínico.
 type fakeLeitorDoente struct {
 	activos map[string]bool
@@ -227,6 +297,17 @@ func marcacaoAgregada(t *testing.T, doe, medico, esp, de, ate string) *dominio.M
 		t.Fatalf("marcação inválida no teste: %v", err)
 	}
 	return m
+}
+
+// chegadaWalkIn constrói uma chegada walk-in válida directamente através do construtor
+// do domínio, para preparar cenários de teste.
+func chegadaWalkIn(t *testing.T, doe, esp, hora string) *dominio.Chegada {
+	t.Helper()
+	c, err := dominio.NovaChegadaWalkIn(doe, esp, inst(hora))
+	if err != nil {
+		t.Fatalf("chegada inválida no teste: %v", err)
+	}
+	return c
 }
 
 // Garantias de conformidade com as portas.
