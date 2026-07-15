@@ -24,6 +24,7 @@ type LeitorDoente interface {
 // Reexports dos read-models do domínio.
 type (
 	ResumoMarcacao = dominio.ResumoMarcacao
+	ResumoChegada  = dominio.ResumoChegada
 )
 
 // DadosDefinirJanela é a entrada da definição de uma janela. O MedicoID vem do
@@ -95,5 +96,31 @@ func paraDetalheMarcacao(m *dominio.Marcacao) DetalheMarcacao {
 		ID: s.ID, DoenteID: s.DoenteID, MedicoID: s.MedicoID, EspecialidadeID: s.EspecialidadeID,
 		Estado: string(s.Estado), Motivo: s.Motivo, RemarcaDe: s.RemarcaDe,
 		Inicio: s.Inicio, Fim: s.Fim,
+	}
+}
+
+// DadosWalkIn é a entrada de um walk-in (doente sem marcação). O actor vem da sessão.
+type DadosWalkIn struct {
+	DoenteID        string `json:"doente_id"`
+	EspecialidadeID string `json:"especialidade_id"`
+}
+
+// DetalheChegada é o detalhe de uma chegada numa resposta.
+type DetalheChegada struct {
+	ID              string    `json:"id"`
+	DoenteID        string    `json:"doente_id"`
+	MarcacaoID      string    `json:"marcacao_id,omitempty"`
+	MedicoID        string    `json:"medico_id,omitempty"`
+	EspecialidadeID string    `json:"especialidade_id"`
+	Estado          string    `json:"estado"`
+	HoraChegada     time.Time `json:"hora_chegada"`
+}
+
+// paraDetalheChegada projecta o agregado para o read-model de resposta.
+func paraDetalheChegada(c *dominio.Chegada) DetalheChegada {
+	s := c.Snapshot()
+	return DetalheChegada{
+		ID: s.ID, DoenteID: s.DoenteID, MarcacaoID: s.MarcacaoID, MedicoID: s.MedicoID,
+		EspecialidadeID: s.EspecialidadeID, Estado: string(s.Estado), HoraChegada: s.HoraChegada,
 	}
 }

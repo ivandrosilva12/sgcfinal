@@ -19,6 +19,17 @@ type ResumoMarcacao struct {
 	CriadoEm        time.Time `json:"criado_em"`
 }
 
+// ResumoChegada é a projecção de leitura de uma chegada (linha da fila).
+type ResumoChegada struct {
+	ID              string    `json:"id"`
+	DoenteID        string    `json:"doente_id"`
+	MarcacaoID      string    `json:"marcacao_id,omitempty"`
+	MedicoID        string    `json:"medico_id,omitempty"`
+	EspecialidadeID string    `json:"especialidade_id"`
+	Estado          string    `json:"estado"`
+	HoraChegada     time.Time `json:"hora_chegada"`
+}
+
 // RepositorioJanelas é a porta de saída de persistência de janelas de disponibilidade.
 // ListarPorMedicoIntervalo devolve as janelas do médico que SE SOBREPÕEM ao intervalo
 // [de,ate] (não apenas as inteiramente contidas): é sobre essas que
@@ -48,4 +59,20 @@ type RepositorioMarcacoes interface {
 	ListarActivasPorMedicoIntervalo(ctx context.Context, medicoID string, de, ate time.Time) ([]Marcacao, error)
 	ListarPorMedicoIntervalo(ctx context.Context, medicoID string, de, ate time.Time) ([]ResumoMarcacao, error)
 	ListarPorDoente(ctx context.Context, doenteID string) ([]ResumoMarcacao, error)
+}
+
+// RepositorioChegadas é a porta de saída de persistência de chegadas.
+//
+// RegistarChegadaAgendada grava, numa única transacção, a marcação a passar a
+// COMPARECEU (guarda compare-and-set sobre MARCADA) e a nova chegada — um check-in que
+// transitasse a marcação sem criar a chegada (ou vice-versa) deixaria a recepção
+// incoerente. Transitar aplica a transição de estado da chegada (CAS). ListarFila
+// devolve as chegadas em AGUARDA (fila), ordenadas por hora de chegada; especialidade
+// vazia = todas.
+type RepositorioChegadas interface {
+	Guardar(ctx context.Context, c *Chegada) (string, error)
+	RegistarChegadaAgendada(ctx context.Context, chegada *Chegada, marcacao *Marcacao) (string, error)
+	ObterPorID(ctx context.Context, id string) (*Chegada, error)
+	Transitar(ctx context.Context, c *Chegada) error
+	ListarFila(ctx context.Context, especialidadeID string) ([]ResumoChegada, error)
 }
