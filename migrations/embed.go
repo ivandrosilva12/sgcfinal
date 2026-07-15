@@ -7,5 +7,5 @@ import "embed"
 
 // FS contém todas as migrations, agrupadas por subdirectório (bounded context).
 //
-//go:embed auditoria clinico farmacia identidade laboratorio shared
+//go:embed auditoria clinico farmacia identidade laboratorio recepcao shared
 var FS embed.FS

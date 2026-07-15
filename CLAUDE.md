@@ -81,6 +81,11 @@ catálogo de análises, requisição (via ACL sobre o Clínico), amostra e resul
 state machine; a validação com segregação de funções (técnico ≠ patologista) e os
 valores críticos fecham o marco no Sprint 13.
 
+**Marco Percurso Ambulatório** (em curso, a par do M3): abre o percurso do doente antes
+da consulta. Sub-projecto entregue: **Marcação** (BC `recepcao` — agenda por
+disponibilidade, ciclo de vida da marcação, ACL sobre o Clínico; ver ADR-032). Pendentes:
+Recepção/check-in e Triagem.
+
 **M2 — Clínico Core** (entregue; Sprints 7–11): BC Clínico (doente, episódio + EHR,
 cirurgia ambulatória com consentimento LPDP) e BC Farmácia (catálogo, receita, stock
 e dispensa FEFO).
@@ -120,5 +125,6 @@ confirmação humana**. Nunca improvisar decisão arquitectural ou de conformida
 `adrs/ADR-027-bc-clinico-episodio.md`, `adrs/ADR-028-bc-farmacia-receita.md`,
 `adrs/ADR-029-farmacia-stock-dispensa.md`,
 `adrs/ADR-030-cirurgia-ambulatoria-consentimento.md`,
-`adrs/ADR-031-bc-laboratorio.md`.
-Próximo ADR: **ADR-032**.
+`adrs/ADR-031-bc-laboratorio.md`,
+`adrs/ADR-032-bc-recepcao-marcacao.md`.
+Próximo ADR: **ADR-033**.

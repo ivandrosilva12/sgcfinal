@@ -15,12 +15,14 @@ import (
 	"github.com/ivandrosilva12/sgcfinal/internal/adapters/keycloak"
 	adlaboratorio "github.com/ivandrosilva12/sgcfinal/internal/adapters/laboratorio"
 	"github.com/ivandrosilva12/sgcfinal/internal/adapters/pgrepo"
+	adrecepcao "github.com/ivandrosilva12/sgcfinal/internal/adapters/recepcao"
 	adredis "github.com/ivandrosilva12/sgcfinal/internal/adapters/redis"
 	adsmtp "github.com/ivandrosilva12/sgcfinal/internal/adapters/smtp"
 	appclinico "github.com/ivandrosilva12/sgcfinal/internal/application/clinico"
 	appfarmacia "github.com/ivandrosilva12/sgcfinal/internal/application/farmacia"
 	appident "github.com/ivandrosilva12/sgcfinal/internal/application/identidade"
 	applaboratorio "github.com/ivandrosilva12/sgcfinal/internal/application/laboratorio"
+	apprecepcao "github.com/ivandrosilva12/sgcfinal/internal/application/recepcao"
 	"github.com/ivandrosilva12/sgcfinal/internal/platform/config"
 	"github.com/ivandrosilva12/sgcfinal/internal/platform/db"
 	"github.com/ivandrosilva12/sgcfinal/internal/platform/observ"
@@ -183,6 +185,22 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		applaboratorio.NovoCasoListarResultadosDoEpisodio(repoResultados),
 	)
 
+	// BC Recepção (marco Percurso Ambulatório): marcação e agenda por disponibilidade.
+	repoJanelas := pgrepo.NovoRepositorioJanelas(pool)
+	repoMarcacoes := pgrepo.NovoRepositorioMarcacoes(pool)
+	// ACL: a Recepção lê o Clínico apenas através deste adaptador.
+	leitorDoenteRec := adrecepcao.NovoLeitorDoente(repoDoentes)
+	handlerRecepcao := adhttp.NovoRecepcaoHandler(
+		apprecepcao.NovoCasoDefinirJanela(repoJanelas, repoAuditoria),
+		apprecepcao.NovoCasoRemoverJanela(repoJanelas, repoMarcacoes, repoAuditoria),
+		apprecepcao.NovoCasoMarcar(repoMarcacoes, repoJanelas, leitorDoenteRec, repoAuditoria),
+		apprecepcao.NovoCasoRemarcar(repoMarcacoes, repoJanelas, repoAuditoria),
+		apprecepcao.NovoCasoCancelar(repoMarcacoes, repoAuditoria),
+		apprecepcao.NovoCasoRegistarFalta(repoMarcacoes, repoAuditoria),
+		apprecepcao.NovoCasoListarAgenda(repoJanelas, repoMarcacoes),
+		apprecepcao.NovoCasoListarMarcacoesDoente(repoMarcacoes),
+	)
+
 	// Middlewares transversais e do grupo protegido.
 	segurancaMW := adhttp.SegurancaHTTP(cfg.OrigensCORS, cfg.EmProducao())
 	limiteMW := adhttp.LimiteTaxa(redisCli.Limitador(), cfg.LimiteTaxaIP, cfg.JanelaTaxa)
@@ -206,6 +224,7 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		adhttp.RegistarFarmacia(r, handlerFarmacia, limiteMW, authMW)
 		adhttp.RegistarFarmaciaStock(r, handlerFarmaciaStock, limiteMW, authMW)
 		adhttp.RegistarLaboratorio(r, handlerLaboratorio, limiteMW, authMW)
+		adhttp.RegistarRecepcao(r, handlerRecepcao, limiteMW, authMW)
 	}
 
 	logger.Info("dependências estabelecidas", "ambiente", cfg.Ambiente)
