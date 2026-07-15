@@ -76,6 +76,57 @@ func TestRegistarDesistencia_TransitaEAudita(t *testing.T) {
 	}
 }
 
+func TestRegistarChegada_TransitaMarcacaoECriaChegada(t *testing.T) {
+	marc := novoFakeMarcacoes()
+	// marcação MARCADA persistida
+	mid, _ := marc.Guardar(context.Background(), marcacaoAgregada(t, "doe-1", "med-1", "esp-1", "09:00", "09:30"))
+	chegadas := novoFakeChegadas(marc)
+	aud := &fakeAuditor{}
+	uc := app.NovoCasoRegistarChegada(chegadas, marc, aud)
+	uc.DefinirRelogio(agoraFixo("08:50"))
+
+	out, err := uc.Executar(context.Background(), "adm-1", mid)
+	if err != nil {
+		t.Fatalf("não esperava erro: %v", err)
+	}
+	if out.ID == "" || out.MarcacaoID != mid || out.MedicoID != "med-1" || out.Estado != string(dominio.ChegAguarda) {
+		t.Fatalf("chegada mal preenchida: %+v", out)
+	}
+	// a marcação passou a COMPARECEU
+	m, _ := marc.ObterPorID(context.Background(), mid)
+	if m.Estado() != dominio.MarcCompareceu {
+		t.Fatalf("a marcação devia estar COMPARECEU, veio %s", m.Estado())
+	}
+	if !aud.tem("recepcao.chegada.registada") {
+		t.Fatal("esperava auditoria recepcao.chegada.registada")
+	}
+}
+
+func TestRegistarChegada_MarcacaoInexistente_NaoEncontrado(t *testing.T) {
+	marc := novoFakeMarcacoes()
+	uc := app.NovoCasoRegistarChegada(novoFakeChegadas(marc), marc, &fakeAuditor{})
+	_, err := uc.Executar(context.Background(), "adm-1", "marc-inexistente")
+	if erros.CategoriaDe(err) != erros.CategoriaNaoEncontrado {
+		t.Fatalf("esperava CategoriaNaoEncontrado, veio %v", erros.CategoriaDe(err))
+	}
+}
+
+func TestRegistarChegada_Duplicado_Conflito(t *testing.T) {
+	marc := novoFakeMarcacoes()
+	mid, _ := marc.Guardar(context.Background(), marcacaoAgregada(t, "doe-1", "med-1", "esp-1", "09:00", "09:30"))
+	chegadas := novoFakeChegadas(marc)
+	uc := app.NovoCasoRegistarChegada(chegadas, marc, &fakeAuditor{})
+	uc.DefinirRelogio(agoraFixo("08:50"))
+	if _, err := uc.Executar(context.Background(), "adm-1", mid); err != nil {
+		t.Fatalf("primeiro check-in não devia falhar: %v", err)
+	}
+	// segundo check-in da mesma marcação: já não está MARCADA → Conflito
+	_, err := uc.Executar(context.Background(), "adm-1", mid)
+	if erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Fatalf("check-in duplo devia dar CategoriaConflito, veio %v", erros.CategoriaDe(err))
+	}
+}
+
 func TestListarFila_SoAguardaFiltradoPorEspecialidade(t *testing.T) {
 	chegadas := novoFakeChegadas(novoFakeMarcacoes())
 	_, _ = chegadas.Guardar(context.Background(), chegadaWalkIn(t, "doe-1", "esp-1", "09:00"))

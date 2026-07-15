@@ -110,6 +110,53 @@ func (uc *CasoListarFila) Executar(ctx context.Context, especialidadeID string) 
 	return uc.chegadas.ListarFila(ctx, especialidadeID)
 }
 
+// CasoRegistarChegada faz o check-in de uma marcação: transita a marcação para
+// COMPARECEU e cria a chegada na fila, atomicamente.
+type CasoRegistarChegada struct {
+	chegadas  dominio.RepositorioChegadas
+	marcacoes dominio.RepositorioMarcacoes
+	auditor   Auditor
+	agora     func() time.Time
+}
+
+// NovoCasoRegistarChegada constrói o caso de uso.
+func NovoCasoRegistarChegada(c dominio.RepositorioChegadas, m dominio.RepositorioMarcacoes, a Auditor) *CasoRegistarChegada {
+	return &CasoRegistarChegada{chegadas: c, marcacoes: m, auditor: a, agora: time.Now}
+}
+
+// DefinirRelogio injecta um relógio de teste.
+func (uc *CasoRegistarChegada) DefinirRelogio(f func() time.Time) { uc.agora = f }
+
+// Executar obtém a marcação, regista a comparência (MARCADA→COMPARECEU) e cria a
+// chegada agendada, persistindo ambos numa transacção coordenada. Um check-in duplo
+// falha em RegistarComparencia (a marcação já não está MARCADA) → Conflito.
+func (uc *CasoRegistarChegada) Executar(ctx context.Context, actor, marcacaoID string) (DetalheChegada, error) {
+	m, err := uc.marcacoes.ObterPorID(ctx, marcacaoID)
+	if err != nil {
+		return DetalheChegada{}, err
+	}
+	if err := m.RegistarComparencia(uc.agora()); err != nil {
+		return DetalheChegada{}, err
+	}
+	c, err := dominio.NovaChegadaAgendada(m.DoenteID(), m.ID(), m.MedicoID(), m.EspecialidadeID(), uc.agora())
+	if err != nil {
+		return DetalheChegada{}, err
+	}
+	id, err := uc.chegadas.RegistarChegadaAgendada(ctx, c, m)
+	if err != nil {
+		return DetalheChegada{}, err
+	}
+	c = dominio.ReconstruirChegada(comIDChegada(c.Snapshot(), id))
+	if err := uc.auditor.Registar(ctx, auditoria.Registo{
+		Actor: actor, Accao: "recepcao.chegada.registada",
+		Entidade: "chegada", EntidadeID: id, OcorridoEm: uc.agora(),
+		Detalhe: "marcacao: " + marcacaoID,
+	}); err != nil {
+		return DetalheChegada{}, err
+	}
+	return paraDetalheChegada(c), nil
+}
+
 // transitarChegada é o padrão comum de Chamar/Desistir: obter → transição de domínio →
 // Transitar (CAS) → auditar.
 func transitarChegada(ctx context.Context, chegadas dominio.RepositorioChegadas, auditor Auditor,
