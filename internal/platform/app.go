@@ -201,6 +201,16 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		apprecepcao.NovoCasoListarMarcacoesDoente(repoMarcacoes),
 	)
 
+	// BC Recepção — Check-in (chegada, fila de espera).
+	repoChegadas := pgrepo.NovoRepositorioChegadas(pool)
+	handlerRecepcaoChegadas := adhttp.NovoRecepcaoChegadasHandler(
+		apprecepcao.NovoCasoRegistarChegada(repoChegadas, repoMarcacoes, repoAuditoria),
+		apprecepcao.NovoCasoRegistarWalkIn(repoChegadas, leitorDoenteRec, repoAuditoria),
+		apprecepcao.NovoCasoChamar(repoChegadas, repoAuditoria),
+		apprecepcao.NovoCasoRegistarDesistencia(repoChegadas, repoAuditoria),
+		apprecepcao.NovoCasoListarFila(repoChegadas),
+	)
+
 	// Middlewares transversais e do grupo protegido.
 	segurancaMW := adhttp.SegurancaHTTP(cfg.OrigensCORS, cfg.EmProducao())
 	limiteMW := adhttp.LimiteTaxa(redisCli.Limitador(), cfg.LimiteTaxaIP, cfg.JanelaTaxa)
@@ -225,6 +235,7 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		adhttp.RegistarFarmaciaStock(r, handlerFarmaciaStock, limiteMW, authMW)
 		adhttp.RegistarLaboratorio(r, handlerLaboratorio, limiteMW, authMW)
 		adhttp.RegistarRecepcao(r, handlerRecepcao, limiteMW, authMW)
+		adhttp.RegistarRecepcaoChegadas(r, handlerRecepcaoChegadas, limiteMW, authMW)
 	}
 
 	logger.Info("dependências estabelecidas", "ambiente", cfg.Ambiente)
