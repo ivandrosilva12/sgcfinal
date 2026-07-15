@@ -202,6 +202,41 @@ func TestRegistarFalta_SoAposAHora(t *testing.T) {
 	}
 }
 
+func TestRegistarComparencia_DeMarcada(t *testing.T) {
+	m := novaMarcacaoValida(t)
+	if err := m.RegistarComparencia(inst("09:00")); err != nil {
+		t.Fatalf("não esperava erro: %v", err)
+	}
+	if m.Estado() != recepcao.MarcCompareceu {
+		t.Fatalf("esperava COMPARECEU, veio %s", m.Estado())
+	}
+}
+
+func TestRegistarComparencia_NaoMarcada_Conflito(t *testing.T) {
+	m := novaMarcacaoValida(t)
+	_ = m.Cancelar("motivo", inst("08:00"))
+	if err := m.RegistarComparencia(inst("09:00")); erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Fatalf("esperava CategoriaConflito, veio %v", erros.CategoriaDe(err))
+	}
+}
+
+func TestTransicoes_RecusamAPartirDeCompareceu(t *testing.T) {
+	// Depois de comparecer, a marcação já não pode ser cancelada, remarcada nem dar falta.
+	base := novaMarcacaoValida(t)
+	base = recepcao.ReconstruirMarcacao(comID(base.Snapshot(), "marc-1"))
+	_ = base.RegistarComparencia(inst("09:00"))
+
+	if err := base.Cancelar("x", inst("09:00")); erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Fatalf("Cancelar a partir de COMPARECEU devia dar Conflito, veio %v", erros.CategoriaDe(err))
+	}
+	if _, err := base.Remarcar(inst("10:00"), inst("10:30"), inst("09:00")); erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Fatalf("Remarcar a partir de COMPARECEU devia dar Conflito, veio %v", erros.CategoriaDe(err))
+	}
+	if err := base.RegistarFalta(inst("12:00")); erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Fatalf("RegistarFalta a partir de COMPARECEU devia dar Conflito, veio %v", erros.CategoriaDe(err))
+	}
+}
+
 // comID devolve uma cópia do snapshot com o id preenchido (utilitário de teste).
 func comID(s recepcao.SnapshotMarcacao, id string) recepcao.SnapshotMarcacao {
 	s.ID = id
