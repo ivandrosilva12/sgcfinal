@@ -23,7 +23,6 @@ type LeitorDoente interface {
 
 // Reexports dos read-models do domínio.
 type (
-	ResumoJanela   = dominio.ResumoJanela
 	ResumoMarcacao = dominio.ResumoMarcacao
 )
 

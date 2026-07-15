@@ -6,15 +6,6 @@ import (
 	"time"
 )
 
-// ResumoJanela é a projecção de leitura de uma janela de disponibilidade.
-type ResumoJanela struct {
-	ID              string    `json:"id"`
-	MedicoID        string    `json:"medico_id"`
-	EspecialidadeID string    `json:"especialidade_id"`
-	Inicio          time.Time `json:"inicio"`
-	Fim             time.Time `json:"fim"`
-}
-
 // ResumoMarcacao é a projecção de leitura de uma marcação.
 type ResumoMarcacao struct {
 	ID              string    `json:"id"`
