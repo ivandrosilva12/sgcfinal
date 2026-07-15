@@ -92,21 +92,29 @@ func TestRecepcaoChegadasRepo_CheckinTransaccionalEUnique(t *testing.T) {
 		_, _ = pool.Exec(ctx, `DELETE FROM recepcao.marcacoes WHERE id=$1`, mid)
 	})
 
-	// check-in: transita a marcação + cria a chegada, atomicamente
-	original, err := marc.ObterPorID(ctx, mid)
+	// duas leituras da MESMA marcação MARCADA, ambas ANTES de qualquer check-in — cada
+	// uma fica com EstadoAnterior=MARCADA, o estado real na BD nesse momento
+	// (ReconstruirMarcacao fixa sempre EstadoAnterior=Estado do snapshot lido).
+	original1, err := marc.ObterPorID(ctx, mid)
 	if err != nil {
-		t.Fatalf("obter marcação original: %v", err)
+		t.Fatalf("obter marcação (1ª leitura): %v", err)
 	}
-	if err := original.RegistarComparencia(instMarcacao(t, "2026-08-11T08:50:00Z")); err != nil {
-		t.Fatalf("registar comparência (domínio): %v", err)
-	}
-	ch, err := dominio.NovaChegadaAgendada(original.DoenteID(), original.ID(), original.MedicoID(),
-		original.EspecialidadeID(), instMarcacao(t, "2026-08-11T08:50:00Z"))
+	original2, err := marc.ObterPorID(ctx, mid)
 	if err != nil {
-		t.Fatalf("construir chegada agendada: %v", err)
+		t.Fatalf("obter marcação (2ª leitura): %v", err)
 	}
-	if _, err := cheg.RegistarChegadaAgendada(ctx, ch, original); err != nil {
-		t.Fatalf("check-in transaccional: %v", err)
+
+	// primeiro check-in: transita a marcação + cria a chegada, atomicamente — tem de suceder
+	if err := original1.RegistarComparencia(instMarcacao(t, "2026-08-11T08:50:00Z")); err != nil {
+		t.Fatalf("registar comparência (domínio, 1ª): %v", err)
+	}
+	ch1, err := dominio.NovaChegadaAgendada(original1.DoenteID(), original1.ID(), original1.MedicoID(),
+		original1.EspecialidadeID(), instMarcacao(t, "2026-08-11T08:50:00Z"))
+	if err != nil {
+		t.Fatalf("construir 1ª chegada agendada: %v", err)
+	}
+	if _, err := cheg.RegistarChegadaAgendada(ctx, ch1, original1); err != nil {
+		t.Fatalf("check-in transaccional (1º): %v", err)
 	}
 	// a marcação ficou COMPARECEU
 	recarregada, err := marc.ObterPorID(ctx, mid)
@@ -117,25 +125,23 @@ func TestRecepcaoChegadasRepo_CheckinTransaccionalEUnique(t *testing.T) {
 		t.Fatalf("marcação devia estar COMPARECEU, veio %s", recarregada.Estado())
 	}
 
-	// segundo check-in da MESMA marcação: a guarda CAS (marcação já não MARCADA) nega
-	original2, err := marc.ObterPorID(ctx, mid) // está COMPARECEU
+	// segundo check-in, a partir de original2: foi lida ANTES do primeiro check-in, por
+	// isso ainda "pensa" que a marcação está MARCADA (EstadoAnterior=MARCADA). No
+	// domínio, RegistarComparencia sucede (Estado()==MARCADA em memória). Mas no
+	// repositório, o UPDATE `WHERE estado='MARCADA'` já não encontra nenhuma linha — a
+	// BD tem COMPARECEU desde o primeiro check-in — pelo que RowsAffected()==0 e
+	// RegistarChegadaAgendada devolve Conflito ANTES de sequer chegar ao INSERT da
+	// chegada (a restrição UNIQUE nem chega a entrar em jogo). É esta guarda CAS,
+	// genuína, que o teste afirma a seguir.
+	if err := original2.RegistarComparencia(instMarcacao(t, "2026-08-11T08:55:00Z")); err != nil {
+		t.Fatalf("registar comparência (domínio, 2ª): %v", err)
+	}
+	ch2, err := dominio.NovaChegadaAgendada(original2.DoenteID(), original2.ID(), original2.MedicoID(),
+		original2.EspecialidadeID(), instMarcacao(t, "2026-08-11T08:55:00Z"))
 	if err != nil {
-		t.Fatalf("obter marcação (segunda leitura): %v", err)
+		t.Fatalf("construir 2ª chegada agendada: %v", err)
 	}
-	// forçar uma tentativa como se ainda estivesse MARCADA não é possível pelo domínio;
-	// aqui exercitamos a guarda do repositório directamente construindo o cenário:
-	if _, err := cheg.RegistarChegadaAgendada(ctx, ch, recarregadaComoMarcada(t, original2)); erros.CategoriaDe(err) != erros.CategoriaConflito {
-		t.Fatalf("check-in duplo devia dar Conflito, veio %v", erros.CategoriaDe(err))
+	if _, err := cheg.RegistarChegadaAgendada(ctx, ch2, original2); erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Fatalf("check-in duplo devia dar Conflito (guarda CAS da marcação), veio %v", erros.CategoriaDe(err))
 	}
-}
-
-// recarregadaComoMarcada reconstrói a marcação como se ainda estivesse MARCADA (o
-// EstadoAnterior fica MARCADA), para exercitar a guarda CAS do repositório contra a
-// linha que já está COMPARECEU na BD.
-func recarregadaComoMarcada(t *testing.T, m *dominio.Marcacao) *dominio.Marcacao {
-	t.Helper()
-	s := m.Snapshot()
-	s.Estado = dominio.MarcCompareceu      // o que se quer escrever
-	s.EstadoAnterior = dominio.MarcMarcada // a guarda que já não bate (a BD tem COMPARECEU)
-	return dominio.ReconstruirMarcacao(s)
 }
