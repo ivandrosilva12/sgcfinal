@@ -2,6 +2,7 @@ package clinico_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -56,5 +57,56 @@ func TestIniciarEpisodio_DoenteNaoActivo(t *testing.T) {
 	_, err := caso.Executar(context.Background(), "medico-1", dadosEpisodioBase(doenteID))
 	if erros.CategoriaDe(err) != erros.CategoriaConflito {
 		t.Fatalf("esperava conflito (doente não activo), obtive %v", err)
+	}
+}
+
+func TestIniciarEpisodio_TipoInvalido(t *testing.T) {
+	repoDoentes := novoFakeRepo()
+	doenteID := registarNoRepo(t, repoDoentes)
+	caso := appclinico.NovoCasoIniciarEpisodio(novoFakeRepoEpisodios(), repoDoentes, &fakeAuditor{})
+	dados := dadosEpisodioBase(doenteID)
+	dados.Tipo = "DESCONHECIDO"
+	_, err := caso.Executar(context.Background(), "medico-1", dados)
+	if erros.CategoriaDe(err) != erros.CategoriaValidacao {
+		t.Fatalf("tipo inválido devia falhar com Validacao, obtive %v", err)
+	}
+}
+
+func TestIniciarEpisodio_GuardarFalha(t *testing.T) {
+	repoDoentes := novoFakeRepo()
+	doenteID := registarNoRepo(t, repoDoentes)
+	repoEp := novoFakeRepoEpisodios()
+	repoEp.guardarErr = errSimulado
+	caso := appclinico.NovoCasoIniciarEpisodio(repoEp, repoDoentes, &fakeAuditor{})
+	_, err := caso.Executar(context.Background(), "medico-1", dadosEpisodioBase(doenteID))
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro de Guardar, obtive %v", err)
+	}
+}
+
+func TestIniciarEpisodio_AuditorFalha(t *testing.T) {
+	repoDoentes := novoFakeRepo()
+	doenteID := registarNoRepo(t, repoDoentes)
+	aud := &fakeAuditor{err: errSimulado}
+	caso := appclinico.NovoCasoIniciarEpisodio(novoFakeRepoEpisodios(), repoDoentes, aud)
+	_, err := caso.Executar(context.Background(), "medico-1", dadosEpisodioBase(doenteID))
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro do auditor, obtive %v", err)
+	}
+	if len(aud.registos) != 0 {
+		t.Fatalf("auditor falhado não devia ter registos: %+v", aud.registos)
+	}
+}
+
+func TestIniciarEpisodio_ReleituraFinalFalha(t *testing.T) {
+	repoDoentes := novoFakeRepo()
+	doenteID := registarNoRepo(t, repoDoentes)
+	repoEp := novoFakeRepoEpisodios()
+	repoEp.obterErr = errSimulado
+	repoEp.obterErrNaChamada = 1 // fresco: a única ObterPorID de episódios é a releitura final.
+	caso := appclinico.NovoCasoIniciarEpisodio(repoEp, repoDoentes, &fakeAuditor{})
+	_, err := caso.Executar(context.Background(), "medico-1", dadosEpisodioBase(doenteID))
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro da releitura final, obtive %v", err)
 	}
 }

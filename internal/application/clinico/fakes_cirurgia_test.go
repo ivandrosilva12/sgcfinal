@@ -35,9 +35,15 @@ func novoDoenteValido(t *testing.T) *clinico.Doente {
 
 // fakeConsentimentos é um RepositorioConsentimentos em memória.
 type fakeConsentimentos struct {
-	porID map[string]*clinico.Consentimento
-	seq   int
-	lista []clinico.ResumoConsentimento
+	porID      map[string]*clinico.Consentimento
+	seq        int
+	lista      []clinico.ResumoConsentimento
+	guardarErr error
+	// obterErr/obterErrNaChamada: ver comentário equivalente em fakeRepo
+	// (fakes_test.go).
+	obterErr          error
+	obterErrNaChamada int
+	obterChamadas     int
 }
 
 func novoFakeConsentimentos() *fakeConsentimentos {
@@ -45,6 +51,9 @@ func novoFakeConsentimentos() *fakeConsentimentos {
 }
 
 func (f *fakeConsentimentos) Guardar(_ context.Context, c *clinico.Consentimento) (string, error) {
+	if f.guardarErr != nil {
+		return "", f.guardarErr
+	}
 	s := c.Snapshot()
 	id := s.ID
 	if id == "" {
@@ -57,6 +66,10 @@ func (f *fakeConsentimentos) Guardar(_ context.Context, c *clinico.Consentimento
 }
 
 func (f *fakeConsentimentos) ObterPorID(_ context.Context, id string) (*clinico.Consentimento, error) {
+	f.obterChamadas++
+	if f.obterErr != nil && (f.obterErrNaChamada == 0 || f.obterChamadas == f.obterErrNaChamada) {
+		return nil, f.obterErr
+	}
 	c, ok := f.porID[id]
 	if !ok {
 		return nil, erros.Novo(erros.CategoriaNaoEncontrado, "consentimento não encontrado")
@@ -70,9 +83,15 @@ func (f *fakeConsentimentos) ListarPorDoente(_ context.Context, _ string, _ clin
 
 // fakeProcedimentos é um RepositorioProcedimentos em memória.
 type fakeProcedimentos struct {
-	porID map[string]*clinico.ProcedimentoCirurgico
-	seq   int
-	lista []clinico.ResumoProcedimento
+	porID      map[string]*clinico.ProcedimentoCirurgico
+	seq        int
+	lista      []clinico.ResumoProcedimento
+	guardarErr error
+	// obterErr/obterErrNaChamada: ver comentário equivalente em fakeRepo
+	// (fakes_test.go).
+	obterErr          error
+	obterErrNaChamada int
+	obterChamadas     int
 }
 
 func novoFakeProcedimentos() *fakeProcedimentos {
@@ -80,6 +99,9 @@ func novoFakeProcedimentos() *fakeProcedimentos {
 }
 
 func (f *fakeProcedimentos) Guardar(_ context.Context, p *clinico.ProcedimentoCirurgico) (string, error) {
+	if f.guardarErr != nil {
+		return "", f.guardarErr
+	}
 	s := p.Snapshot()
 	id := s.ID
 	if id == "" {
@@ -92,6 +114,10 @@ func (f *fakeProcedimentos) Guardar(_ context.Context, p *clinico.ProcedimentoCi
 }
 
 func (f *fakeProcedimentos) ObterPorID(_ context.Context, id string) (*clinico.ProcedimentoCirurgico, error) {
+	f.obterChamadas++
+	if f.obterErr != nil && (f.obterErrNaChamada == 0 || f.obterChamadas == f.obterErrNaChamada) {
+		return nil, f.obterErr
+	}
 	p, ok := f.porID[id]
 	if !ok {
 		return nil, erros.Novo(erros.CategoriaNaoEncontrado, "procedimento não encontrado")

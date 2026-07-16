@@ -9,14 +9,26 @@ import (
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/erros"
 )
 
+// errSimulado é o erro genérico usado nos testes para injectar falhas de
+// infra-estrutura (BD, auditoria) nos fakes, sem depender de uma causa real.
+// Partilhado por todos os ficheiros de teste do pacote clinico_test.
+var errSimulado = erros.Novo(erros.CategoriaInterno, "falha simulada (teste)")
+
 // fakeRepo é um repositório de doentes em memória para os testes de aplicação.
 type fakeRepo struct {
 	porID      map[string]*clinico.Doente
 	seq        int
 	proxErr    error
 	guardarErr error
-	pagina     clinico.PaginaDoentes
-	ultimoFilt clinico.FiltroDoentes
+	// obterErr, se definido, faz ObterPorID falhar. obterErrNaChamada, se >0,
+	// restringe a falha a essa chamada (1-based); 0 falha em todas as chamadas —
+	// permite simular quer a leitura inicial quer a releitura final a falhar
+	// isoladamente.
+	obterErr          error
+	obterErrNaChamada int
+	obterChamadas     int
+	pagina            clinico.PaginaDoentes
+	ultimoFilt        clinico.FiltroDoentes
 }
 
 func novoFakeRepo() *fakeRepo { return &fakeRepo{porID: map[string]*clinico.Doente{}} }
@@ -37,6 +49,10 @@ func (f *fakeRepo) Guardar(_ context.Context, d *clinico.Doente) (string, error)
 }
 
 func (f *fakeRepo) ObterPorID(_ context.Context, id string) (*clinico.Doente, error) {
+	f.obterChamadas++
+	if f.obterErr != nil && (f.obterErrNaChamada == 0 || f.obterChamadas == f.obterErrNaChamada) {
+		return nil, f.obterErr
+	}
 	d, ok := f.porID[id]
 	if !ok {
 		return nil, erros.Novo(erros.CategoriaNaoEncontrado, "doente não encontrado")
@@ -74,10 +90,17 @@ func leftPad(n int) string {
 	return s
 }
 
-// fakeAuditor recolhe os registos de auditoria.
-type fakeAuditor struct{ registos []auditoria.Registo }
+// fakeAuditor recolhe os registos de auditoria. Se err estiver definido,
+// Registar falha sem gravar nada — simula a auditoria indisponível.
+type fakeAuditor struct {
+	registos []auditoria.Registo
+	err      error
+}
 
 func (a *fakeAuditor) Registar(_ context.Context, r auditoria.Registo) error {
+	if a.err != nil {
+		return a.err
+	}
 	a.registos = append(a.registos, r)
 	return nil
 }

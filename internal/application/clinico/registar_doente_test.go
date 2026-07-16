@@ -2,6 +2,7 @@ package clinico_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -68,5 +69,78 @@ func TestRegistarDoente_IdentificacaoInvalida(t *testing.T) {
 	_, err := caso.Executar(context.Background(), "actor-1", dados)
 	if erros.CategoriaDe(err) != erros.CategoriaValidacao {
 		t.Fatalf("esperava validação, obtive %v", err)
+	}
+}
+
+func TestRegistarDoente_ContactosInvalidos(t *testing.T) {
+	repo := novoFakeRepo()
+	caso := appclinico.NovoCasoRegistarDoente(repo, &fakeAuditor{})
+	dados := dadosBase()
+	dados.Contactos.Telefone = "123"
+
+	_, err := caso.Executar(context.Background(), "actor-1", dados)
+	if erros.CategoriaDe(err) != erros.CategoriaValidacao {
+		t.Fatalf("telefone inválido devia falhar com Validacao, obtive %v", err)
+	}
+}
+
+func TestRegistarDoente_GrupoSanguineoInvalido(t *testing.T) {
+	repo := novoFakeRepo()
+	caso := appclinico.NovoCasoRegistarDoente(repo, &fakeAuditor{})
+	dados := dadosBase()
+	g := "ZZ"
+	dados.GrupoSanguineo = &g
+
+	_, err := caso.Executar(context.Background(), "actor-1", dados)
+	if erros.CategoriaDe(err) != erros.CategoriaValidacao {
+		t.Fatalf("grupo sanguíneo inválido devia falhar com Validacao, obtive %v", err)
+	}
+}
+
+func TestRegistarDoente_ProximoNumeroProcessoFalha(t *testing.T) {
+	repo := novoFakeRepo()
+	repo.proxErr = errSimulado
+	caso := appclinico.NovoCasoRegistarDoente(repo, &fakeAuditor{})
+
+	_, err := caso.Executar(context.Background(), "actor-1", dadosBase()) // NumProcesso vazio → gera automático
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro de ProximoNumeroProcesso, obtive %v", err)
+	}
+}
+
+func TestRegistarDoente_GuardarFalha(t *testing.T) {
+	repo := novoFakeRepo()
+	repo.guardarErr = errSimulado
+	caso := appclinico.NovoCasoRegistarDoente(repo, &fakeAuditor{})
+
+	_, err := caso.Executar(context.Background(), "actor-1", dadosBase())
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro de Guardar, obtive %v", err)
+	}
+}
+
+func TestRegistarDoente_AuditorFalha(t *testing.T) {
+	repo := novoFakeRepo()
+	aud := &fakeAuditor{err: errSimulado}
+	caso := appclinico.NovoCasoRegistarDoente(repo, aud)
+
+	_, err := caso.Executar(context.Background(), "actor-1", dadosBase())
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro do auditor, obtive %v", err)
+	}
+	if len(aud.registos) != 0 {
+		t.Fatalf("auditor falhado não devia ter registos: %+v", aud.registos)
+	}
+}
+
+func TestRegistarDoente_ReleituraFinalFalha(t *testing.T) {
+	repo := novoFakeRepo()
+	repo.obterErr = errSimulado
+	repo.obterErrNaChamada = 1 // o registo ainda não fez nenhuma leitura antes: a única ObterPorID é a releitura final.
+	caso := appclinico.NovoCasoRegistarDoente(repo, &fakeAuditor{})
+
+	_, err := caso.Executar(context.Background(), "actor-1", dadosBase())
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro da releitura final, obtive %v", err)
 	}
 }
