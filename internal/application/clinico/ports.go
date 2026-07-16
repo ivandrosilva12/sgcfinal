@@ -219,6 +219,31 @@ type EHR struct {
 	Episodios PaginaEpisodios `json:"episodios"`
 }
 
+// --- Integração Recepção→Clínico: início da consulta (ADR-036) ---
+
+// ChegadaTriada é o retrato mínimo de uma chegada TRIADO — DTO da porta
+// anti-corrupção, sem tipos do domínio Recepção.
+type ChegadaTriada struct {
+	DoenteID        string
+	MedicoID        string
+	EspecialidadeID string
+}
+
+// LeitorRecepcao é a porta anti-corrupção para leitura do BC Recepção. O Clínico
+// nunca importa tipos do domínio Recepção: só faz esta pergunta.
+type LeitorRecepcao interface {
+	// ChegadaTriada devolve a chegada se existir e estiver TRIADO
+	// (CategoriaNaoEncontrado caso contrário).
+	ChegadaTriada(ctx context.Context, chegadaID string) (ChegadaTriada, error)
+}
+
+// ConsumidorChegadas consome a chegada TRIADO e cria o episódio, atomicamente:
+// insere o episódio e transita a chegada TRIADO→EM_CONSULTA (guarda CAS por
+// estado e médico) numa única transacção. Devolve o id do episódio criado.
+type ConsumidorChegadas interface {
+	ConsumirEIniciar(ctx context.Context, chegadaID, medicoID string, episodio *dominio.EpisodioClinico) (string, error)
+}
+
 // --- Consentimento (LPDP) ---
 
 // Reexports dos read-models de consentimento.
