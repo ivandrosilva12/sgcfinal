@@ -4,8 +4,9 @@
 - **Data:** 2026-07-15
 - **Marco/Sprint:** M3 / Sprint 13 (fecha o marco)
 - **Fontes:** ADR-031 (requisição, amostra e resultado preliminar, precedente do mesmo
-  BC); `docs/superpowers/specs/2026-07-15-laboratorio-sprint13-*` (desenho e plano das
-  13 tasks, TDD).
+  BC); `docs/superpowers/specs/2026-07-15-sprint13-laboratorio-validacao-correccao-design.md`
+  (desenho) e `docs/superpowers/plans/2026-07-15-sprint13-laboratorio-validacao-correccao.md`
+  (plano das 13 tasks, TDD).
 
 ## Contexto
 
@@ -75,3 +76,15 @@ três fatias e fecha o marco M3.
     `laboratorio.valor_critico.detectado`, `laboratorio.resultado.corrigido`
     (`internal/domain/laboratorio/eventos.go`) são scaffolding à espera do Outbox.
   - Auditoria fora da transacção das escritas (como nos sprints anteriores).
+  - Falta uma migração 0004 futura com índices únicos parciais como defesa em
+    profundidade — `UNIQUE (requisicao_id, codigo_analise) WHERE estado='VALIDADA'` e
+    `UNIQUE (corrige_resultado_id) WHERE corrige_resultado_id IS NOT NULL`. Hoje a
+    invariante "um só resultado vigente por análise" é garantida apenas pelo CAS da
+    aplicação (`RepositorioResultados.Corrigir`), sem rede de segurança ao nível da BD.
+  - A auditoria do alerta de valor crítico é "sempre tentada" mas não garantida: se o
+    próprio `auditor.Registar` falhar em `alertarValorCritico`
+    (`internal/application/laboratorio/notificacao.go`), o erro é engolido sem log —
+    fica sem rasto tanto o envio como a tentativa de auditar.
+  - `DetalheResultado` não expõe ainda a proveniência (validador, `validadaEm`,
+    `corrigeResultadoID`) na leitura clínica — falta para a UI, fica para um sprint
+    futuro.

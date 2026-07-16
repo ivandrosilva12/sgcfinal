@@ -21,8 +21,10 @@ func (f fakeUtilizadores) ObterPorID(_ context.Context, _ string) (*identidade.U
 	}
 	return f.u, nil
 }
-func (f fakeUtilizadores) GuardarComPapeis(_ context.Context, _ *identidade.Utilizador) error { return nil }
-func (f fakeUtilizadores) AtualizarContacto(_ context.Context, _, _, _ string) error         { return nil }
+func (f fakeUtilizadores) GuardarComPapeis(_ context.Context, _ *identidade.Utilizador) error {
+	return nil
+}
+func (f fakeUtilizadores) AtualizarContacto(_ context.Context, _, _, _ string) error { return nil }
 
 func TestResolvedorContacto_ComTelefone(t *testing.T) {
 	r := adlaboratorio.NovoResolvedorContacto(fakeUtilizadores{u: &identidade.Utilizador{Telefone: "+244 923 000 000"}})

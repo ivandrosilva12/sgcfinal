@@ -123,10 +123,10 @@ func TestAnalise_AvaliarCritico(t *testing.T) {
 		valor    string
 		esperado bool
 	}{
-		{"2.9", true},   // < 3.0
-		{"3.0", false},  // fronteira: não é < 3.0 nem > 18.0
-		{"12.5", false}, // normal
-		{"18.1", true},  // > 18.0
+		{"2.9", true},       // < 3.0
+		{"3.0", false},      // fronteira: não é < 3.0 nem > 18.0
+		{"12.5", false},     // normal
+		{"18.1", true},      // > 18.0
 		{"Positivo", false}, // não numérico → nunca crítico
 		{"", false},         // vazio → nunca crítico
 	}

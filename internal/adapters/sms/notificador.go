@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	applaboratorio "github.com/ivandrosilva12/sgcfinal/internal/application/laboratorio"
 )
@@ -22,11 +23,18 @@ type NotificadorSMS struct {
 	remetente string
 	// Enviar é o transporte; default enviarHTTP. Público para testes.
 	Enviar EnviarFunc
+	// cliente é o cliente HTTP com timeout próprio — evita bloquear
+	// indefinidamente o envio síncrono do alerta se o gateway não responder.
+	cliente *http.Client
 }
 
 // NovoNotificadorSMS constrói o adaptador apontado ao endpoint indicado.
 func NovoNotificadorSMS(endpoint, remetente string) *NotificadorSMS {
-	n := &NotificadorSMS{endpoint: endpoint, remetente: remetente}
+	n := &NotificadorSMS{
+		endpoint:  endpoint,
+		remetente: remetente,
+		cliente:   &http.Client{Timeout: 10 * time.Second},
+	}
 	n.Enviar = n.enviarHTTP
 	return n
 }
@@ -44,7 +52,7 @@ func (n *NotificadorSMS) enviarHTTP(ctx context.Context, telefone, mensagem stri
 		return fmt.Errorf("preparar pedido SMS: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := n.cliente.Do(req)
 	if err != nil {
 		return fmt.Errorf("enviar SMS: %w", err)
 	}

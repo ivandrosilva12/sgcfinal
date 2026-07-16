@@ -9,7 +9,7 @@ import (
 	"github.com/ivandrosilva12/sgcfinal/internal/adapters/sms"
 )
 
-func TestNotificadorSMS_UsaOTransporteEComoeAMensagem(t *testing.T) {
+func TestNotificadorSMS_UsaOTransporteECompoeAMensagem(t *testing.T) {
 	n := sms.NovoNotificadorSMS("http://gateway.local", "SGC")
 	var telefone, mensagem string
 	n.Enviar = func(_ context.Context, tel, msg string) error {

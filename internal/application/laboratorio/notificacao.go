@@ -26,7 +26,7 @@ func alertarValorCritico(
 	req, err := requisicoes.ObterPorID(ctx, requisicaoID)
 	switch {
 	case err != nil:
-		detalhe = "falha: requisição " + requisicaoID + " não encontrada"
+		detalhe = "falha ao obter a requisição " + requisicaoID
 	default:
 		medicoID := req.Snapshot().MedicoRequisitanteID
 		telefone, ok, cErr := contactos.ContactoClinico(ctx, medicoID)

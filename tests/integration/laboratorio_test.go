@@ -710,4 +710,17 @@ UPDATE laboratorio.resultados
 	if novoFinal.Estado() != dominio.ResValidada || novoFinal.Valor() != "12.5" {
 		t.Fatalf("o novo devia ser VALIDADA com 12.5, veio %s/%s", novoFinal.Estado(), novoFinal.Valor())
 	}
+
+	// Visibilidade clínica pós-correcção: o CONCLUIDA (arquivado) sai da vista do
+	// médico — só o novo VALIDADA (valor corrigido) aparece.
+	visiveisApos, err := repoResultados.ListarPorEpisodio(ctx, episodioID, aplaboratorio.EstadosVisiveisAoMedico)
+	if err != nil {
+		t.Fatalf("ListarPorEpisodio após correcção: %v", err)
+	}
+	if len(visiveisApos) != 1 {
+		t.Fatalf("esperava exactamente 1 resultado visível ao médico após a correcção, veio %d", len(visiveisApos))
+	}
+	if visiveisApos[0].ID != novoID || visiveisApos[0].Valor != "12.5" {
+		t.Fatalf("o resultado visível devia ser o novo (12.5), veio ID=%s Valor=%s", visiveisApos[0].ID, visiveisApos[0].Valor)
+	}
 }
