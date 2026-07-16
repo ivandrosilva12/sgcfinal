@@ -185,6 +185,20 @@
 - [x] Valores críticos detectados e notificados (SMS auditado). — Sprint 13
 - [x] Correcção cria novo resultado preservando o original. — Sprint 13
 
+## Critérios de saída — Integração Início da Consulta (ADR-036)
+
+- [x] O médico atribuído inicia a consulta a partir da fila e recebe o episódio
+      ABERTO (tipo CONSULTA) na resposta (201).
+- [x] A chegada transita TRIADO→EM_CONSULTA, sai da fila clínica e regista o
+      episodio_id que a consumiu (uuid sem FK cross-context).
+- [x] Transição + criação atómicas (transacção única no adaptador de integração):
+      nunca existe episódio sem chegada consumida nem chegada consumida sem episódio.
+- [x] Só o médico atribuído pode iniciar (403 no domínio e no CAS); duplo
+      início/corrida → 409; zero colunas novas no BC Clínico.
+- [x] 1:1 chegada↔episódio garantido por UNIQUE parcial + CHECK (migração
+      recepcao/0004), provado em integração (23505/23514).
+- [x] Comando auditado nos dois contextos; cobertura nos limiares.
+
 ## Critérios de saída M1
 
 - [x] Identidade Keycloak operacional (login, 11 papéis, MFA para papéis sensíveis — positivo e negativo). — Sprint 2/3/4
