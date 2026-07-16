@@ -76,10 +76,12 @@ seeds/  tests/  docs/  adrs/  docker/
 
 ## 6. Marco Actual
 
-**M3 — Laboratório** (Sprints 12–13; ver `SPRINT.md`). Entrega o BC Laboratório:
-catálogo de análises, requisição (via ACL sobre o Clínico), amostra e resultado com
-state machine; a validação com segregação de funções (técnico ≠ patologista) e os
-valores críticos fecham o marco no Sprint 13.
+**M3 — Laboratório** (entregue; Sprints 12–13; ver `SPRINT.md`). Entrega o BC
+Laboratório completo: catálogo de análises, requisição (via ACL sobre o Clínico),
+amostra e resultado com state machine até ao preliminar (Sprint 12); validação com
+segregação de funções (técnico ≠ patologista), detecção e notificação de valores
+críticos (SMS best-effort auditado) e correcção de resultado preservando o original
+(Sprint 13, ADR-035).
 
 **Marco Percurso Ambulatório** (entregue, a par do M3): o percurso do doente antes da
 consulta. Sub-projectos: **Marcação** (ADR-032), **Check-in** (ADR-033) e **Triagem** (BC
@@ -128,5 +130,6 @@ confirmação humana**. Nunca improvisar decisão arquitectural ou de conformida
 `adrs/ADR-031-bc-laboratorio.md`,
 `adrs/ADR-032-bc-recepcao-marcacao.md`,
 `adrs/ADR-033-bc-recepcao-checkin.md`,
-`adrs/ADR-034-bc-recepcao-triagem.md`.
-Próximo ADR: **ADR-035**.
+`adrs/ADR-034-bc-recepcao-triagem.md`,
+`adrs/ADR-035-laboratorio-validacao-correccao.md`.
+Próximo ADR: **ADR-036**.
