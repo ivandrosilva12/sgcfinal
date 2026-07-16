@@ -81,11 +81,11 @@ func TestIniciarConsulta_FluxoFeliz(t *testing.T) {
 }
 
 func TestIniciarConsulta_ChegadaNaoEncontrada_Propaga(t *testing.T) {
-	caso, _, consumidor, _ := casoIniciarConsultaTeste(t)
+	_, _, consumidor, _ := casoIniciarConsultaTeste(t)
 	// substitui o leitor por um que devolve 404 — reconstruir o caso
 	repoDoentes := novoFakeRepo()
 	repoEp := novoFakeRepoEpisodios()
-	caso = appclinico.NovoCasoIniciarConsulta(
+	caso := appclinico.NovoCasoIniciarConsulta(
 		fakeLeitorRecepcao{err: erros.Novo(erros.CategoriaNaoEncontrado, "chegada triada não encontrada")},
 		consumidor, repoDoentes, repoEp, &fakeAuditor{})
 
