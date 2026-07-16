@@ -305,6 +305,10 @@ type ResumoResultado struct {
 type RepositorioResultados interface {
 	ObterPorID(ctx context.Context, id string) (*Resultado, error)
 	Transitar(ctx context.Context, r *Resultado) error
+	// Corrigir persiste uma correcção numa única transacção: INSERT do novo Resultado
+	// (VALIDADA, corrige_resultado_id→original) e UPDATE compare-and-set do original
+	// (VALIDADA→CONCLUIDA). Qualquer falha faz rollback de ambos. Devolve o id do novo.
+	Corrigir(ctx context.Context, novo *Resultado, original *Resultado) (string, error)
 	ListarFila(ctx context.Context, estados []EstadoResultado) ([]ResumoResultado, error)
 	ListarPorEpisodio(ctx context.Context, episodioID string, estados []EstadoResultado) ([]ResumoResultado, error)
 }

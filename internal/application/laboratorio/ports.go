@@ -24,6 +24,19 @@ type LeitorClinico interface {
 	EpisodioAbertoDoDoente(ctx context.Context, episodioID, doenteID string) (bool, error)
 }
 
+// ResolvedorContacto resolve o telefone de um utilizador do BC Identidade para a
+// notificação de valor crítico. É uma extensão da ACL: o domínio/aplicação do Lab
+// continua sem importar Identidade — só o adaptador conhece o outro contexto.
+type ResolvedorContacto interface {
+	ContactoClinico(ctx context.Context, userID string) (telefone string, ok bool, err error)
+}
+
+// NotificadorCritico envia o alerta de valor crítico. Best-effort: uma falha de
+// envio não reverte a validação — só é auditada.
+type NotificadorCritico interface {
+	NotificarValorCritico(ctx context.Context, telefone, codigoAnalise, valor string) error
+}
+
 // Reexports dos read-models do domínio.
 type (
 	ResumoAnalise    = dominio.ResumoAnalise
@@ -83,6 +96,12 @@ type DadosSubmeterPreliminar struct {
 	Observacoes string `json:"observacoes"`
 }
 
+// DadosCorrigirResultado é a entrada da correcção de um resultado validado.
+type DadosCorrigirResultado struct {
+	Valor       string `json:"valor"`
+	Observacoes string `json:"observacoes"`
+}
+
 // DetalheResultado é o detalhe de um resultado numa resposta.
 type DetalheResultado struct {
 	ID                 string     `json:"id"`
@@ -100,6 +119,7 @@ type DetalheResultado struct {
 }
 
 // EstadosVisiveisAoMedico são os únicos estados que a leitura clínica devolve: o
-// resultado preliminar (PROCESSADA) não é visível ao médico — só a validação do
-// patologista o torna visível (critério de saída do marco).
-var EstadosVisiveisAoMedico = []dominio.EstadoResultado{dominio.ResValidada, dominio.ResConcluida}
+// preliminar (PROCESSADA) não é visível, e o resultado arquivado por uma correcção
+// (CONCLUIDA) sai da vista clínica normal — o médico vê apenas o resultado vigente
+// (VALIDADA). O CONCLUIDA fica preservado e auditável pela cadeia corrige_resultado_id.
+var EstadosVisiveisAoMedico = []dominio.EstadoResultado{dominio.ResValidada}
