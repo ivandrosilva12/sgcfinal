@@ -17,6 +17,7 @@ import (
 	"github.com/ivandrosilva12/sgcfinal/internal/adapters/pgrepo"
 	adrecepcao "github.com/ivandrosilva12/sgcfinal/internal/adapters/recepcao"
 	adredis "github.com/ivandrosilva12/sgcfinal/internal/adapters/redis"
+	adsms "github.com/ivandrosilva12/sgcfinal/internal/adapters/sms"
 	adsmtp "github.com/ivandrosilva12/sgcfinal/internal/adapters/smtp"
 	appclinico "github.com/ivandrosilva12/sgcfinal/internal/application/clinico"
 	appfarmacia "github.com/ivandrosilva12/sgcfinal/internal/application/farmacia"
@@ -172,6 +173,17 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 	repoResultados := pgrepo.NovoRepositorioResultados(pool)
 	// ACL: o Laboratório lê o Clínico apenas através deste adaptador.
 	leitorClinicoLab := adlaboratorio.NovoLeitorClinico(repoDoentes, repoEpisodios)
+	// Alertas de valor crítico por SMS: gateway real se configurado, senão no-op.
+	var notificadorCritico applaboratorio.NotificadorCritico
+	if cfg.SMSEndpoint == "" {
+		notificadorCritico = adsms.NovoNotificadorNulo(logger)
+		logger.Info("alertas por SMS desactivados (SMS_ENDPOINT vazio)")
+	} else {
+		notificadorCritico = adsms.NovoNotificadorSMS(cfg.SMSEndpoint, cfg.SMSRemetente)
+		logger.Info("alertas por SMS activados", "endpoint", cfg.SMSEndpoint)
+	}
+	// ACL de contacto: o telefone do médico vive no BC Identidade.
+	resolvedorContacto := adlaboratorio.NovoResolvedorContacto(repoUtilizadores)
 	handlerLaboratorio := adhttp.NovoLaboratorioHandler(
 		applaboratorio.NovoCasoRegistarAnalise(repoAnalises, repoAuditoria),
 		applaboratorio.NovoCasoListarAnalises(repoAnalises),
@@ -183,9 +195,8 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		applaboratorio.NovoCasoSubmeterPreliminar(repoResultados, repoAuditoria),
 		applaboratorio.NovoCasoListarFila(repoResultados),
 		applaboratorio.NovoCasoListarResultadosDoEpisodio(repoResultados),
-		// TODO(Task 11): ligar CasoValidarResultado/CasoCorrigirResultado (precisam do
-		// ResolvedorContacto e do NotificadorCritico — composição ainda por fazer).
-		nil, nil,
+		applaboratorio.NovoCasoValidarResultado(repoResultados, repoRequisicoes, repoAnalises, resolvedorContacto, notificadorCritico, repoAuditoria),
+		applaboratorio.NovoCasoCorrigirResultado(repoResultados, repoRequisicoes, repoAnalises, resolvedorContacto, notificadorCritico, repoAuditoria),
 	)
 
 	// BC Recepção (marco Percurso Ambulatório): marcação e agenda por disponibilidade.
