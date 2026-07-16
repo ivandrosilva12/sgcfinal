@@ -10,15 +10,16 @@ import (
 
 // EstadoChegada é o estado do ciclo de vida de uma chegada (o doente na fila).
 //
-//	AGUARDA ─┬─ Chamar ──────────► CHAMADO ─ RegistarTriada ► TRIADO (fila clínica)
+//	AGUARDA ─┬─ Chamar ──────────► CHAMADO ─ RegistarTriada ► TRIADO ─ IniciarConsulta ► EM_CONSULTA
 //	         └─ RegistarDesistencia► DESISTIU
 type EstadoChegada string
 
 const (
-	ChegAguarda  EstadoChegada = "AGUARDA"
-	ChegChamado  EstadoChegada = "CHAMADO"
-	ChegDesistiu EstadoChegada = "DESISTIU"
-	ChegTriado   EstadoChegada = "TRIADO"
+	ChegAguarda    EstadoChegada = "AGUARDA"
+	ChegChamado    EstadoChegada = "CHAMADO"
+	ChegDesistiu   EstadoChegada = "DESISTIU"
+	ChegTriado     EstadoChegada = "TRIADO"
+	ChegEmConsulta EstadoChegada = "EM_CONSULTA"
 )
 
 // Chegada é um agregado raiz do BC Recepção: o doente presente na clínica hoje, à
@@ -31,6 +32,7 @@ type Chegada struct {
 	marcacaoID      string
 	especialidadeID string
 	medicoID        string
+	episodioID      string
 	horaChegada     time.Time
 	estado          EstadoChegada
 	estadoAnterior  EstadoChegada
@@ -131,6 +133,23 @@ func (c *Chegada) RegistarTriada(medicoID string, em time.Time) error {
 	return nil
 }
 
+// IniciarConsulta transita TRIADO → EM_CONSULTA (o médico consome a chegada da
+// fila clínica e abre a consulta — ADR-036). Só o médico atribuído pode iniciar.
+// O episodioID não é atribuído aqui: o id do episódio é gerado pela BD na mesma
+// transacção, escrito pelo adaptador de integração, e entra no agregado apenas
+// por reconstrução.
+func (c *Chegada) IniciarConsulta(medicoID string, em time.Time) error {
+	if c.estado != ChegTriado {
+		return erros.Novo(erros.CategoriaConflito, "só é possível iniciar a consulta de uma chegada triada")
+	}
+	if strings.TrimSpace(medicoID) != c.medicoID {
+		return erros.Novo(erros.CategoriaProibido, "só o médico atribuído pode iniciar a consulta")
+	}
+	c.estado = ChegEmConsulta
+	c.actualizadoEm = em
+	return nil
+}
+
 // ID devolve o identificador atribuído pela base de dados.
 func (c *Chegada) ID() string { return c.id }
 
@@ -152,6 +171,9 @@ func (c *Chegada) HoraChegada() time.Time { return c.horaChegada }
 // Estado devolve o estado actual.
 func (c *Chegada) Estado() EstadoChegada { return c.estado }
 
+// EpisodioID devolve o episódio que consumiu a chegada (vazio até EM_CONSULTA).
+func (c *Chegada) EpisodioID() string { return c.episodioID }
+
 // SnapshotChegada carrega o estado completo para persistência ou rehidratação.
 //
 // EstadoAnterior é o estado lido da base de dados (vazio num agregado novo); o
@@ -163,6 +185,7 @@ type SnapshotChegada struct {
 	MarcacaoID      string
 	EspecialidadeID string
 	MedicoID        string
+	EpisodioID      string
 	HoraChegada     time.Time
 	Estado          EstadoChegada
 	EstadoAnterior  EstadoChegada
@@ -174,7 +197,7 @@ type SnapshotChegada struct {
 func (c *Chegada) Snapshot() SnapshotChegada {
 	return SnapshotChegada{
 		ID: c.id, DoenteID: c.doenteID, MarcacaoID: c.marcacaoID,
-		EspecialidadeID: c.especialidadeID, MedicoID: c.medicoID, HoraChegada: c.horaChegada,
+		EspecialidadeID: c.especialidadeID, MedicoID: c.medicoID, EpisodioID: c.episodioID, HoraChegada: c.horaChegada,
 		Estado: c.estado, EstadoAnterior: c.estadoAnterior,
 		CriadoEm: c.criadoEm, ActualizadoEm: c.actualizadoEm,
 	}
@@ -185,7 +208,7 @@ func (c *Chegada) Snapshot() SnapshotChegada {
 func ReconstruirChegada(s SnapshotChegada) *Chegada {
 	return &Chegada{
 		id: s.ID, doenteID: s.DoenteID, marcacaoID: s.MarcacaoID,
-		especialidadeID: s.EspecialidadeID, medicoID: s.MedicoID, horaChegada: s.HoraChegada,
+		especialidadeID: s.EspecialidadeID, medicoID: s.MedicoID, episodioID: s.EpisodioID, horaChegada: s.HoraChegada,
 		estado: s.Estado, estadoAnterior: s.Estado,
 		criadoEm: s.CriadoEm, actualizadoEm: s.ActualizadoEm,
 	}

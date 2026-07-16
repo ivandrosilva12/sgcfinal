@@ -225,3 +225,91 @@ func TestReconstruirChegada_PreserveCampos(t *testing.T) {
 		t.Fatal("timestamps mal reconstruídos")
 	}
 }
+
+// --- IniciarConsulta (integração início da consulta, ADR-036) ---
+
+func chegadaTriadaTeste(t *testing.T) *recepcao.Chegada {
+	t.Helper()
+	c := chegadaChamada(t, false) // agendada, com med-1
+	if err := c.RegistarTriada("", inst("09:10")); err != nil {
+		t.Fatalf("registar triada: %v", err)
+	}
+	return c
+}
+
+func TestIniciarConsulta_DeTriado_PeloMedicoAtribuido(t *testing.T) {
+	c := chegadaTriadaTeste(t)
+	if err := c.IniciarConsulta("med-1", inst("09:30")); err != nil {
+		t.Fatalf("não esperava erro: %v", err)
+	}
+	if c.Estado() != recepcao.ChegEmConsulta {
+		t.Fatalf("esperava EM_CONSULTA, veio %s", c.Estado())
+	}
+	if !c.Snapshot().ActualizadoEm.Equal(inst("09:30")) {
+		t.Fatal("actualizadoEm devia ser a hora do início da consulta")
+	}
+}
+
+func TestIniciarConsulta_MedicoErrado_Proibido(t *testing.T) {
+	c := chegadaTriadaTeste(t)
+	if err := c.IniciarConsulta("med-9", inst("09:30")); erros.CategoriaDe(err) != erros.CategoriaProibido {
+		t.Fatalf("médico não atribuído devia dar CategoriaProibido, veio %v", erros.CategoriaDe(err))
+	}
+	if c.Estado() != recepcao.ChegTriado {
+		t.Fatalf("o estado não devia mudar, veio %s", c.Estado())
+	}
+}
+
+func TestIniciarConsulta_MedicoVazio_Proibido(t *testing.T) {
+	c := chegadaTriadaTeste(t)
+	if err := c.IniciarConsulta("   ", inst("09:30")); erros.CategoriaDe(err) != erros.CategoriaProibido {
+		t.Fatalf("médico vazio devia dar CategoriaProibido, veio %v", erros.CategoriaDe(err))
+	}
+}
+
+func TestIniciarConsulta_ForaDeTriado_Conflito(t *testing.T) {
+	casos := []struct {
+		nome    string
+		chegada func(t *testing.T) *recepcao.Chegada
+	}{
+		{"AGUARDA", func(t *testing.T) *recepcao.Chegada {
+			c, _ := recepcao.NovaChegadaAgendada("doe-1", "marc-1", "med-1", "esp-1", inst("09:00"))
+			return c
+		}},
+		{"CHAMADO", func(t *testing.T) *recepcao.Chegada { return chegadaChamada(t, false) }},
+		{"DESISTIU", func(t *testing.T) *recepcao.Chegada {
+			c, _ := recepcao.NovaChegadaWalkIn("doe-1", "esp-1", inst("09:00"))
+			_ = c.RegistarDesistencia(inst("09:05"))
+			return c
+		}},
+		{"EM_CONSULTA (duplo início)", func(t *testing.T) *recepcao.Chegada {
+			c := chegadaTriadaTeste(t)
+			if err := c.IniciarConsulta("med-1", inst("09:30")); err != nil {
+				t.Fatalf("primeiro início devia suceder: %v", err)
+			}
+			return c
+		}},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nome, func(t *testing.T) {
+			c := caso.chegada(t)
+			if err := c.IniciarConsulta("med-1", inst("09:40")); erros.CategoriaDe(err) != erros.CategoriaConflito {
+				t.Fatalf("esperava CategoriaConflito, veio %v", erros.CategoriaDe(err))
+			}
+		})
+	}
+}
+
+func TestChegada_SnapshotReconstrucao_EpisodioID(t *testing.T) {
+	s := recepcao.SnapshotChegada{
+		ID: "cheg-3", DoenteID: "doe-3", MedicoID: "med-3", EspecialidadeID: "esp-3",
+		HoraChegada: inst("09:00"), Estado: recepcao.ChegEmConsulta, EpisodioID: "ep-1",
+	}
+	c := recepcao.ReconstruirChegada(s)
+	if c.EpisodioID() != "ep-1" {
+		t.Fatalf("EpisodioID mal reconstruído: %q", c.EpisodioID())
+	}
+	if c.Snapshot().EpisodioID != "ep-1" {
+		t.Fatalf("EpisodioID perdido no snapshot: %+v", c.Snapshot())
+	}
+}
