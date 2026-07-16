@@ -34,3 +34,24 @@ func TestEventos_NomeEOcorridoEm(t *testing.T) {
 		t.Fatalf("data de ocorrência inesperada: %v", preliminar.OcorridoEm())
 	}
 }
+
+func TestEventosValidacao_NomesEData(t *testing.T) {
+	em := time.Date(2026, 7, 15, 10, 0, 0, 0, time.UTC)
+	casos := []struct {
+		evt  interface{ NomeEvento() string }
+		nome string
+	}{
+		{dominio.ResultadoValidado{Em: em}, "laboratorio.resultado.validado"},
+		{dominio.ValorCriticoDetectado{Em: em}, "laboratorio.valor_critico.detectado"},
+		{dominio.ResultadoCorrigido{Em: em}, "laboratorio.resultado.corrigido"},
+	}
+	for _, c := range casos {
+		if c.evt.NomeEvento() != c.nome {
+			t.Fatalf("esperava %q, veio %q", c.nome, c.evt.NomeEvento())
+		}
+	}
+	validado := dominio.ResultadoValidado{Em: em}
+	if validado.OcorridoEm() != em {
+		t.Fatal("OcorridoEm devia devolver o instante do evento")
+	}
+}
