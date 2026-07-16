@@ -57,6 +57,14 @@ type (
 	ServicoListarResultadosDoEpisodio interface {
 		Executar(ctx context.Context, episodioID string) ([]applaboratorio.ResumoResultado, error)
 	}
+	// ServicoValidarResultado valida o resultado preliminar.
+	ServicoValidarResultado interface {
+		Executar(ctx context.Context, actor, resultadoID string) (applaboratorio.DetalheResultado, error)
+	}
+	// ServicoCorrigirResultado corrige um resultado validado.
+	ServicoCorrigirResultado interface {
+		Executar(ctx context.Context, actor, resultadoID string, dados applaboratorio.DadosCorrigirResultado) (applaboratorio.DetalheResultado, error)
+	}
 )
 
 // LaboratorioHandler expõe os endpoints HTTP do BC Laboratório.
@@ -71,6 +79,8 @@ type LaboratorioHandler struct {
 	submeter           ServicoSubmeterPreliminar
 	listarFila         ServicoListarFila
 	resultadosEpisodio ServicoListarResultadosDoEpisodio
+	validar            ServicoValidarResultado
+	corrigir           ServicoCorrigirResultado
 }
 
 // NovoLaboratorioHandler constrói o handler.
@@ -80,12 +90,14 @@ func NovoLaboratorioHandler(
 	listarRequisicoes ServicoListarRequisicoes, colher ServicoColherAmostra,
 	recusar ServicoRecusarAmostra, submeter ServicoSubmeterPreliminar,
 	listarFila ServicoListarFila, resultadosEpisodio ServicoListarResultadosDoEpisodio,
+	validar ServicoValidarResultado, corrigir ServicoCorrigirResultado,
 ) *LaboratorioHandler {
 	return &LaboratorioHandler{
 		registarAnalise: registarAnalise, listarAnalises: listarAnalises,
 		emitir: emitir, obterRequisicao: obterRequisicao, listarRequisicoes: listarRequisicoes,
 		colher: colher, recusar: recusar, submeter: submeter,
 		listarFila: listarFila, resultadosEpisodio: resultadosEpisodio,
+		validar: validar, corrigir: corrigir,
 	}
 }
 
@@ -114,6 +126,7 @@ func RegistarLaboratorio(r gin.IRouter, h *LaboratorioHandler, protecao ...gin.H
 	catalogoEscrita := RBAC(dominio.PapelAdmin, dominio.PapelDirector)
 	soMedico := RBAC(dominio.PapelMedico)
 	soTecnico := RBAC(dominio.PapelTecnicoLab)
+	soPatologista := RBAC(dominio.PapelPatologista)
 	// A fila é de quem executa o trabalho laboratorial (e de quem o dirige) — nunca
 	// do Médico: devolve todos os estados, incluindo o preliminar (PROCESSADA), que a
 	// regra do marco proíbe expressamente de chegar ao médico.
@@ -143,6 +156,8 @@ func RegistarLaboratorio(r gin.IRouter, h *LaboratorioHandler, protecao ...gin.H
 	gres.POST("/:rid/colheita", soTecnico, h.colherAmostraHTTP)
 	gres.POST("/:rid/recusa", soTecnico, h.recusarAmostraHTTP)
 	gres.POST("/:rid/preliminar", soTecnico, h.submeterPreliminarHTTP)
+	gres.POST("/:rid/validacao", soPatologista, h.validarResultadoHTTP)
+	gres.POST("/:rid/correccao", soPatologista, h.corrigirResultadoHTTP)
 }
 
 type corpoEmitirRequisicao struct {
@@ -156,6 +171,11 @@ type corpoRecusa struct {
 }
 
 type corpoPreliminar struct {
+	Valor       string `json:"valor"`
+	Observacoes string `json:"observacoes"`
+}
+
+type corpoCorreccao struct {
 	Valor       string `json:"valor"`
 	Observacoes string `json:"observacoes"`
 }
@@ -282,6 +302,34 @@ func (h *LaboratorioHandler) submeterPreliminarHTTP(c *gin.Context) {
 	actor, _ := SessaoDe(c)
 	out, err := h.submeter.Executar(c.Request.Context(), actor.Sujeito, c.Param("rid"),
 		applaboratorio.DadosSubmeterPreliminar{Valor: corpo.Valor, Observacoes: corpo.Observacoes})
+	if err != nil {
+		responderErro(c, err)
+		return
+	}
+	c.JSON(nethttp.StatusOK, out)
+}
+
+func (h *LaboratorioHandler) validarResultadoHTTP(c *gin.Context) {
+	actor, _ := SessaoDe(c)
+	out, err := h.validar.Executar(c.Request.Context(), actor.Sujeito, c.Param("rid"))
+	if err != nil {
+		responderErro(c, err)
+		return
+	}
+	c.JSON(nethttp.StatusOK, out)
+}
+
+func (h *LaboratorioHandler) corrigirResultadoHTTP(c *gin.Context) {
+	var corpo corpoCorreccao
+	// O corpo é obrigatório: sem valor não há correcção. Um corpo malformado tem de
+	// falhar com 400 — nunca 200 a confirmar uma escrita que não aconteceu.
+	if err := c.ShouldBindJSON(&corpo); err != nil {
+		responderErro(c, erros.Novo(erros.CategoriaValidacao, i18n.T(i18n.MsgPedidoInvalido)))
+		return
+	}
+	actor, _ := SessaoDe(c)
+	out, err := h.corrigir.Executar(c.Request.Context(), actor.Sujeito, c.Param("rid"),
+		applaboratorio.DadosCorrigirResultado{Valor: corpo.Valor, Observacoes: corpo.Observacoes})
 	if err != nil {
 		responderErro(c, err)
 		return
