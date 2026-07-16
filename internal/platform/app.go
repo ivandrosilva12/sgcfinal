@@ -183,6 +183,9 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		applaboratorio.NovoCasoSubmeterPreliminar(repoResultados, repoAuditoria),
 		applaboratorio.NovoCasoListarFila(repoResultados),
 		applaboratorio.NovoCasoListarResultadosDoEpisodio(repoResultados),
+		// TODO(Task 11): ligar CasoValidarResultado/CasoCorrigirResultado (precisam do
+		// ResolvedorContacto e do NotificadorCritico — composição ainda por fazer).
+		nil, nil,
 	)
 
 	// BC Recepção (marco Percurso Ambulatório): marcação e agenda por disponibilidade.
