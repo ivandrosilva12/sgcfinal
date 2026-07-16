@@ -3,11 +3,15 @@ package laboratorio_test
 import (
 	"context"
 	"strconv"
+	"time"
 
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/laboratorio"
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/auditoria"
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/erros"
 )
+
+// agoraFixo devolve um instante fixo para tornar os testes determinísticos.
+func agoraFixo() time.Time { return time.Date(2026, 7, 15, 9, 0, 0, 0, time.UTC) }
 
 // fakeAnalises é um RepositorioAnalises em memória.
 type fakeAnalises struct {
