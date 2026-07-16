@@ -79,6 +79,62 @@ func TestValidarUUIDs_SemParams_Passa(t *testing.T) {
 	}
 }
 
+func TestValidarUUIDs_FormaUrn_400(t *testing.T) {
+	r := novoRouter()
+	r.Use(adhttp.ValidarUUIDs("papel"))
+	handlerChamado := false
+	r.GET("/doentes/:id", func(c *gin.Context) {
+		handlerChamado = true
+		c.Status(nethttp.StatusOK)
+	})
+
+	// uuid.Parse aceita "urn:uuid:...", mas o Postgres rejeita-o (22P02); o
+	// guard tem de recusar esta forma, não apenas lixo arbitrário.
+	w := fazerPedido(r, "GET", "/doentes/urn:uuid:1a2b3c4d-1111-2222-3333-444455556666")
+	if w.Code != nethttp.StatusBadRequest {
+		t.Fatalf("esperava 400 com forma urn:uuid:, obtive %d (corpo: %s)", w.Code, w.Body.String())
+	}
+	if handlerChamado {
+		t.Fatal("o handler não deveria ter corrido com a forma urn:uuid:")
+	}
+}
+
+func TestValidarUUIDs_FormaComChavetas_400(t *testing.T) {
+	r := novoRouter()
+	r.Use(adhttp.ValidarUUIDs("papel"))
+	handlerChamado := false
+	r.GET("/doentes/:id", func(c *gin.Context) {
+		handlerChamado = true
+		c.Status(nethttp.StatusOK)
+	})
+
+	w := fazerPedido(r, "GET", "/doentes/{1a2b3c4d-1111-2222-3333-444455556666}")
+	if w.Code != nethttp.StatusBadRequest {
+		t.Fatalf("esperava 400 com forma entre chavetas, obtive %d (corpo: %s)", w.Code, w.Body.String())
+	}
+	if handlerChamado {
+		t.Fatal("o handler não deveria ter corrido com a forma entre chavetas")
+	}
+}
+
+func TestValidarUUIDs_FormaHexSemHifens_400(t *testing.T) {
+	r := novoRouter()
+	r.Use(adhttp.ValidarUUIDs("papel"))
+	handlerChamado := false
+	r.GET("/doentes/:id", func(c *gin.Context) {
+		handlerChamado = true
+		c.Status(nethttp.StatusOK)
+	})
+
+	w := fazerPedido(r, "GET", "/doentes/1a2b3c4d111122223333444455556666")
+	if w.Code != nethttp.StatusBadRequest {
+		t.Fatalf("esperava 400 com forma hex sem hífens, obtive %d (corpo: %s)", w.Code, w.Body.String())
+	}
+	if handlerChamado {
+		t.Fatal("o handler não deveria ter corrido com a forma hex sem hífens")
+	}
+}
+
 func TestValidarUUIDs_SegundoParamMalformado_400(t *testing.T) {
 	r := novoRouter()
 	r.Use(adhttp.ValidarUUIDs("papel"))
