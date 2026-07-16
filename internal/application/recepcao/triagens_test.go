@@ -40,9 +40,13 @@ func TestObterTriagem_DevolveDetalhe(t *testing.T) {
 func TestListarFilaClinica_OrdenadaPorPrioridade(t *testing.T) {
 	chegadas := novoFakeChegadas(novoFakeMarcacoes())
 	triagens := novoFakeTriagens(chegadas)
-	// duas chegadas TRIADO do mesmo médico, prioridades diferentes
-	c1 := semearChegadaTriada(t, chegadas, "doe-1", "med-1", "esp-1", "09:00")
-	c2 := semearChegadaTriada(t, chegadas, "doe-2", "med-1", "esp-1", "08:00")
+	// duas chegadas TRIADO do mesmo médico, prioridades diferentes.
+	// o VERDE chega mais cedo (08:00) e o VERMELHO chega mais tarde (09:00):
+	// se a fila fosse ordenada por hora de chegada ascendente, o VERDE (c1)
+	// viria primeiro. A asserção abaixo só passa se for a severidade Manchester
+	// a decidir a ordem — prova que não é um falso positivo por hora ascendente.
+	c1 := semearChegadaTriada(t, chegadas, "doe-1", "med-1", "esp-1", "08:00")
+	c2 := semearChegadaTriada(t, chegadas, "doe-2", "med-1", "esp-1", "09:00")
 	_, _ = triagens.RegistarTriagem(context.Background(), triagemAgregada(t, c1, "enf-1", dominio.ManVerde), reconstruirTriada(t, chegadas, c1))
 	_, _ = triagens.RegistarTriagem(context.Background(), triagemAgregada(t, c2, "enf-1", dominio.ManVermelho), reconstruirTriada(t, chegadas, c2))
 
@@ -54,9 +58,9 @@ func TestListarFilaClinica_OrdenadaPorPrioridade(t *testing.T) {
 	if len(fila) != 2 {
 		t.Fatalf("esperava 2 na fila, veio %d", len(fila))
 	}
-	// o VERMELHO (c2) tem de vir primeiro, apesar de ter chegado antes
+	// o VERMELHO (c2) tem de vir primeiro por severidade, apesar de ter chegado depois do VERDE (c1)
 	if fila[0].ChegadaID != c2 {
-		t.Fatalf("o VERMELHO devia vir primeiro na fila, veio %+v", fila)
+		t.Fatalf("o VERMELHO devia vir primeiro na fila por severidade, veio %+v", fila)
 	}
 }
 
