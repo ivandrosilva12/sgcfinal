@@ -45,6 +45,7 @@ type Resultado struct {
 	submetidaEm            *time.Time
 	validadaEm             *time.Time
 	valorCritico           bool
+	corrigeResultadoID     string
 	criadoEm               time.Time
 }
 
@@ -160,6 +161,54 @@ func (r *Resultado) Validar(patologistaID string, critico bool, em time.Time) er
 	return nil
 }
 
+// CorrigeResultadoID devolve o id do resultado que este corrige (vazio se não é
+// uma correcção).
+func (r *Resultado) CorrigeResultadoID() string { return r.corrigeResultadoID }
+
+// Corrigir arquiva o resultado validado (→ CONCLUIDA) e devolve um NOVO Resultado
+// VALIDADA que o substitui, apontando-lhe via corrigeResultadoID. Preserva o técnico
+// submissor original (proveniência) — pelo que a segregação continua a valer: o
+// corrector nunca é o técnico que submeteu o preliminar original. O novo agregado
+// nasce por inserir (sem estado anterior).
+func (r *Resultado) Corrigir(patologistaID, novoValor, observacoes string, critico bool, em time.Time) (*Resultado, error) {
+	if r.estado != ResValidada {
+		return nil, erros.Novo(erros.CategoriaConflito, "só é possível corrigir um resultado validado")
+	}
+	patologistaID = strings.TrimSpace(patologistaID)
+	if patologistaID == "" {
+		return nil, erros.Novo(erros.CategoriaValidacao, "patologista corrector em falta")
+	}
+	if patologistaID == r.tecnicoSubmissorID {
+		return nil, erros.Novo(erros.CategoriaRegraNegocio,
+			"segregação de funções: quem submeteu o resultado não o pode corrigir")
+	}
+	novoValor = strings.TrimSpace(novoValor)
+	if novoValor == "" {
+		return nil, erros.Novo(erros.CategoriaValidacao, "valor corrigido em falta")
+	}
+	if em.IsZero() {
+		return nil, erros.Novo(erros.CategoriaValidacao, "data da correcção em falta")
+	}
+	novo := &Resultado{
+		requisicaoID:           r.requisicaoID,
+		codigoAnalise:          r.codigoAnalise,
+		valor:                  novoValor,
+		unidade:                r.unidade,
+		observacoes:            strings.TrimSpace(observacoes),
+		estado:                 ResValidada,
+		tecnicoColheitaID:      r.tecnicoColheitaID,
+		tecnicoSubmissorID:     r.tecnicoSubmissorID,
+		patologistaValidadorID: patologistaID,
+		colhidaEm:              r.colhidaEm,
+		submetidaEm:            r.submetidaEm,
+		validadaEm:             &em,
+		valorCritico:           critico,
+		corrigeResultadoID:     r.id,
+	}
+	r.estado = ResConcluida
+	return novo, nil
+}
+
 // ID devolve o identificador atribuído pela base de dados.
 func (r *Resultado) ID() string { return r.id }
 
@@ -197,6 +246,7 @@ type SnapshotResultado struct {
 	SubmetidaEm            *time.Time
 	ValidadaEm             *time.Time
 	ValorCritico           bool
+	CorrigeResultadoID     string
 	CriadoEm               time.Time
 }
 
@@ -209,7 +259,7 @@ func (r *Resultado) Snapshot() SnapshotResultado {
 		TecnicoColheitaID: r.tecnicoColheitaID, TecnicoSubmissorID: r.tecnicoSubmissorID,
 		PatologistaValidadorID: r.patologistaValidadorID,
 		ColhidaEm:              r.colhidaEm, SubmetidaEm: r.submetidaEm, ValidadaEm: r.validadaEm,
-		ValorCritico: r.valorCritico, CriadoEm: r.criadoEm,
+		ValorCritico: r.valorCritico, CorrigeResultadoID: r.corrigeResultadoID, CriadoEm: r.criadoEm,
 	}
 }
 
@@ -224,7 +274,7 @@ func ReconstruirResultado(s SnapshotResultado) *Resultado {
 		tecnicoColheitaID: s.TecnicoColheitaID, tecnicoSubmissorID: s.TecnicoSubmissorID,
 		patologistaValidadorID: s.PatologistaValidadorID,
 		colhidaEm:              s.ColhidaEm, submetidaEm: s.SubmetidaEm, validadaEm: s.ValidadaEm,
-		valorCritico: s.ValorCritico, criadoEm: s.CriadoEm,
+		valorCritico: s.ValorCritico, corrigeResultadoID: s.CorrigeResultadoID, criadoEm: s.CriadoEm,
 	}
 }
 
