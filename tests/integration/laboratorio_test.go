@@ -724,3 +724,115 @@ UPDATE laboratorio.resultados
 		t.Fatalf("o resultado visível devia ser o novo (12.5), veio ID=%s Valor=%s", visiveisApos[0].ID, visiveisApos[0].Valor)
 	}
 }
+
+// TestLaboratorio_IndicesUmSoVigente prova a defesa em profundidade da migração
+// 0004 (dívida da ADR-035): os invariantes "um só resultado VIGENTE por
+// (requisição, análise)" e "um resultado só é corrigido uma vez" deixam de
+// depender apenas do CAS da camada de aplicação — o Postgres nega duplicados
+// mesmo a escritas que contornem o repositório (bug a montante, migração de
+// dados). Tal como na prova da resultados_check4, o desvio ao domínio é
+// deliberado: usa-se SQL cru para simular exactamente esse contorno.
+func TestLaboratorio_IndicesUmSoVigente(t *testing.T) {
+	pool, ctx := ligar(t)
+	migrarLaboratorio(t, pool, ctx)
+
+	repoAnalises := pgrepo.NovoRepositorioAnalises(pool)
+	repoRequisicoes := pgrepo.NovoRepositorioRequisicoes(pool)
+	repoResultados := pgrepo.NovoRepositorioResultados(pool)
+
+	hb, err := repoAnalises.ObterPorCodigo(ctx, "HB")
+	if err != nil {
+		t.Fatalf("obter HB: %v", err)
+	}
+	doenteID, episodioID := fixturaLaboratorio(t, pool, ctx, "12345678LA140", "Índia Vigente")
+	req, _ := dominio.NovaRequisicao(dominio.DadosNovaRequisicao{
+		EpisodioID: episodioID, DoenteID: doenteID, MedicoRequisitanteID: medicoLabID,
+		Prioridade: dominio.PrioridadeRotina, Itens: []dominio.ItemRequisicao{{CodigoAnalise: "HB"}},
+	})
+	res0, _ := dominio.NovoResultado("por-atribuir", "HB", hb.Unidade())
+	reqID, err := repoRequisicoes.Emitir(ctx, req, []*dominio.Resultado{res0})
+	if err != nil {
+		t.Fatalf("emitir: %v", err)
+	}
+	fila, _ := repoResultados.ListarFila(ctx, []dominio.EstadoResultado{dominio.ResPendente})
+	var id string
+	for _, r := range fila {
+		if r.RequisicaoID == reqID {
+			id = r.ID
+		}
+	}
+	if id == "" {
+		t.Fatal("não encontrei o resultado PENDENTE emitido")
+	}
+
+	// Levar até VALIDADA pelo caminho legítimo.
+	res, _ := repoResultados.ObterPorID(ctx, id)
+	_ = res.ColherAmostra(tecnicoLabID, time.Now())
+	_ = repoResultados.Transitar(ctx, res)
+	res, _ = repoResultados.ObterPorID(ctx, id)
+	_ = res.SubmeterPreliminar(tecnicoLabID, "2.5", "", time.Now())
+	_ = repoResultados.Transitar(ctx, res)
+	res, _ = repoResultados.ObterPorID(ctx, id)
+	if err := res.Validar(patologistaLabID, false, time.Now()); err != nil {
+		t.Fatalf("validar no domínio: %v", err)
+	}
+	if err := repoResultados.Transitar(ctx, res); err != nil {
+		t.Fatalf("persistir validação: %v", err)
+	}
+
+	// duplicarLinha copia uma linha real (satisfaz todas as CHECK) com um estado
+	// à escolha — é o "contorno do repositório" que os índices têm de negar.
+	duplicarLinha := func(deID, estado string) error {
+		_, err := pool.Exec(ctx, `
+INSERT INTO laboratorio.resultados
+    (requisicao_id, codigo_analise, valor, unidade, observacoes, estado,
+     tecnico_colheita_id, tecnico_submissor_id, patologista_validador_id,
+     colhida_em, submetida_em, validada_em, valor_critico, corrige_resultado_id)
+SELECT requisicao_id, codigo_analise, valor, unidade, observacoes, $2,
+       tecnico_colheita_id, tecnico_submissor_id, patologista_validador_id,
+       colhida_em, submetida_em, validada_em, valor_critico, corrige_resultado_id
+  FROM laboratorio.resultados
+ WHERE id = $1`, deID, estado)
+		return err
+	}
+
+	// 1) Segundo VALIDADA para a mesma (requisição, análise) → negado pelo
+	//    índice único parcial idx_resultados_um_vigente.
+	var pgErr *pgconn.PgError
+	err = duplicarLinha(id, "VALIDADA")
+	if err == nil {
+		t.Fatal("a BD devia negar um segundo resultado VALIDADA para a mesma (requisição, análise)")
+	}
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		t.Fatalf("esperava SQLSTATE 23505 (unique_violation), veio %v", err)
+	}
+	if pgErr.ConstraintName != "idx_resultados_um_vigente" {
+		t.Fatalf("esperava a violação de idx_resultados_um_vigente, veio %q", pgErr.ConstraintName)
+	}
+
+	// Correcção legítima: novo VALIDADA a apontar ao original.
+	relido, _ := repoResultados.ObterPorID(ctx, id)
+	novo, err := relido.Corrigir(patologistaLabID, "12.5", "releitura", false, time.Now())
+	if err != nil {
+		t.Fatalf("corrigir no domínio: %v", err)
+	}
+	novoID, err := repoResultados.Corrigir(ctx, novo, relido)
+	if err != nil {
+		t.Fatalf("persistir correcção: %v", err)
+	}
+
+	// 2) Segunda linha a "corrigir" o mesmo original → negada pelo índice único
+	//    parcial idx_resultados_correccao_unica. Copia-se o novo (corrige_resultado_id
+	//    preenchido) como CONCLUIDA para não tropeçar primeiro no índice do vigente
+	//    — o arquivado real é exactamente CONCLUIDA com os campos de validação.
+	err = duplicarLinha(novoID, "CONCLUIDA")
+	if err == nil {
+		t.Fatal("a BD devia negar uma segunda correcção do mesmo resultado original")
+	}
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		t.Fatalf("esperava SQLSTATE 23505 (unique_violation), veio %v", err)
+	}
+	if pgErr.ConstraintName != "idx_resultados_correccao_unica" {
+		t.Fatalf("esperava a violação de idx_resultados_correccao_unica, veio %q", pgErr.ConstraintName)
+	}
+}
