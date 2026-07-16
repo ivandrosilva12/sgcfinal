@@ -233,6 +233,14 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		apprecepcao.NovoCasoListarFilaClinica(repoTriagens),
 	)
 
+	// Integração Recepção→Clínico — início da consulta (ADR-036). O adaptador de
+	// integração implementa as duas portas (leitor + consumidor transaccional).
+	integracaoConsulta := pgrepo.NovaIntegracaoInicioConsulta(pool)
+	handlerClinicoConsulta := adhttp.NovoClinicoConsultaHandler(
+		appclinico.NovoCasoIniciarConsulta(integracaoConsulta, integracaoConsulta,
+			repoDoentes, repoEpisodios, repoAuditoria),
+	)
+
 	// Middlewares transversais e do grupo protegido.
 	segurancaMW := adhttp.SegurancaHTTP(cfg.OrigensCORS, cfg.EmProducao())
 	limiteMW := adhttp.LimiteTaxa(redisCli.Limitador(), cfg.LimiteTaxaIP, cfg.JanelaTaxa)
@@ -259,6 +267,7 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		adhttp.RegistarRecepcao(r, handlerRecepcao, limiteMW, authMW)
 		adhttp.RegistarRecepcaoChegadas(r, handlerRecepcaoChegadas, limiteMW, authMW)
 		adhttp.RegistarRecepcaoTriagem(r, handlerRecepcaoTriagem, limiteMW, authMW)
+		adhttp.RegistarClinicoConsulta(r, handlerClinicoConsulta, limiteMW, authMW)
 	}
 
 	logger.Info("dependências estabelecidas", "ambiente", cfg.Ambiente)

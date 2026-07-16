@@ -28,8 +28,8 @@ func NovoRepositorioChegadas(pool *pgxpool.Pool) *RepositorioChegadas {
 }
 
 const colunasChegada = `id::text, doente_id::text, COALESCE(marcacao_id::text,''),
-       especialidade_id::text, COALESCE(medico_id::text,''), hora_chegada, estado,
-       criado_em, actualizado_em`
+       especialidade_id::text, COALESCE(medico_id::text,''), COALESCE(episodio_id::text,''),
+       hora_chegada, estado, criado_em, actualizado_em`
 
 // Guardar insere uma chegada (walk-in) e devolve o id gerado.
 func (r *RepositorioChegadas) Guardar(ctx context.Context, c *dominio.Chegada) (string, error) {
@@ -89,7 +89,7 @@ func (r *RepositorioChegadas) ObterPorID(ctx context.Context, id string) (*domin
 	var s dominio.SnapshotChegada
 	var estado string
 	err := r.pool.QueryRow(ctx, q, id).Scan(&s.ID, &s.DoenteID, &s.MarcacaoID, &s.EspecialidadeID,
-		&s.MedicoID, &s.HoraChegada, &estado, &s.CriadoEm, &s.ActualizadoEm)
+		&s.MedicoID, &s.EpisodioID, &s.HoraChegada, &estado, &s.CriadoEm, &s.ActualizadoEm)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, erros.Novo(erros.CategoriaNaoEncontrado, "chegada não encontrada")
