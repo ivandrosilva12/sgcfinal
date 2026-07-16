@@ -29,6 +29,18 @@ func resultadoEmEstado(t *testing.T, estado dominio.EstadoResultado) *dominio.Re
 	})
 }
 
+// processadaPor devolve um resultado rehidratado em PROCESSADA submetido por `submissor`.
+func processadaPor(t *testing.T, submissor string) *dominio.Resultado {
+	t.Helper()
+	colhida := time.Date(2026, 7, 15, 8, 0, 0, 0, time.UTC)
+	submetida := colhida.Add(time.Hour)
+	return dominio.ReconstruirResultado(dominio.SnapshotResultado{
+		ID: "res-1", RequisicaoID: "req-1", CodigoAnalise: "HB", Valor: "2.5", Unidade: "g/dL",
+		Estado: dominio.ResProcessada, TecnicoColheitaID: submissor, TecnicoSubmissorID: submissor,
+		ColhidaEm: &colhida, SubmetidaEm: &submetida,
+	})
+}
+
 func TestNovoResultado_NasceEmPendente(t *testing.T) {
 	r := novoRes(t)
 	if r.Estado() != dominio.ResPendente {
@@ -310,5 +322,57 @@ func TestResultado_ReconstruirRoundTrip(t *testing.T) {
 	obtido := dominio.ReconstruirResultado(original).Snapshot()
 	if !reflect.DeepEqual(esperado, obtido) {
 		t.Fatalf("round-trip não preservou o snapshot:\nesperado %+v\nveio     %+v", esperado, obtido)
+	}
+}
+
+func TestResultado_Validar_FluxoFeliz(t *testing.T) {
+	quando := time.Date(2026, 7, 15, 10, 0, 0, 0, time.UTC)
+	r := processadaPor(t, "tec-1")
+	if err := r.Validar("pat-9", true, quando); err != nil {
+		t.Fatalf("validar devia funcionar: %v", err)
+	}
+	if r.Estado() != dominio.ResValidada {
+		t.Fatalf("esperava VALIDADA, veio %s", r.Estado())
+	}
+	s := r.Snapshot()
+	if s.PatologistaValidadorID != "pat-9" || s.ValidadaEm == nil || !s.ValorCritico {
+		t.Fatalf("validação não gravou validador/data/crítico: %+v", s)
+	}
+}
+
+func TestResultado_Validar_Segregacao(t *testing.T) {
+	quando := time.Date(2026, 7, 15, 10, 0, 0, 0, time.UTC)
+	r := processadaPor(t, "tec-1")
+	// O próprio submissor não pode validar.
+	err := r.Validar("tec-1", false, quando)
+	if err == nil || erros.CategoriaDe(err) != erros.CategoriaRegraNegocio {
+		t.Fatalf("auto-validação devia falhar com RegraNegocio, veio %v", err)
+	}
+}
+
+func TestResultado_Validar_ForaDeProcessada_Conflito(t *testing.T) {
+	quando := time.Date(2026, 7, 15, 10, 0, 0, 0, time.UTC)
+	for _, estado := range []dominio.EstadoResultado{
+		dominio.ResPendente, dominio.ResColhida, dominio.ResValidada,
+		dominio.ResConcluida, dominio.ResRecusada,
+	} {
+		r := resultadoEmEstado(t, estado)
+		err := r.Validar("pat-1", false, quando)
+		if err == nil || erros.CategoriaDe(err) != erros.CategoriaConflito {
+			t.Fatalf("validar desde %s devia dar Conflito, veio %v", estado, err)
+		}
+	}
+}
+
+func TestResultado_Validar_CamposEmFalta(t *testing.T) {
+	r := processadaPor(t, "tec-1")
+	if err := r.Validar("  ", false, time.Now()); err == nil ||
+		erros.CategoriaDe(err) != erros.CategoriaValidacao {
+		t.Fatalf("validar sem patologista devia dar Validacao, veio %v", err)
+	}
+	r2 := processadaPor(t, "tec-1")
+	if err := r2.Validar("pat-1", false, time.Time{}); err == nil ||
+		erros.CategoriaDe(err) != erros.CategoriaValidacao {
+		t.Fatalf("validar sem data devia dar Validacao, veio %v", err)
 	}
 }

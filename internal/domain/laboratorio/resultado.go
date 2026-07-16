@@ -134,6 +134,32 @@ func (r *Resultado) SubmeterPreliminar(tecnicoID, valor, observacoes string, em 
 	return nil
 }
 
+// Validar transita PROCESSADA → VALIDADA. O validador é o sujeito autenticado. A
+// invariante de segregação de funções é o coração do Sprint 13: quem submeteu o
+// preliminar NUNCA o valida. `critico` é avaliado pela aplicação contra o catálogo
+// (o agregado não conhece a Analise) e gravado aqui.
+func (r *Resultado) Validar(patologistaID string, critico bool, em time.Time) error {
+	if r.estado != ResProcessada {
+		return erros.Novo(erros.CategoriaConflito, "só é possível validar um resultado processado")
+	}
+	patologistaID = strings.TrimSpace(patologistaID)
+	if patologistaID == "" {
+		return erros.Novo(erros.CategoriaValidacao, "patologista validador em falta")
+	}
+	if patologistaID == r.tecnicoSubmissorID {
+		return erros.Novo(erros.CategoriaRegraNegocio,
+			"segregação de funções: quem submeteu o resultado não o pode validar")
+	}
+	if em.IsZero() {
+		return erros.Novo(erros.CategoriaValidacao, "data da validação em falta")
+	}
+	r.estado = ResValidada
+	r.patologistaValidadorID = patologistaID
+	r.validadaEm = &em
+	r.valorCritico = critico
+	return nil
+}
+
 // ID devolve o identificador atribuído pela base de dados.
 func (r *Resultado) ID() string { return r.id }
 
@@ -145,6 +171,9 @@ func (r *Resultado) Estado() EstadoResultado { return r.estado }
 
 // TecnicoSubmissorID devolve quem submeteu o preliminar (vazio antes da submissão).
 func (r *Resultado) TecnicoSubmissorID() string { return r.tecnicoSubmissorID }
+
+// Valor devolve o valor submetido (vazio antes da submissão).
+func (r *Resultado) Valor() string { return r.valor }
 
 // SnapshotResultado carrega o estado completo para persistência ou rehidratação.
 //
