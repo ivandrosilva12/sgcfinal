@@ -2,8 +2,6 @@ package clinico
 
 import (
 	"testing"
-
-	dominio "github.com/ivandrosilva12/sgcfinal/internal/domain/clinico"
 )
 
 func TestConstruirNota_AparaEspacos(t *testing.T) {
@@ -18,5 +16,4 @@ func TestConstruirDiagnosticos_Mapeia(t *testing.T) {
 	if len(out) != 2 || out[0].CID != "J11" || !out[0].Principal || out[1].CID != "J12" || out[1].Principal {
 		t.Fatalf("diagnósticos mal mapeados: %+v", out)
 	}
-	var _ []dominio.DiagnosticoCID = out // confirma o tipo de domínio
 }

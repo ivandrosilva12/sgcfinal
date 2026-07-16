@@ -93,7 +93,7 @@ func (r *RepositorioResultados) Corrigir(ctx context.Context, novo, original *do
 	if err != nil {
 		return "", fmt.Errorf("iniciar transacção de correcção: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	const arquivar = `UPDATE laboratorio.resultados SET estado=$2 WHERE id=$1 AND estado=$3`
 	ct, err := tx.Exec(ctx, arquivar, so.ID, string(dominio.ResConcluida), string(so.EstadoAnterior))
