@@ -142,6 +142,68 @@ func TestNovaChegadaAgendada_ID_VazioAntesDePersistir(t *testing.T) {
 	}
 }
 
+func chegadaChamada(t *testing.T, walkin bool) *recepcao.Chegada {
+	t.Helper()
+	var c *recepcao.Chegada
+	var err error
+	if walkin {
+		c, err = recepcao.NovaChegadaWalkIn("doe-1", "esp-1", inst("09:00"))
+	} else {
+		c, err = recepcao.NovaChegadaAgendada("doe-1", "marc-1", "med-1", "esp-1", inst("09:00"))
+	}
+	if err != nil {
+		t.Fatalf("chegada inválida: %v", err)
+	}
+	if err := c.Chamar(inst("09:05")); err != nil {
+		t.Fatalf("chamar: %v", err)
+	}
+	return c
+}
+
+func TestRegistarTriada_WalkIn_AtribuiMedico(t *testing.T) {
+	c := chegadaChamada(t, true) // walk-in, sem médico
+	if err := c.RegistarTriada("med-9", inst("09:10")); err != nil {
+		t.Fatalf("não esperava erro: %v", err)
+	}
+	if c.Estado() != recepcao.ChegTriado {
+		t.Fatalf("esperava TRIADO, veio %s", c.Estado())
+	}
+	if c.MedicoID() != "med-9" {
+		t.Fatalf("o médico do walk-in devia ser atribuído, veio %q", c.MedicoID())
+	}
+}
+
+func TestRegistarTriada_WalkIn_SemMedico_Validacao(t *testing.T) {
+	c := chegadaChamada(t, true)
+	if err := c.RegistarTriada("", inst("09:10")); erros.CategoriaDe(err) != erros.CategoriaValidacao {
+		t.Fatalf("walk-in sem médico devia dar CategoriaValidacao, veio %v", erros.CategoriaDe(err))
+	}
+}
+
+func TestRegistarTriada_Agendada_HerdaMedico(t *testing.T) {
+	c := chegadaChamada(t, false) // agendada, já com med-1
+	if err := c.RegistarTriada("", inst("09:10")); err != nil {
+		t.Fatalf("não esperava erro: %v", err)
+	}
+	if c.MedicoID() != "med-1" {
+		t.Fatalf("devia herdar o médico da marcação, veio %q", c.MedicoID())
+	}
+}
+
+func TestRegistarTriada_Agendada_MedicoIndevido_Validacao(t *testing.T) {
+	c := chegadaChamada(t, false)
+	if err := c.RegistarTriada("med-9", inst("09:10")); erros.CategoriaDe(err) != erros.CategoriaValidacao {
+		t.Fatalf("re-atribuir médico a chegada agendada devia dar CategoriaValidacao, veio %v", erros.CategoriaDe(err))
+	}
+}
+
+func TestRegistarTriada_ForaDeChamado_Conflito(t *testing.T) {
+	c, _ := recepcao.NovaChegadaWalkIn("doe-1", "esp-1", inst("09:00")) // AGUARDA, não CHAMADO
+	if err := c.RegistarTriada("med-9", inst("09:10")); erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Fatalf("triar uma chegada não chamada devia dar CategoriaConflito, veio %v", erros.CategoriaDe(err))
+	}
+}
+
 func TestReconstruirChegada_PreserveCampos(t *testing.T) {
 	horaCriacao := inst("08:30")
 	horaActualizacao := inst("09:05")

@@ -232,6 +232,86 @@ func (f *fakeChegadas) ListarFila(_ context.Context, especialidadeID string) ([]
 
 var _ dominio.RepositorioChegadas = (*fakeChegadas)(nil)
 
+// fakeTriagens guarda triagens em memória. RegistarTriagem também transita a chegada no
+// fakeChegadas injectado (coordenação cross-agregado).
+type fakeTriagens struct {
+	dados    map[string]*dominio.Triagem // por id
+	porCheg  map[string]*dominio.Triagem // por chegadaID
+	seq      int
+	chegadas *fakeChegadas
+}
+
+func novoFakeTriagens(c *fakeChegadas) *fakeTriagens {
+	return &fakeTriagens{dados: map[string]*dominio.Triagem{}, porCheg: map[string]*dominio.Triagem{}, chegadas: c}
+}
+
+func (f *fakeTriagens) RegistarTriagem(ctx context.Context, triagem *dominio.Triagem, chegada *dominio.Chegada) (string, error) {
+	if err := f.chegadas.Transitar(ctx, chegada); err != nil {
+		return "", err
+	}
+	f.seq++
+	id := "tri-" + itoa(f.seq)
+	s := triagem.Snapshot()
+	s.ID = id
+	guardada := dominio.ReconstruirTriagem(s)
+	f.dados[id] = guardada
+	f.porCheg[s.ChegadaID] = guardada
+	return id, nil
+}
+
+func (f *fakeTriagens) ObterPorChegada(_ context.Context, chegadaID string) (*dominio.Triagem, error) {
+	t, ok := f.porCheg[chegadaID]
+	if !ok {
+		return nil, erros.Novo(erros.CategoriaNaoEncontrado, "triagem não encontrada")
+	}
+	return dominio.ReconstruirTriagem(t.Snapshot()), nil
+}
+
+func (f *fakeTriagens) ListarFilaClinica(_ context.Context, medicoID string) ([]dominio.ResumoFilaClinica, error) {
+	var out []dominio.ResumoFilaClinica
+	for _, t := range f.dados {
+		s := t.Snapshot()
+		ch, err := f.chegadas.ObterPorID(context.Background(), s.ChegadaID)
+		if err != nil {
+			continue
+		}
+		cs := ch.Snapshot()
+		if cs.Estado != dominio.ChegTriado {
+			continue
+		}
+		if medicoID != "" && cs.MedicoID != medicoID {
+			continue
+		}
+		out = append(out, dominio.ResumoFilaClinica{
+			ChegadaID: cs.ID, TriagemID: s.ID, DoenteID: cs.DoenteID, MedicoID: cs.MedicoID,
+			EspecialidadeID: cs.EspecialidadeID, Prioridade: string(s.Prioridade),
+			HoraChegada: cs.HoraChegada, TriadaEm: s.TriadaEm,
+		})
+	}
+	// ordena por severidade de Manchester, depois por hora de chegada
+	sortFilaClinica(out)
+	return out, nil
+}
+
+func sortFilaClinica(fila []dominio.ResumoFilaClinica) {
+	for i := 1; i < len(fila); i++ {
+		for j := i; j > 0 && maisUrgente(fila[j], fila[j-1]); j-- {
+			fila[j], fila[j-1] = fila[j-1], fila[j]
+		}
+	}
+}
+
+func maisUrgente(a, b dominio.ResumoFilaClinica) bool {
+	sa := dominio.PrioridadeManchester(a.Prioridade).Severidade()
+	sb := dominio.PrioridadeManchester(b.Prioridade).Severidade()
+	if sa != sb {
+		return sa < sb
+	}
+	return a.HoraChegada.Before(b.HoraChegada)
+}
+
+var _ dominio.RepositorioTriagens = (*fakeTriagens)(nil)
+
 // fakeLeitorDoente responde à ACL sobre o Clínico.
 type fakeLeitorDoente struct {
 	activos map[string]bool
@@ -306,6 +386,43 @@ func chegadaWalkIn(t *testing.T, doe, esp, hora string) *dominio.Chegada {
 	c, err := dominio.NovaChegadaWalkIn(doe, esp, inst(hora))
 	if err != nil {
 		t.Fatalf("chegada inválida no teste: %v", err)
+	}
+	return c
+}
+
+// semearChegadaTriada cria e persiste uma chegada agendada, chama-a e devolve o id
+// (para os testes de leitura da triagem que precisam de uma chegada TRIADO).
+func semearChegadaTriada(t *testing.T, f *fakeChegadas, doe, medico, esp, hora string) string {
+	t.Helper()
+	c, err := dominio.NovaChegadaAgendada(doe, "marc-"+doe, medico, esp, inst(hora))
+	if err != nil {
+		t.Fatalf("chegada inválida: %v", err)
+	}
+	_ = c.Chamar(inst(hora))
+	id, _ := f.Guardar(context.Background(), c)
+	return id
+}
+
+func chegadaTriadaSemear(t *testing.T, f *fakeChegadas, doe, medico, esp string) *dominio.Chegada {
+	t.Helper()
+	c, err := dominio.NovaChegadaAgendada(doe, "marc-"+doe, medico, esp, inst("09:00"))
+	if err != nil {
+		t.Fatalf("chegada inválida: %v", err)
+	}
+	_ = c.Chamar(inst("09:05"))
+	return c
+}
+
+// reconstruirTriada lê a chegada guardada, chama-a de novo em memória e transita-a a
+// TRIADO para o fakeTriagens.RegistarTriagem poder gravar a transição.
+func reconstruirTriada(t *testing.T, f *fakeChegadas, chegadaID string) *dominio.Chegada {
+	t.Helper()
+	c, err := f.ObterPorID(context.Background(), chegadaID)
+	if err != nil {
+		t.Fatalf("obter chegada: %v", err)
+	}
+	if err := c.RegistarTriada("", inst("09:10")); err != nil {
+		t.Fatalf("registar triada: %v", err)
 	}
 	return c
 }

@@ -211,6 +211,14 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		apprecepcao.NovoCasoListarFila(repoChegadas),
 	)
 
+	// BC Recepção — Triagem (prioridade Manchester, sinais vitais, fila clínica).
+	repoTriagens := pgrepo.NovoRepositorioTriagens(pool)
+	handlerRecepcaoTriagem := adhttp.NovoRecepcaoTriagemHandler(
+		apprecepcao.NovoCasoRegistarTriagem(repoTriagens, repoChegadas, repoAuditoria),
+		apprecepcao.NovoCasoObterTriagem(repoTriagens),
+		apprecepcao.NovoCasoListarFilaClinica(repoTriagens),
+	)
+
 	// Middlewares transversais e do grupo protegido.
 	segurancaMW := adhttp.SegurancaHTTP(cfg.OrigensCORS, cfg.EmProducao())
 	limiteMW := adhttp.LimiteTaxa(redisCli.Limitador(), cfg.LimiteTaxaIP, cfg.JanelaTaxa)
@@ -236,6 +244,7 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		adhttp.RegistarLaboratorio(r, handlerLaboratorio, limiteMW, authMW)
 		adhttp.RegistarRecepcao(r, handlerRecepcao, limiteMW, authMW)
 		adhttp.RegistarRecepcaoChegadas(r, handlerRecepcaoChegadas, limiteMW, authMW)
+		adhttp.RegistarRecepcaoTriagem(r, handlerRecepcaoTriagem, limiteMW, authMW)
 	}
 
 	logger.Info("dependências estabelecidas", "ambiente", cfg.Ambiente)

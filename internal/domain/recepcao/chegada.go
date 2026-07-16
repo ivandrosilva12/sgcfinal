@@ -10,7 +10,7 @@ import (
 
 // EstadoChegada é o estado do ciclo de vida de uma chegada (o doente na fila).
 //
-//	AGUARDA ─┬─ Chamar ──────────► CHAMADO   (entrega à triagem/consulta)
+//	AGUARDA ─┬─ Chamar ──────────► CHAMADO ─ RegistarTriada ► TRIADO (fila clínica)
 //	         └─ RegistarDesistencia► DESISTIU
 type EstadoChegada string
 
@@ -18,6 +18,7 @@ const (
 	ChegAguarda  EstadoChegada = "AGUARDA"
 	ChegChamado  EstadoChegada = "CHAMADO"
 	ChegDesistiu EstadoChegada = "DESISTIU"
+	ChegTriado   EstadoChegada = "TRIADO"
 )
 
 // Chegada é um agregado raiz do BC Recepção: o doente presente na clínica hoje, à
@@ -104,6 +105,28 @@ func (c *Chegada) RegistarDesistencia(em time.Time) error {
 		return erros.Novo(erros.CategoriaConflito, "só é possível registar a desistência de uma chegada em espera")
 	}
 	c.estado = ChegDesistiu
+	c.actualizadoEm = em
+	return nil
+}
+
+// RegistarTriada transita CHAMADO → TRIADO (a triagem foi registada). Numa chegada sem
+// médico (walk-in) o medicoID é obrigatório e fica atribuído; numa chegada que já tem
+// médico (agendada) o medicoID tem de vir vazio — herda-se o médico da marcação, não se
+// re-atribui.
+func (c *Chegada) RegistarTriada(medicoID string, em time.Time) error {
+	if c.estado != ChegChamado {
+		return erros.Novo(erros.CategoriaConflito, "só é possível triar uma chegada que foi chamada")
+	}
+	medicoID = strings.TrimSpace(medicoID)
+	if c.medicoID == "" {
+		if medicoID == "" {
+			return erros.Novo(erros.CategoriaValidacao, "médico a atribuir ao walk-in em falta")
+		}
+		c.medicoID = medicoID
+	} else if medicoID != "" {
+		return erros.Novo(erros.CategoriaValidacao, "a chegada já tem médico atribuído")
+	}
+	c.estado = ChegTriado
 	c.actualizadoEm = em
 	return nil
 }
