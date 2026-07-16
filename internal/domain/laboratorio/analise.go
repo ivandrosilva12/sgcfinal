@@ -2,6 +2,7 @@ package laboratorio
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
@@ -118,6 +119,37 @@ func NovaAnalise(codigo, nome, unidade string, intervalos []IntervaloReferencia,
 		codigo: codigo, nome: nome, unidade: unidade,
 		intervalos: intervalos, criticos: criticos, activo: true,
 	}, nil
+}
+
+// AvaliarCritico indica se o valor textual satisfaz alguma das condições de valor
+// crítico do catálogo. Valores não numéricos (ex.: "Positivo") nunca são críticos:
+// os limiares configurados são numéricos. Avaliado na validação (Sprint 13).
+func (a *Analise) AvaliarCritico(valorTexto string) bool {
+	v, err := strconv.ParseFloat(strings.TrimSpace(valorTexto), 64)
+	if err != nil {
+		return false
+	}
+	for _, c := range a.criticos {
+		switch c.Operador {
+		case CriticoMenor:
+			if v < c.Limite {
+				return true
+			}
+		case CriticoMaior:
+			if v > c.Limite {
+				return true
+			}
+		case CriticoMenorIgual:
+			if v <= c.Limite {
+				return true
+			}
+		case CriticoMaiorIgual:
+			if v >= c.Limite {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Codigo devolve o código canónico (maiúsculas).
