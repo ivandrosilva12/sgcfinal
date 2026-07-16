@@ -32,7 +32,7 @@ jobs:
         run: go vet ./...
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
           version: v2.5.0
 
@@ -53,10 +53,11 @@ jobs:
           "$(go env GOPATH)/bin/govulncheck" ./...
 
       - name: gosec
-        # G704 (SSRF por taint) é excluído: a única chamada HTTP de saída é o
-        # healthcheck loopback (URL totalmente controlada pela config, não por
-        # entrada externa). Reavaliar quando forem adicionadas chamadas de saída
-        # reais (ex.: JWKS do Keycloak em Sprint 2).
+        # G704 (SSRF por taint) é excluído: as chamadas HTTP de saída são o
+        # healthcheck loopback e o gateway de SMS (Sprint 13) — em ambos a URL
+        # vem totalmente da config do operador, nunca de entrada externa, pelo
+        # que não há SSRF real. Reavaliar se surgir uma chamada com URL derivada
+        # de input do utilizador.
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@latest
           "$(go env GOPATH)/bin/gosec" -exclude-generated -exclude=G704 -severity medium ./...
@@ -109,7 +110,7 @@ jobs:
         run: docker build -t sgc-api:ci .
 
       - name: Trivy (scan de vulnerabilidades da imagem)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: sgc-api:ci
           format: table
