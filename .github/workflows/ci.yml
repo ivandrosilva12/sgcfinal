@@ -38,7 +38,7 @@ jobs:
 
       - name: go-arch-lint (regra de dependência Clean Architecture)
         run: |
-          go install github.com/fe3dback/go-arch-lint@latest
+          go install github.com/fe3dback/go-arch-lint@v1.16.0
           "$(go env GOPATH)/bin/go-arch-lint" check
 
       - name: Testes (com -race)

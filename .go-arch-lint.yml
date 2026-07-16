@@ -9,6 +9,12 @@ version: 3
 
 allow:
   depOnAnyVendor: false
+  # deepScan desligado: a análise de injecções atribui à camada de aplicação os
+  # tipos concretos dos adaptadores injectados no composition root (app.go) —
+  # ou seja, marca como violação o próprio padrão de inversão de dependência
+  # que a arquitectura manda. A regra de dependência Clean (imports por camada)
+  # continua garantida pela verificação base, que fica sempre ligada.
+  deepScan: false
 
 vendors:
   gin:
