@@ -14,11 +14,13 @@ package integration_test
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ivandrosilva12/sgcfinal/internal/adapters/pgrepo"
@@ -639,27 +641,43 @@ func TestLaboratorio_ValidacaoECorreccao(t *testing.T) {
 		t.Fatalf("submeter: %v", err)
 	}
 
-	// Segregação na BD: validar como o próprio submissor viola a CHECK. Constrói-se
-	// um agregado rehidratado em PROCESSADA e força-se validador == submissor por
-	// reconstrução (o domínio recusá-lo-ia, por isso vai-se pela reconstrução).
-	validada := time.Now()
-	autoValidado := dominio.ReconstruirResultado(dominio.SnapshotResultado{
-		ID: id, RequisicaoID: reqID, CodigoAnalise: "HB", Valor: "2.5", Unidade: hb.Unidade(),
-		Estado: dominio.ResValidada, TecnicoSubmissorID: tecnicoLabID,
-		PatologistaValidadorID: tecnicoLabID, ValidadaEm: &validada,
-	})
-	// EstadoAnterior de um agregado rehidratado é o próprio Estado; forçamos a
-	// partida em PROCESSADA reconstruindo de novo com o estado de leitura.
-	autoValidado = dominio.ReconstruirResultado(dominio.SnapshotResultado{
-		ID: id, RequisicaoID: reqID, CodigoAnalise: "HB", Valor: "2.5", Unidade: hb.Unidade(),
-		Estado: dominio.ResProcessada, TecnicoSubmissorID: tecnicoLabID,
-	})
-	_ = autoValidado.Validar(patologistaLabID, false, validada) // válido no domínio (pat != tec)
-	// mas agora sobrepomos o validador para == submissor, só para testar a CHECK:
-	sobreposto := autoValidado.Snapshot()
-	sobreposto.PatologistaValidadorID = tecnicoLabID
-	if err := repoResultados.Transitar(ctx, dominio.ReconstruirResultado(sobreposto)); err == nil {
+	// Segregação na BD (resultados_check4): validar como o próprio submissor tem
+	// de ser negado pela CHECK, não só pelo domínio. O desvio ao domínio aqui é
+	// deliberado — o domínio já bloqueia a auto-validação (testado em unidade,
+	// ver dominio.TestResultado_Validar); o que esta asserção prova é a defesa em
+	// profundidade da BD: mesmo que uma linha chegue ao repositório já validada
+	// (bug a montante, migração de dados, etc.), o Postgres recusa-a na mesma.
+	// Por isso passa-se ao lado de repoResultados.Transitar (que parte sempre de
+	// dominio.ReconstruirResultado, cujo estadoAnterior = estado, tornando o CAS
+	// `WHERE estado=...` sempre incoerente com PROCESSADA e mascarando a CHECK
+	// atrás de um 409 genérico) e emite-se um UPDATE em bruto contra a linha real,
+	// que está em PROCESSADA com tecnico_submissor_id = tecnicoLabID.
+	var pgErr *pgconn.PgError
+	_, err = pool.Exec(ctx, `
+UPDATE laboratorio.resultados
+   SET estado = 'VALIDADA', validada_em = now(), patologista_validador_id = tecnico_submissor_id
+ WHERE id = $1 AND estado = 'PROCESSADA'`, id)
+	if err == nil {
 		t.Fatal("a CHECK de segregação da BD devia negar validador == submissor")
+	}
+	if !errors.As(err, &pgErr) {
+		t.Fatalf("esperava um pgconn.PgError, veio %T: %v", err, err)
+	}
+	if pgErr.Code != "23514" {
+		t.Fatalf("esperava o código SQLSTATE 23514 (check_violation), veio %q: %v", pgErr.Code, pgErr)
+	}
+	if pgErr.ConstraintName != "resultados_check4" {
+		t.Fatalf("esperava a violação da CHECK resultados_check4 (segregação), veio %q: %v", pgErr.ConstraintName, pgErr)
+	}
+
+	// Confirmação: a linha real continua em PROCESSADA — a CHECK impediu
+	// mesmo a escrita, não só devolveu erro em memória.
+	aindaProcessada, err := repoResultados.ObterPorID(ctx, id)
+	if err != nil {
+		t.Fatalf("reler resultado após a tentativa negada: %v", err)
+	}
+	if aindaProcessada.Estado() != dominio.ResProcessada {
+		t.Fatalf("a linha devia continuar PROCESSADA após a CHECK negar a auto-validação, veio %s", aindaProcessada.Estado())
 	}
 
 	// Validação legítima (patologista distinto).
