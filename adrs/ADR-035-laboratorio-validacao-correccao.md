@@ -76,11 +76,15 @@ três fatias e fecha o marco M3.
     `laboratorio.valor_critico.detectado`, `laboratorio.resultado.corrigido`
     (`internal/domain/laboratorio/eventos.go`) são scaffolding à espera do Outbox.
   - Auditoria fora da transacção das escritas (como nos sprints anteriores).
-  - Falta uma migração 0004 futura com índices únicos parciais como defesa em
-    profundidade — `UNIQUE (requisicao_id, codigo_analise) WHERE estado='VALIDADA'` e
-    `UNIQUE (corrige_resultado_id) WHERE corrige_resultado_id IS NOT NULL`. Hoje a
-    invariante "um só resultado vigente por análise" é garantida apenas pelo CAS da
-    aplicação (`RepositorioResultados.Corrigir`), sem rede de segurança ao nível da BD.
+  - ~~Falta uma migração 0004 futura com índices únicos parciais como defesa em
+    profundidade~~ **Paga (2026-07-16)**: a migração
+    `migrations/laboratorio/0004_indices_um_so_vigente.sql` cria
+    `idx_resultados_um_vigente` (`UNIQUE (requisicao_id, codigo_analise) WHERE
+    estado='VALIDADA'`) e `idx_resultados_correccao_unica` (`UNIQUE
+    (corrige_resultado_id) WHERE corrige_resultado_id IS NOT NULL`), provados em
+    integração (`TestLaboratorio_IndicesUmSoVigente`, SQLSTATE 23505) — a
+    invariante "um só resultado vigente por análise" deixou de depender apenas
+    do CAS da aplicação.
   - A auditoria do alerta de valor crítico é "sempre tentada" mas não garantida: se o
     próprio `auditor.Registar` falhar em `alertarValorCritico`
     (`internal/application/laboratorio/notificacao.go`), o erro é engolido sem log —
