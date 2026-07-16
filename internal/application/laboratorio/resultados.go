@@ -27,8 +27,7 @@ func (uc *CasoListarFila) Executar(ctx context.Context, estados []dominio.Estado
 // Impõe a regra de visibilidade do marco: o resultado preliminar (PROCESSADA) NÃO é
 // visível ao médico — só o que o patologista validou. A regra vive aqui, e não no
 // RBAC de rota, porque o RBAC não chegaria: o médico tem de poder ver os validados,
-// pelo que a distinção é pelo estado, não pelo papel. Enquanto a validação não
-// existir (Sprint 13), esta listagem devolve vazio — e é isso que se espera.
+// pelo que a distinção é pelo estado, não pelo papel.
 type CasoListarResultadosDoEpisodio struct {
 	resultados dominio.RepositorioResultados
 }

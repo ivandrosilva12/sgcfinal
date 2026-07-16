@@ -3,11 +3,15 @@ package laboratorio_test
 import (
 	"context"
 	"strconv"
+	"time"
 
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/laboratorio"
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/auditoria"
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/erros"
 )
+
+// agoraFixo devolve um instante fixo para tornar os testes determinísticos.
+func agoraFixo() time.Time { return time.Date(2026, 7, 15, 9, 0, 0, 0, time.UTC) }
 
 // fakeAnalises é um RepositorioAnalises em memória.
 type fakeAnalises struct {
@@ -142,6 +146,23 @@ func (f *fakeResultados) Transitar(_ context.Context, r *laboratorio.Resultado) 
 	return nil
 }
 
+func (f *fakeResultados) Corrigir(_ context.Context, novo, original *laboratorio.Resultado) (string, error) {
+	so := original.Snapshot()
+	actual, ok := f.porID[so.ID]
+	if !ok {
+		return "", erros.Novo(erros.CategoriaNaoEncontrado, "resultado não encontrado")
+	}
+	// Compare-and-set, como o repositório real (VALIDADA → CONCLUIDA).
+	if actual.Estado != so.EstadoAnterior {
+		return "", erros.Novo(erros.CategoriaConflito, "o estado do resultado mudou entretanto")
+	}
+	f.porID[so.ID] = so // original arquivado em CONCLUIDA
+	sn := novo.Snapshot()
+	// O novo herda o episódio do original (para ListarPorEpisodio).
+	f.episodioDe[sn.RequisicaoID] = f.episodioDe[so.RequisicaoID]
+	return f.inserir(sn), nil
+}
+
 func (f *fakeResultados) contem(estados []laboratorio.EstadoResultado, e laboratorio.EstadoResultado) bool {
 	if len(estados) == 0 {
 		return true
@@ -218,4 +239,29 @@ func (f *fakeAuditor) tem(accao string) bool {
 		}
 	}
 	return false
+}
+
+// fakeResolvedorContacto devolve um telefone fixo.
+type fakeResolvedorContacto struct {
+	telefone string
+	ok       bool
+	err      error
+}
+
+func (f *fakeResolvedorContacto) ContactoClinico(_ context.Context, _ string) (string, bool, error) {
+	return f.telefone, f.ok, f.err
+}
+
+// fakeNotificadorCritico recolhe os telefones notificados.
+type fakeNotificadorCritico struct {
+	enviados []string
+	err      error
+}
+
+func (f *fakeNotificadorCritico) NotificarValorCritico(_ context.Context, telefone, _, _ string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.enviados = append(f.enviados, telefone)
+	return nil
 }

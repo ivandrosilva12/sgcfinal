@@ -41,6 +41,26 @@ func (d *duploSubmeter) Executar(_ context.Context, actor, _ string, dados appla
 	return applaboratorio.DetalheResultado{ID: "res-1", Estado: string(dominio.ResProcessada), TecnicoSubmissorID: actor}, nil
 }
 
+type duploValidar struct {
+	actorRecebido string
+}
+
+func (d *duploValidar) Executar(_ context.Context, actor, id string) (applaboratorio.DetalheResultado, error) {
+	d.actorRecebido = actor
+	return applaboratorio.DetalheResultado{ID: id, Estado: string(dominio.ResValidada)}, nil
+}
+
+type duploCorrigir struct {
+	actorRecebido string
+	valorRecebido string
+}
+
+func (d *duploCorrigir) Executar(_ context.Context, actor, id string, dados applaboratorio.DadosCorrigirResultado) (applaboratorio.DetalheResultado, error) {
+	d.actorRecebido = actor
+	d.valorRecebido = dados.Valor
+	return applaboratorio.DetalheResultado{ID: "res-novo", Estado: string(dominio.ResValidada), Valor: dados.Valor}, nil
+}
+
 // Os restantes casos de uso não são exercitados por estes testes: duplos mínimos.
 type duploColher struct{}
 
@@ -96,7 +116,8 @@ func (duploListarResultadosEpisodio) Executar(_ context.Context, _ string) ([]ap
 // routerLab monta o router com os duplos e uma sessão fixa. Usa o `fakeAuth` que já
 // existe no pacote de testes (ver `identidade_test.go`, reutilizado por
 // `cirurgia_test.go`) — não criar outro.
-func routerLab(t *testing.T, emitir *duploEmitir, submeter *duploSubmeter, sessao identidade.Sessao) *gin.Engine {
+func routerLab(t *testing.T, emitir *duploEmitir, submeter *duploSubmeter,
+	validar *duploValidar, corrigir *duploCorrigir, sessao identidade.Sessao) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -105,6 +126,7 @@ func routerLab(t *testing.T, emitir *duploEmitir, submeter *duploSubmeter, sessa
 		emitir, duploObterRequisicao{}, duploListarRequisicoes{},
 		duploColher{}, duploRecusar{}, submeter,
 		duploListarFila{}, duploListarResultadosEpisodio{},
+		validar, corrigir,
 	)
 	adhttp.RegistarLaboratorio(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
 	return r
@@ -117,7 +139,7 @@ func sessaoLabDe(sujeito string, papel identidade.Papel) identidade.Sessao {
 
 func TestEmitirRequisicao_UsaOSujeitoAutenticado(t *testing.T) {
 	emitir := &duploEmitir{}
-	r := routerLab(t, emitir, &duploSubmeter{}, sessaoLabDe("med-99", identidade.PapelMedico))
+	r := routerLab(t, emitir, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("med-99", identidade.PapelMedico))
 
 	corpo, _ := json.Marshal(map[string]any{
 		"doente_id":  "doente-1",
@@ -139,7 +161,7 @@ func TestEmitirRequisicao_UsaOSujeitoAutenticado(t *testing.T) {
 }
 
 func TestEmitirRequisicao_CorpoMalformado_400(t *testing.T) {
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("med-1", identidade.PapelMedico))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("med-1", identidade.PapelMedico))
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/episodios/ep-1/requisicoes", bytes.NewReader([]byte("{nao-json")))
 	req.Header.Set("Content-Type", "application/json")
@@ -150,7 +172,7 @@ func TestEmitirRequisicao_CorpoMalformado_400(t *testing.T) {
 }
 
 func TestEmitirRequisicao_Enfermeiro_Proibido(t *testing.T) {
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("enf-1", identidade.PapelEnfermeiro))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("enf-1", identidade.PapelEnfermeiro))
 	corpo, _ := json.Marshal(map[string]any{"doente_id": "doente-1", "prioridade": "ROTINA"})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/episodios/ep-1/requisicoes", bytes.NewReader(corpo))
@@ -163,7 +185,7 @@ func TestEmitirRequisicao_Enfermeiro_Proibido(t *testing.T) {
 
 func TestSubmeterPreliminar_SoTecnicoLab(t *testing.T) {
 	// Um médico não submete resultados: 403.
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("med-1", identidade.PapelMedico))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("med-1", identidade.PapelMedico))
 	corpo, _ := json.Marshal(map[string]string{"valor": "12.5"})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/resultados/res-1/preliminar", bytes.NewReader(corpo))
@@ -175,7 +197,7 @@ func TestSubmeterPreliminar_SoTecnicoLab(t *testing.T) {
 
 	// O técnico submete, e o submissor é o sujeito da sessão.
 	submeter := &duploSubmeter{}
-	rt := routerLab(t, &duploEmitir{}, submeter, sessaoLabDe("tec-7", identidade.PapelTecnicoLab))
+	rt := routerLab(t, &duploEmitir{}, submeter, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("tec-7", identidade.PapelTecnicoLab))
 	w2 := httptest.NewRecorder()
 	req2 := httptest.NewRequest("POST", "/api/v1/resultados/res-1/preliminar", bytes.NewReader(corpo))
 	req2.Header.Set("Content-Type", "application/json")
@@ -190,7 +212,7 @@ func TestSubmeterPreliminar_SoTecnicoLab(t *testing.T) {
 }
 
 func TestSubmeterPreliminar_CorpoMalformado(t *testing.T) {
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("tec-1", identidade.PapelTecnicoLab))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("tec-1", identidade.PapelTecnicoLab))
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/resultados/res-1/preliminar", bytes.NewReader([]byte("{nao-json")))
 	req.Header.Set("Content-Type", "application/json")
@@ -204,7 +226,7 @@ func TestSubmeterPreliminar_CorpoMalformado(t *testing.T) {
 // devolve todos os estados (preliminares incluídos), pelo que o Médico não pode
 // entrar por esta rota — só o pessoal do laboratório e a direcção clínica.
 func TestFila_Medico_Proibido(t *testing.T) {
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("med-1", identidade.PapelMedico))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("med-1", identidade.PapelMedico))
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/laboratorio/fila", nil)
 	r.ServeHTTP(w, req)
@@ -214,7 +236,7 @@ func TestFila_Medico_Proibido(t *testing.T) {
 }
 
 func TestFila_TecnicoLab_200(t *testing.T) {
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("tec-1", identidade.PapelTecnicoLab))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("tec-1", identidade.PapelTecnicoLab))
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/laboratorio/fila", nil)
 	r.ServeHTTP(w, req)
@@ -224,7 +246,7 @@ func TestFila_TecnicoLab_200(t *testing.T) {
 }
 
 func TestFila_Patologista_200(t *testing.T) {
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("pat-1", identidade.PapelPatologista))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("pat-1", identidade.PapelPatologista))
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/laboratorio/fila", nil)
 	r.ServeHTTP(w, req)
@@ -234,7 +256,7 @@ func TestFila_Patologista_200(t *testing.T) {
 }
 
 func TestFila_Director_200(t *testing.T) {
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("dir-1", identidade.PapelDirector))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("dir-1", identidade.PapelDirector))
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/laboratorio/fila", nil)
 	r.ServeHTTP(w, req)
@@ -244,7 +266,7 @@ func TestFila_Director_200(t *testing.T) {
 }
 
 func TestFila_Enfermeiro_Proibido(t *testing.T) {
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("enf-1", identidade.PapelEnfermeiro))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("enf-1", identidade.PapelEnfermeiro))
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/laboratorio/fila", nil)
 	r.ServeHTTP(w, req)
@@ -256,7 +278,7 @@ func TestFila_Enfermeiro_Proibido(t *testing.T) {
 func TestResultadosEpisodio_Medico_200(t *testing.T) {
 	// A leitura clínica é aberta ao Médico — o filtro de visibilidade (preliminar
 	// invisível) vive na aplicação, não nesta rota.
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("med-1", identidade.PapelMedico))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("med-1", identidade.PapelMedico))
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/episodios/ep-1/resultados", nil)
 	r.ServeHTTP(w, req)
@@ -266,7 +288,7 @@ func TestResultadosEpisodio_Medico_200(t *testing.T) {
 }
 
 func TestResultadosEpisodio_Farmaceutico_Proibido(t *testing.T) {
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("farm-1", identidade.PapelFarmaceutico))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("farm-1", identidade.PapelFarmaceutico))
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/episodios/ep-1/resultados", nil)
 	r.ServeHTTP(w, req)
@@ -279,7 +301,7 @@ func TestResultadosEpisodio_Farmaceutico_Proibido(t *testing.T) {
 // do produto: o Admin é um papel técnico/de administração de sistema e deixa de ter
 // leitura clínica no BC Laboratório — não vê análises de doentes (ADR-031).
 func TestResultadosEpisodio_Admin_Proibido(t *testing.T) {
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("adm-1", identidade.PapelAdmin))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("adm-1", identidade.PapelAdmin))
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/episodios/ep-1/resultados", nil)
 	r.ServeHTTP(w, req)
@@ -289,7 +311,7 @@ func TestResultadosEpisodio_Admin_Proibido(t *testing.T) {
 }
 
 func TestColherAmostra_TecnicoLab_200(t *testing.T) {
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("tec-1", identidade.PapelTecnicoLab))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("tec-1", identidade.PapelTecnicoLab))
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/resultados/res-1/colheita", nil)
 	r.ServeHTTP(w, req)
@@ -299,7 +321,7 @@ func TestColherAmostra_TecnicoLab_200(t *testing.T) {
 }
 
 func TestColherAmostra_Medico_Proibido(t *testing.T) {
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("med-1", identidade.PapelMedico))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("med-1", identidade.PapelMedico))
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/resultados/res-1/colheita", nil)
 	r.ServeHTTP(w, req)
@@ -309,7 +331,7 @@ func TestColherAmostra_Medico_Proibido(t *testing.T) {
 }
 
 func TestRecusarAmostra_TecnicoLab_200(t *testing.T) {
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("tec-1", identidade.PapelTecnicoLab))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("tec-1", identidade.PapelTecnicoLab))
 	corpo, _ := json.Marshal(map[string]string{"motivo": "amostra hemolisada"})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/resultados/res-1/recusa", bytes.NewReader(corpo))
@@ -321,7 +343,7 @@ func TestRecusarAmostra_TecnicoLab_200(t *testing.T) {
 }
 
 func TestRecusarAmostra_MotivoEmFalta_400(t *testing.T) {
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("tec-1", identidade.PapelTecnicoLab))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("tec-1", identidade.PapelTecnicoLab))
 	corpo, _ := json.Marshal(map[string]string{"motivo": ""})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/resultados/res-1/recusa", bytes.NewReader(corpo))
@@ -333,7 +355,7 @@ func TestRecusarAmostra_MotivoEmFalta_400(t *testing.T) {
 }
 
 func TestRecusarAmostra_CorpoMalformado_400(t *testing.T) {
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("tec-1", identidade.PapelTecnicoLab))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("tec-1", identidade.PapelTecnicoLab))
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/resultados/res-1/recusa", bytes.NewReader([]byte("{nao-json")))
 	req.Header.Set("Content-Type", "application/json")
@@ -344,7 +366,7 @@ func TestRecusarAmostra_CorpoMalformado_400(t *testing.T) {
 }
 
 func TestRegistarAnalise_Admin_201(t *testing.T) {
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("adm-1", identidade.PapelAdmin))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("adm-1", identidade.PapelAdmin))
 	corpo, _ := json.Marshal(map[string]string{"codigo": "HB", "nome": "Hemoglobina", "unidade": "g/dL"})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/analises", bytes.NewReader(corpo))
@@ -356,7 +378,7 @@ func TestRegistarAnalise_Admin_201(t *testing.T) {
 }
 
 func TestRegistarAnalise_TecnicoLab_Proibido(t *testing.T) {
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("tec-1", identidade.PapelTecnicoLab))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("tec-1", identidade.PapelTecnicoLab))
 	corpo, _ := json.Marshal(map[string]string{"codigo": "HB"})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/analises", bytes.NewReader(corpo))
@@ -368,7 +390,7 @@ func TestRegistarAnalise_TecnicoLab_Proibido(t *testing.T) {
 }
 
 func TestListarAnalises_LeituraClinica_200(t *testing.T) {
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("enf-1", identidade.PapelEnfermeiro))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("enf-1", identidade.PapelEnfermeiro))
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/analises", nil)
 	r.ServeHTTP(w, req)
@@ -383,7 +405,7 @@ func TestListarAnalises_LeituraClinica_200(t *testing.T) {
 // podia registá-lo (POST /analises, catalogoEscrita). Ver TestResultadosEpisodio_
 // Admin_Proibido: é aí, na leitura clínica, que o Admin continua vedado.
 func TestListarAnalises_Admin_200(t *testing.T) {
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("adm-1", identidade.PapelAdmin))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("adm-1", identidade.PapelAdmin))
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/analises", nil)
 	r.ServeHTTP(w, req)
@@ -393,7 +415,7 @@ func TestListarAnalises_Admin_200(t *testing.T) {
 }
 
 func TestObterRequisicao_LeituraClinica_200(t *testing.T) {
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("med-1", identidade.PapelMedico))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("med-1", identidade.PapelMedico))
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/requisicoes/req-1", nil)
 	r.ServeHTTP(w, req)
@@ -403,7 +425,7 @@ func TestObterRequisicao_LeituraClinica_200(t *testing.T) {
 }
 
 func TestListarRequisicoes_LeituraClinica_200(t *testing.T) {
-	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, sessaoLabDe("med-1", identidade.PapelMedico))
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("med-1", identidade.PapelMedico))
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/episodios/ep-1/requisicoes", nil)
 	r.ServeHTTP(w, req)
@@ -414,7 +436,7 @@ func TestListarRequisicoes_LeituraClinica_200(t *testing.T) {
 
 func TestEmitirRequisicao_ErroDoCasoDeUso_Propagado(t *testing.T) {
 	emitir := &duploEmitir{erro: erros.Novo(erros.CategoriaConflito, "só é possível requisitar num episódio aberto")}
-	r := routerLab(t, emitir, &duploSubmeter{}, sessaoLabDe("med-1", identidade.PapelMedico))
+	r := routerLab(t, emitir, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{}, sessaoLabDe("med-1", identidade.PapelMedico))
 	corpo, _ := json.Marshal(map[string]any{"doente_id": "doente-1", "prioridade": "ROTINA"})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/episodios/ep-1/requisicoes", bytes.NewReader(corpo))
@@ -422,5 +444,72 @@ func TestEmitirRequisicao_ErroDoCasoDeUso_Propagado(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != 409 {
 		t.Fatalf("esperava 409 propagado do caso de uso, veio %d (%s)", w.Code, w.Body.String())
+	}
+}
+
+func TestValidarResultado_SoPatologista(t *testing.T) {
+	// Um médico não valida: 403.
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{},
+		sessaoLabDe("med-1", identidade.PapelMedico))
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/resultados/res-1/validacao", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != 403 {
+		t.Fatalf("esperava 403 para o Medico na validação, veio %d", w.Code)
+	}
+
+	// O patologista valida, e o validador é o sujeito da sessão.
+	validar := &duploValidar{}
+	rp := routerLab(t, &duploEmitir{}, &duploSubmeter{}, validar, &duploCorrigir{},
+		sessaoLabDe("pat-7", identidade.PapelPatologista))
+	w2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("POST", "/api/v1/resultados/res-1/validacao", nil)
+	rp.ServeHTTP(w2, req2)
+	if w2.Code != 200 {
+		t.Fatalf("esperava 200 para o Patologista, veio %d (%s)", w2.Code, w2.Body.String())
+	}
+	if validar.actorRecebido != "pat-7" {
+		t.Fatalf("o validador devia vir da sessão (pat-7), veio %q", validar.actorRecebido)
+	}
+}
+
+func TestValidarResultado_TecnicoLab_Proibido(t *testing.T) {
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{},
+		sessaoLabDe("tec-1", identidade.PapelTecnicoLab))
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/resultados/res-1/validacao", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != 403 {
+		t.Fatalf("o técnico não valida (segregação): esperava 403, veio %d", w.Code)
+	}
+}
+
+func TestCorrigirResultado_SoPatologista_UsaSessaoEValorDoCorpo(t *testing.T) {
+	corrigir := &duploCorrigir{}
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, corrigir,
+		sessaoLabDe("pat-3", identidade.PapelPatologista))
+	corpo, _ := json.Marshal(map[string]string{"valor": "12.5", "observacoes": "releitura"})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/resultados/res-1/correccao", bytes.NewReader(corpo))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("esperava 200 para o Patologista na correcção, veio %d (%s)", w.Code, w.Body.String())
+	}
+	if corrigir.actorRecebido != "pat-3" || corrigir.valorRecebido != "12.5" {
+		t.Fatalf("correcção não usou sessão/corpo esperados: actor=%q valor=%q",
+			corrigir.actorRecebido, corrigir.valorRecebido)
+	}
+}
+
+func TestCorrigirResultado_CorpoMalformado_400(t *testing.T) {
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{},
+		sessaoLabDe("pat-1", identidade.PapelPatologista))
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/resultados/res-1/correccao", bytes.NewReader([]byte("{nao-json")))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != 400 {
+		t.Fatalf("corpo malformado devia dar 400, veio %d", w.Code)
 	}
 }

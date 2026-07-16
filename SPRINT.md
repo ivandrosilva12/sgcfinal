@@ -1,10 +1,33 @@
 # SPRINT ACTUAL
 
-- **Marco**: M3 — Laboratório
-- **Sprint**: 12 (BC Laboratório — catálogo, requisição, amostra, preliminar) — **entregue**
-- **Objectivo**: abrir o BC Laboratório até ao resultado preliminar submetido pelo
-  técnico — que não é visível ao médico. A validação com segregação de funções e os
-  valores críticos são o Sprint 13.
+- **Marco**: M3 — Laboratório — **entregue**
+- **Sprint**: 13 (BC Laboratório — validação, valores críticos, correcção) — **entregue**
+- **Objectivo**: fechar o BC Laboratório com a validação pelo patologista (segregação
+  de funções), a detecção e notificação de valores críticos e a correcção de um
+  resultado já validado, preservando o original.
+
+## Sprint 13 — entregue
+
+- [x] Transição `Validar` (PROCESSADA → VALIDADA) com segregação de funções
+      (`actor != tecnicoSubmissorID`, 422 `RegraNegocio`) no domínio
+      (`internal/domain/laboratorio/resultado.go`).
+- [x] Avaliação de valor crítico no domínio (`Analise.AvaliarCritico`,
+      `internal/domain/laboratorio/analise.go`), chamada na validação e reavaliada na
+      correcção; valor não numérico nunca é crítico.
+- [x] Notificação SMS ao médico requisitante best-effort e sempre auditada
+      (`laboratorio.valor_critico.notificado`), via `ResolvedorContacto` (ACL sobre a
+      Identidade) e `NotificadorCritico` (gateway HTTP ou `NotificadorNulo`); falha de
+      envio não reverte a validação nem a correcção.
+- [x] Correcção (`Resultado.Corrigir`) arquiva o original em CONCLUIDA e cria um novo
+      resultado VALIDADA (`corrige_resultado_id → original`), preservando a
+      proveniência; transacção única no `pgrepo` (CAS + INSERT); segregação de
+      funções também na correcção.
+- [x] Visibilidade clínica reduzida a `EstadosVisiveisAoMedico = {VALIDADA}` — o
+      arquivado sai da leitura normal do episódio; a fila de trabalho mantém-se
+      fail-open para o histórico de correcção.
+- [x] CHECK de segregação da BD (`resultados_check4`) provada por teste de
+      integração real (SQLSTATE 23514), defesa em profundidade da regra de domínio.
+- [x] ADR-035.
 
 ## Sprint 12 — entregue
 
@@ -158,9 +181,9 @@
 - [x] Médico requisita análises para um episódio aberto. — Sprint 12
 - [x] Técnico colhe/recusa amostra e submete resultado preliminar. — Sprint 12
 - [x] O preliminar não é visível ao médico. — Sprint 12
-- [ ] Validação pelo patologista com segregação (submissor ≠ validador). — Sprint 13
-- [ ] Valores críticos detectados e notificados (SMS auditado). — Sprint 13
-- [ ] Correcção cria novo resultado preservando o original. — Sprint 13
+- [x] Validação pelo patologista com segregação (submissor ≠ validador). — Sprint 13
+- [x] Valores críticos detectados e notificados (SMS auditado). — Sprint 13
+- [x] Correcção cria novo resultado preservando o original. — Sprint 13
 
 ## Critérios de saída M1
 

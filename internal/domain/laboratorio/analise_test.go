@@ -109,3 +109,56 @@ func TestAnalise_SnapshotEReconstruir(t *testing.T) {
 		t.Fatalf("esperava 1 valor crítico preservado")
 	}
 }
+
+func TestAnalise_AvaliarCritico(t *testing.T) {
+	criticos := []dominio.ValorCritico{
+		{Operador: dominio.CriticoMenor, Limite: 3.0, Descricao: "anemia grave"},
+		{Operador: dominio.CriticoMaior, Limite: 18.0, Descricao: "policitemia"},
+	}
+	a, err := dominio.NovaAnalise("HB", "Hemoglobina", "g/dL", nil, criticos)
+	if err != nil {
+		t.Fatalf("análise base inválida: %v", err)
+	}
+	casos := []struct {
+		valor    string
+		esperado bool
+	}{
+		{"2.9", true},       // < 3.0
+		{"3.0", false},      // fronteira: não é < 3.0 nem > 18.0
+		{"12.5", false},     // normal
+		{"18.1", true},      // > 18.0
+		{"Positivo", false}, // não numérico → nunca crítico
+		{"", false},         // vazio → nunca crítico
+	}
+	for _, c := range casos {
+		t.Run(c.valor, func(t *testing.T) {
+			if got := a.AvaliarCritico(c.valor); got != c.esperado {
+				t.Fatalf("AvaliarCritico(%q) = %v, esperava %v", c.valor, got, c.esperado)
+			}
+		})
+	}
+}
+
+func TestAnalise_AvaliarCritico_OperadoresIgual(t *testing.T) {
+	criticos := []dominio.ValorCritico{
+		{Operador: dominio.CriticoMenorIgual, Limite: 2.0, Descricao: "x"},
+		{Operador: dominio.CriticoMaiorIgual, Limite: 40.0, Descricao: "y"},
+	}
+	a, _ := dominio.NovaAnalise("K", "Potássio", "mmol/L", nil, criticos)
+	if !a.AvaliarCritico("2.0") {
+		t.Fatal("2.0 devia ser crítico com <= 2.0")
+	}
+	if !a.AvaliarCritico("40.0") {
+		t.Fatal("40.0 devia ser crítico com >= 40.0")
+	}
+	if a.AvaliarCritico("10") {
+		t.Fatal("10 não devia ser crítico")
+	}
+}
+
+func TestAnalise_AvaliarCritico_SemRegras(t *testing.T) {
+	a, _ := dominio.NovaAnalise("XPT", "Sem críticos", "un", nil, nil)
+	if a.AvaliarCritico("999") {
+		t.Fatal("sem valores críticos configurados, nada é crítico")
+	}
+}

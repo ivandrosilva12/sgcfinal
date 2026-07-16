@@ -45,6 +45,7 @@ type Resultado struct {
 	submetidaEm            *time.Time
 	validadaEm             *time.Time
 	valorCritico           bool
+	corrigeResultadoID     string
 	criadoEm               time.Time
 }
 
@@ -134,6 +135,80 @@ func (r *Resultado) SubmeterPreliminar(tecnicoID, valor, observacoes string, em 
 	return nil
 }
 
+// Validar transita PROCESSADA → VALIDADA. O validador é o sujeito autenticado. A
+// invariante de segregação de funções é o coração do Sprint 13: quem submeteu o
+// preliminar NUNCA o valida. `critico` é avaliado pela aplicação contra o catálogo
+// (o agregado não conhece a Analise) e gravado aqui.
+func (r *Resultado) Validar(patologistaID string, critico bool, em time.Time) error {
+	if r.estado != ResProcessada {
+		return erros.Novo(erros.CategoriaConflito, "só é possível validar um resultado processado")
+	}
+	patologistaID = strings.TrimSpace(patologistaID)
+	if patologistaID == "" {
+		return erros.Novo(erros.CategoriaValidacao, "patologista validador em falta")
+	}
+	if patologistaID == r.tecnicoSubmissorID {
+		return erros.Novo(erros.CategoriaRegraNegocio,
+			"segregação de funções: quem submeteu o resultado não o pode validar")
+	}
+	if em.IsZero() {
+		return erros.Novo(erros.CategoriaValidacao, "data da validação em falta")
+	}
+	r.estado = ResValidada
+	r.patologistaValidadorID = patologistaID
+	r.validadaEm = &em
+	r.valorCritico = critico
+	return nil
+}
+
+// CorrigeResultadoID devolve o id do resultado que este corrige (vazio se não é
+// uma correcção).
+func (r *Resultado) CorrigeResultadoID() string { return r.corrigeResultadoID }
+
+// Corrigir arquiva o resultado validado (→ CONCLUIDA) e devolve um NOVO Resultado
+// VALIDADA que o substitui, apontando-lhe via corrigeResultadoID. Preserva o técnico
+// submissor original (proveniência) — pelo que a segregação continua a valer: o
+// corrector nunca é o técnico que submeteu o preliminar original. O novo agregado
+// nasce por inserir (sem estado anterior).
+func (r *Resultado) Corrigir(patologistaID, novoValor, observacoes string, critico bool, em time.Time) (*Resultado, error) {
+	if r.estado != ResValidada {
+		return nil, erros.Novo(erros.CategoriaConflito, "só é possível corrigir um resultado validado")
+	}
+	patologistaID = strings.TrimSpace(patologistaID)
+	if patologistaID == "" {
+		return nil, erros.Novo(erros.CategoriaValidacao, "patologista corrector em falta")
+	}
+	if patologistaID == r.tecnicoSubmissorID {
+		return nil, erros.Novo(erros.CategoriaRegraNegocio,
+			"segregação de funções: quem submeteu o resultado não o pode corrigir")
+	}
+	novoValor = strings.TrimSpace(novoValor)
+	if novoValor == "" {
+		return nil, erros.Novo(erros.CategoriaValidacao, "valor corrigido em falta")
+	}
+	if em.IsZero() {
+		return nil, erros.Novo(erros.CategoriaValidacao, "data da correcção em falta")
+	}
+	novo := &Resultado{
+		requisicaoID:           r.requisicaoID,
+		codigoAnalise:          r.codigoAnalise,
+		valor:                  novoValor,
+		unidade:                r.unidade,
+		observacoes:            strings.TrimSpace(observacoes),
+		estado:                 ResValidada,
+		tecnicoColheitaID:      r.tecnicoColheitaID,
+		tecnicoSubmissorID:     r.tecnicoSubmissorID,
+		patologistaValidadorID: patologistaID,
+		colhidaEm:              r.colhidaEm,
+		submetidaEm:            r.submetidaEm,
+		validadaEm:             &em,
+		valorCritico:           critico,
+		corrigeResultadoID:     r.id,
+	}
+	r.estado = ResConcluida
+	return novo, nil
+}
+
 // ID devolve o identificador atribuído pela base de dados.
 func (r *Resultado) ID() string { return r.id }
 
@@ -145,6 +220,9 @@ func (r *Resultado) Estado() EstadoResultado { return r.estado }
 
 // TecnicoSubmissorID devolve quem submeteu o preliminar (vazio antes da submissão).
 func (r *Resultado) TecnicoSubmissorID() string { return r.tecnicoSubmissorID }
+
+// Valor devolve o valor submetido (vazio antes da submissão).
+func (r *Resultado) Valor() string { return r.valor }
 
 // SnapshotResultado carrega o estado completo para persistência ou rehidratação.
 //
@@ -168,6 +246,7 @@ type SnapshotResultado struct {
 	SubmetidaEm            *time.Time
 	ValidadaEm             *time.Time
 	ValorCritico           bool
+	CorrigeResultadoID     string
 	CriadoEm               time.Time
 }
 
@@ -180,7 +259,7 @@ func (r *Resultado) Snapshot() SnapshotResultado {
 		TecnicoColheitaID: r.tecnicoColheitaID, TecnicoSubmissorID: r.tecnicoSubmissorID,
 		PatologistaValidadorID: r.patologistaValidadorID,
 		ColhidaEm:              r.colhidaEm, SubmetidaEm: r.submetidaEm, ValidadaEm: r.validadaEm,
-		ValorCritico: r.valorCritico, CriadoEm: r.criadoEm,
+		ValorCritico: r.valorCritico, CorrigeResultadoID: r.corrigeResultadoID, CriadoEm: r.criadoEm,
 	}
 }
 
@@ -195,7 +274,7 @@ func ReconstruirResultado(s SnapshotResultado) *Resultado {
 		tecnicoColheitaID: s.TecnicoColheitaID, tecnicoSubmissorID: s.TecnicoSubmissorID,
 		patologistaValidadorID: s.PatologistaValidadorID,
 		colhidaEm:              s.ColhidaEm, submetidaEm: s.SubmetidaEm, validadaEm: s.ValidadaEm,
-		valorCritico: s.ValorCritico, criadoEm: s.CriadoEm,
+		valorCritico: s.ValorCritico, corrigeResultadoID: s.CorrigeResultadoID, criadoEm: s.CriadoEm,
 	}
 }
 
@@ -226,6 +305,10 @@ type ResumoResultado struct {
 type RepositorioResultados interface {
 	ObterPorID(ctx context.Context, id string) (*Resultado, error)
 	Transitar(ctx context.Context, r *Resultado) error
+	// Corrigir persiste uma correcção numa única transacção: INSERT do novo Resultado
+	// (VALIDADA, corrige_resultado_id→original) e UPDATE compare-and-set do original
+	// (VALIDADA→CONCLUIDA). Qualquer falha faz rollback de ambos. Devolve o id do novo.
+	Corrigir(ctx context.Context, novo *Resultado, original *Resultado) (string, error)
 	ListarFila(ctx context.Context, estados []EstadoResultado) ([]ResumoResultado, error)
 	ListarPorEpisodio(ctx context.Context, episodioID string, estados []EstadoResultado) ([]ResumoResultado, error)
 }

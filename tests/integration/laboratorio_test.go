@@ -14,11 +14,13 @@ package integration_test
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ivandrosilva12/sgcfinal/internal/adapters/pgrepo"
@@ -32,9 +34,10 @@ import (
 
 // Ids fixos de pessoal (o BC Laboratório não valida o pessoal — é do Identidade).
 const (
-	medicoLabID  = "00000000-0000-4000-8000-0000000000f1"
-	tecnicoLabID = "00000000-0000-4000-8000-0000000000f2"
-	outroTecnico = "00000000-0000-4000-8000-0000000000f3"
+	medicoLabID      = "00000000-0000-4000-8000-0000000000f1"
+	tecnicoLabID     = "00000000-0000-4000-8000-0000000000f2"
+	outroTecnico     = "00000000-0000-4000-8000-0000000000f3"
+	patologistaLabID = "00000000-0000-4000-8000-0000000000f4"
 )
 
 // migrarLaboratorio aplica as migrações forward-only (idempotente) antes de cada
@@ -588,5 +591,136 @@ func TestLaboratorio_CatalogoRoundTripJSONB(t *testing.T) {
 	}
 	if criticosTexto != "[]" {
 		t.Fatalf("valores_criticos devia ser '[]', veio %q", criticosTexto)
+	}
+}
+
+// TestLaboratorio_ValidacaoECorreccao fecha o ciclo do Sprint 13 contra Postgres:
+// PROCESSADA → VALIDADA (com as colunas de validação persistidas), a CHECK de
+// segregação da BD a negar validador == submissor, e a correcção a arquivar o
+// original (CONCLUIDA) e criar um novo VALIDADA na mesma transacção.
+func TestLaboratorio_ValidacaoECorreccao(t *testing.T) {
+	pool, ctx := ligar(t)
+	migrarLaboratorio(t, pool, ctx)
+
+	repoAnalises := pgrepo.NovoRepositorioAnalises(pool)
+	repoRequisicoes := pgrepo.NovoRepositorioRequisicoes(pool)
+	repoResultados := pgrepo.NovoRepositorioResultados(pool)
+
+	hb, err := repoAnalises.ObterPorCodigo(ctx, "HB")
+	if err != nil {
+		t.Fatalf("obter HB: %v", err)
+	}
+	doenteID, episodioID := fixturaLaboratorio(t, pool, ctx, "12345678LA130", "Elsa Laboratório")
+	req, _ := dominio.NovaRequisicao(dominio.DadosNovaRequisicao{
+		EpisodioID: episodioID, DoenteID: doenteID, MedicoRequisitanteID: medicoLabID,
+		Prioridade: dominio.PrioridadeRotina, Itens: []dominio.ItemRequisicao{{CodigoAnalise: "HB"}},
+	})
+	res0, _ := dominio.NovoResultado("por-atribuir", "HB", hb.Unidade())
+	reqID, err := repoRequisicoes.Emitir(ctx, req, []*dominio.Resultado{res0})
+	if err != nil {
+		t.Fatalf("emitir: %v", err)
+	}
+	fila, _ := repoResultados.ListarFila(ctx, []dominio.EstadoResultado{dominio.ResPendente})
+	var id string
+	for _, r := range fila {
+		if r.RequisicaoID == reqID {
+			id = r.ID
+		}
+	}
+	if id == "" {
+		t.Fatal("não encontrei o resultado PENDENTE emitido")
+	}
+
+	// Colher e submeter (submissor = tecnicoLabID).
+	res, _ := repoResultados.ObterPorID(ctx, id)
+	_ = res.ColherAmostra(tecnicoLabID, time.Now())
+	_ = repoResultados.Transitar(ctx, res)
+	res, _ = repoResultados.ObterPorID(ctx, id)
+	_ = res.SubmeterPreliminar(tecnicoLabID, "2.5", "", time.Now())
+	if err := repoResultados.Transitar(ctx, res); err != nil {
+		t.Fatalf("submeter: %v", err)
+	}
+
+	// Segregação na BD (resultados_check4): validar como o próprio submissor tem
+	// de ser negado pela CHECK, não só pelo domínio. O desvio ao domínio aqui é
+	// deliberado — o domínio já bloqueia a auto-validação (testado em unidade,
+	// ver dominio.TestResultado_Validar); o que esta asserção prova é a defesa em
+	// profundidade da BD: mesmo que uma linha chegue ao repositório já validada
+	// (bug a montante, migração de dados, etc.), o Postgres recusa-a na mesma.
+	// Por isso passa-se ao lado de repoResultados.Transitar (que parte sempre de
+	// dominio.ReconstruirResultado, cujo estadoAnterior = estado, tornando o CAS
+	// `WHERE estado=...` sempre incoerente com PROCESSADA e mascarando a CHECK
+	// atrás de um 409 genérico) e emite-se um UPDATE em bruto contra a linha real,
+	// que está em PROCESSADA com tecnico_submissor_id = tecnicoLabID.
+	var pgErr *pgconn.PgError
+	_, err = pool.Exec(ctx, `
+UPDATE laboratorio.resultados
+   SET estado = 'VALIDADA', validada_em = now(), patologista_validador_id = tecnico_submissor_id
+ WHERE id = $1 AND estado = 'PROCESSADA'`, id)
+	if err == nil {
+		t.Fatal("a CHECK de segregação da BD devia negar validador == submissor")
+	}
+	if !errors.As(err, &pgErr) {
+		t.Fatalf("esperava um pgconn.PgError, veio %T: %v", err, err)
+	}
+	if pgErr.Code != "23514" {
+		t.Fatalf("esperava o código SQLSTATE 23514 (check_violation), veio %q: %v", pgErr.Code, pgErr)
+	}
+	if pgErr.ConstraintName != "resultados_check4" {
+		t.Fatalf("esperava a violação da CHECK resultados_check4 (segregação), veio %q: %v", pgErr.ConstraintName, pgErr)
+	}
+
+	// Confirmação: a linha real continua em PROCESSADA — a CHECK impediu
+	// mesmo a escrita, não só devolveu erro em memória.
+	aindaProcessada, err := repoResultados.ObterPorID(ctx, id)
+	if err != nil {
+		t.Fatalf("reler resultado após a tentativa negada: %v", err)
+	}
+	if aindaProcessada.Estado() != dominio.ResProcessada {
+		t.Fatalf("a linha devia continuar PROCESSADA após a CHECK negar a auto-validação, veio %s", aindaProcessada.Estado())
+	}
+
+	// Validação legítima (patologista distinto).
+	res, _ = repoResultados.ObterPorID(ctx, id)
+	if err := res.Validar(patologistaLabID, true, time.Now()); err != nil {
+		t.Fatalf("validar no domínio: %v", err)
+	}
+	if err := repoResultados.Transitar(ctx, res); err != nil {
+		t.Fatalf("persistir validação: %v", err)
+	}
+	relido, _ := repoResultados.ObterPorID(ctx, id)
+	if relido.Estado() != dominio.ResValidada {
+		t.Fatalf("esperava VALIDADA na BD, veio %s", relido.Estado())
+	}
+
+	// Correcção: novo VALIDADA + original CONCLUIDA, atómico.
+	novo, err := relido.Corrigir(patologistaLabID, "12.5", "releitura", false, time.Now())
+	if err != nil {
+		t.Fatalf("corrigir no domínio: %v", err)
+	}
+	novoID, err := repoResultados.Corrigir(ctx, novo, relido)
+	if err != nil {
+		t.Fatalf("persistir correcção: %v", err)
+	}
+	origFinal, _ := repoResultados.ObterPorID(ctx, id)
+	novoFinal, _ := repoResultados.ObterPorID(ctx, novoID)
+	if origFinal.Estado() != dominio.ResConcluida {
+		t.Fatalf("o original devia ficar CONCLUIDA, veio %s", origFinal.Estado())
+	}
+	if novoFinal.Estado() != dominio.ResValidada || novoFinal.Valor() != "12.5" {
+		t.Fatalf("o novo devia ser VALIDADA com 12.5, veio %s/%s", novoFinal.Estado(), novoFinal.Valor())
+	}
+
+	// Visibilidade clínica pós-correcção: o CONCLUIDA (arquivado) sai da vista do
+	// médico — só o novo VALIDADA (valor corrigido) aparece.
+	visiveisApos, err := repoResultados.ListarPorEpisodio(ctx, episodioID, aplaboratorio.EstadosVisiveisAoMedico)
+	if err != nil {
+		t.Fatalf("ListarPorEpisodio após correcção: %v", err)
+	}
+	if len(visiveisApos) != 1 {
+		t.Fatalf("esperava exactamente 1 resultado visível ao médico após a correcção, veio %d", len(visiveisApos))
+	}
+	if visiveisApos[0].ID != novoID || visiveisApos[0].Valor != "12.5" {
+		t.Fatalf("o resultado visível devia ser o novo (12.5), veio ID=%s Valor=%s", visiveisApos[0].ID, visiveisApos[0].Valor)
 	}
 }

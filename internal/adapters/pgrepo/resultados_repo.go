@@ -64,11 +64,12 @@ func (r *RepositorioResultados) Transitar(ctx context.Context, res *dominio.Resu
 UPDATE laboratorio.resultados SET
     estado=$2, valor=NULLIF($3,''), observacoes=NULLIF($4,''), motivo_recusa=NULLIF($5,''),
     tecnico_colheita_id=NULLIF($6,'')::uuid, tecnico_submissor_id=NULLIF($7,'')::uuid,
-    colhida_em=$8, submetida_em=$9
+    colhida_em=$8, submetida_em=$9,
+    patologista_validador_id=NULLIF($11,'')::uuid, validada_em=$12, valor_critico=$13
 WHERE id=$1 AND estado=$10`
 	ct, err := r.pool.Exec(ctx, q, s.ID, string(s.Estado), s.Valor, s.Observacoes, s.MotivoRecusa,
 		s.TecnicoColheitaID, s.TecnicoSubmissorID, s.ColhidaEm, s.SubmetidaEm,
-		string(s.EstadoAnterior))
+		string(s.EstadoAnterior), s.PatologistaValidadorID, s.ValidadaEm, s.ValorCritico)
 	if err != nil {
 		return fmt.Errorf("actualizar resultado: %w", err)
 	}
@@ -76,6 +77,54 @@ WHERE id=$1 AND estado=$10`
 		return r.erroTransicaoFalhada(ctx, s.ID)
 	}
 	return nil
+}
+
+// Corrigir persiste a correcção de um resultado validado numa única transacção: o
+// original transita VALIDADA → CONCLUIDA (compare-and-set) e o novo resultado é
+// inserido em VALIDADA a apontar-lhe via corrige_resultado_id. Qualquer falha faz
+// rollback de ambos; devolve o id do novo resultado.
+func (r *RepositorioResultados) Corrigir(ctx context.Context, novo, original *dominio.Resultado) (string, error) {
+	so := original.Snapshot()
+	sn := novo.Snapshot()
+	if so.ID == "" {
+		return "", erros.Novo(erros.CategoriaNaoEncontrado, "resultado não encontrado")
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("iniciar transacção de correcção: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	const arquivar = `UPDATE laboratorio.resultados SET estado=$2 WHERE id=$1 AND estado=$3`
+	ct, err := tx.Exec(ctx, arquivar, so.ID, string(dominio.ResConcluida), string(so.EstadoAnterior))
+	if err != nil {
+		return "", fmt.Errorf("arquivar resultado original: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return "", r.erroTransicaoFalhada(ctx, so.ID)
+	}
+
+	const inserir = `
+INSERT INTO laboratorio.resultados
+    (requisicao_id, codigo_analise, valor, unidade, observacoes, estado,
+     tecnico_colheita_id, tecnico_submissor_id, patologista_validador_id,
+     colhida_em, submetida_em, validada_em, valor_critico, corrige_resultado_id)
+VALUES ($1,$2,NULLIF($3,''),$4,NULLIF($5,''),$6,
+        NULLIF($7,'')::uuid, NULLIF($8,'')::uuid, NULLIF($9,'')::uuid,
+        $10,$11,$12,$13,$14::uuid)
+RETURNING id::text`
+	var novoID string
+	if err := tx.QueryRow(ctx, inserir,
+		sn.RequisicaoID, sn.CodigoAnalise, sn.Valor, sn.Unidade, sn.Observacoes, string(sn.Estado),
+		sn.TecnicoColheitaID, sn.TecnicoSubmissorID, sn.PatologistaValidadorID,
+		sn.ColhidaEm, sn.SubmetidaEm, sn.ValidadaEm, sn.ValorCritico, sn.CorrigeResultadoID,
+	).Scan(&novoID); err != nil {
+		return "", fmt.Errorf("inserir resultado corrigido: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("confirmar correcção: %w", err)
+	}
+	return novoID, nil
 }
 
 // erroTransicaoFalhada distingue "a linha não existe" (NaoEncontrado/404) de "a linha

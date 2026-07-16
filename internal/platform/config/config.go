@@ -30,6 +30,8 @@ type Config struct {
 	SMTPHost                  string        // host SMTP para notificações (vazio → notificador no-op)
 	SMTPPorta                 string        // porta SMTP (default 1025 — MailHog)
 	SMTPRemetente             string        // remetente dos emails (From)
+	SMSEndpoint               string        // endpoint HTTP do gateway SMS (vazio → notificador no-op)
+	SMSRemetente              string        // remetente (sender id) das mensagens SMS
 }
 
 // erroConfig acumula erros de validação para reportar todos de uma vez.
@@ -63,6 +65,8 @@ func Carregar() (Config, error) {
 		SMTPHost:                  os.Getenv("SMTP_HOST"),
 		SMTPPorta:                 valorOu("SMTP_PORT", "1025"),
 		SMTPRemetente:             valorOu("SMTP_FROM", "nao-responder@sgc.ao"),
+		SMSEndpoint:               os.Getenv("SMS_ENDPOINT"),
+		SMSRemetente:              valorOu("SMS_FROM", "SGC"),
 	}
 
 	erro := &erroConfig{}
