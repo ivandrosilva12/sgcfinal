@@ -271,8 +271,11 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 	}
 
 	logger.Info("dependências estabelecidas", "ambiente", cfg.Ambiente)
+	// ValidarUUIDs corre a nível de engine (antes das rotas de negócio): o match
+	// da rota já populou c.Params, pelo que um id malformado devolve 400 sem
+	// chegar aos handlers nem à base de dados. Isenção: :papel (enum de negócio).
 	srv := server.NovoComRotas(cfg, logger, metricas, verificacoes,
-		[]gin.HandlerFunc{segurancaMW}, registarRotas)
+		[]gin.HandlerFunc{segurancaMW, adhttp.ValidarUUIDs("papel")}, registarRotas)
 	return srv.Iniciar(ctx)
 }
 

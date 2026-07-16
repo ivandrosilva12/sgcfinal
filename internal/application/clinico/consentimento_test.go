@@ -2,6 +2,7 @@ package clinico_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	app "github.com/ivandrosilva12/sgcfinal/internal/application/clinico"
@@ -45,6 +46,82 @@ func TestRegistarConsentimento_Sucesso(t *testing.T) {
 	}
 }
 
+func TestRegistarConsentimento_DoenteNaoEncontrado(t *testing.T) {
+	repoC := novoFakeConsentimentos()
+	repoD := novoFakeRepo()
+	uc := app.NovoCasoRegistarConsentimento(repoC, repoD, &fakeAuditor{})
+
+	_, err := uc.Executar(context.Background(), "actor-1", app.DadosNovoConsentimento{
+		DoenteID: "inexistente", Finalidade: "TRATAMENTO", Concedido: true,
+	})
+	if erros.CategoriaDe(err) != erros.CategoriaNaoEncontrado {
+		t.Fatalf("esperava NaoEncontrado, obtive %v", err)
+	}
+}
+
+func TestRegistarConsentimento_FinalidadeInvalida(t *testing.T) {
+	repoC := novoFakeConsentimentos()
+	repoD := novoFakeRepo()
+	repoD.porID["doente-1"] = novoDoenteValido(t)
+	uc := app.NovoCasoRegistarConsentimento(repoC, repoD, &fakeAuditor{})
+
+	_, err := uc.Executar(context.Background(), "actor-1", app.DadosNovoConsentimento{
+		DoenteID: "doente-1", Finalidade: "DESCONHECIDA", Concedido: true,
+	})
+	if erros.CategoriaDe(err) != erros.CategoriaValidacao {
+		t.Fatalf("finalidade inválida devia falhar com Validacao, obtive %v", err)
+	}
+}
+
+func TestRegistarConsentimento_GuardarFalha(t *testing.T) {
+	repoC := novoFakeConsentimentos()
+	repoD := novoFakeRepo()
+	repoD.porID["doente-1"] = novoDoenteValido(t)
+	repoC.guardarErr = errSimulado
+	uc := app.NovoCasoRegistarConsentimento(repoC, repoD, &fakeAuditor{})
+
+	_, err := uc.Executar(context.Background(), "actor-1", app.DadosNovoConsentimento{
+		DoenteID: "doente-1", Finalidade: "TRATAMENTO", Concedido: true,
+	})
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro de Guardar, obtive %v", err)
+	}
+}
+
+func TestRegistarConsentimento_AuditorFalha(t *testing.T) {
+	repoC := novoFakeConsentimentos()
+	repoD := novoFakeRepo()
+	repoD.porID["doente-1"] = novoDoenteValido(t)
+	aud := &fakeAuditor{err: errSimulado}
+	uc := app.NovoCasoRegistarConsentimento(repoC, repoD, aud)
+
+	_, err := uc.Executar(context.Background(), "actor-1", app.DadosNovoConsentimento{
+		DoenteID: "doente-1", Finalidade: "TRATAMENTO", Concedido: true,
+	})
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro do auditor, obtive %v", err)
+	}
+	if len(aud.registos) != 0 {
+		t.Fatalf("auditor falhado não devia ter registos: %+v", aud.registos)
+	}
+}
+
+func TestRegistarConsentimento_ReleituraFinalFalha(t *testing.T) {
+	repoC := novoFakeConsentimentos()
+	repoD := novoFakeRepo()
+	repoD.porID["doente-1"] = novoDoenteValido(t)
+	repoC.obterErr = errSimulado
+	repoC.obterErrNaChamada = 1 // o registo não lê consentimentos antes de guardar: a única ObterPorID é a releitura final.
+	uc := app.NovoCasoRegistarConsentimento(repoC, repoD, &fakeAuditor{})
+
+	_, err := uc.Executar(context.Background(), "actor-1", app.DadosNovoConsentimento{
+		DoenteID: "doente-1", Finalidade: "TRATAMENTO", Concedido: true,
+	})
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro da releitura final, obtive %v", err)
+	}
+}
+
 func TestRevogarConsentimento(t *testing.T) {
 	repoC := novoFakeConsentimentos()
 	c, _ := clinico.NovoConsentimento("doente-1", clinico.FinalidadeTratamento, true, "", nowUTC())
@@ -61,6 +138,69 @@ func TestRevogarConsentimento(t *testing.T) {
 	}
 	if len(aud.registos) != 1 || aud.registos[0].Accao != "clinico.consentimento.revogado" {
 		t.Fatalf("esperada auditoria clinico.consentimento.revogado, veio %v", aud.registos)
+	}
+}
+
+func TestRevogarConsentimento_NaoEncontrado(t *testing.T) {
+	uc := app.NovoCasoRevogarConsentimento(novoFakeConsentimentos(), &fakeAuditor{})
+	_, err := uc.Executar(context.Background(), "actor-1", "inexistente")
+	if erros.CategoriaDe(err) != erros.CategoriaNaoEncontrado {
+		t.Fatalf("esperava NaoEncontrado, obtive %v", err)
+	}
+}
+
+func TestRevogarConsentimento_JaRevogado(t *testing.T) {
+	repoC := novoFakeConsentimentos()
+	c, _ := clinico.NovoConsentimento("doente-1", clinico.FinalidadeTratamento, true, "", nowUTC())
+	id, _ := repoC.Guardar(context.Background(), c)
+	aud := &fakeAuditor{}
+	uc := app.NovoCasoRevogarConsentimento(repoC, aud)
+	if _, err := uc.Executar(context.Background(), "actor-1", id); err != nil {
+		t.Fatalf("revogar devia funcionar: %v", err)
+	}
+	_, err := uc.Executar(context.Background(), "actor-1", id)
+	if erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Fatalf("revogar um consentimento já revogado devia falhar com Conflito, obtive %v", err)
+	}
+}
+
+func TestRevogarConsentimento_GuardarFalha(t *testing.T) {
+	repoC := novoFakeConsentimentos()
+	c, _ := clinico.NovoConsentimento("doente-1", clinico.FinalidadeTratamento, true, "", nowUTC())
+	id, _ := repoC.Guardar(context.Background(), c)
+	repoC.guardarErr = errSimulado
+	uc := app.NovoCasoRevogarConsentimento(repoC, &fakeAuditor{})
+	_, err := uc.Executar(context.Background(), "actor-1", id)
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro de Guardar, obtive %v", err)
+	}
+}
+
+func TestRevogarConsentimento_AuditorFalha(t *testing.T) {
+	repoC := novoFakeConsentimentos()
+	c, _ := clinico.NovoConsentimento("doente-1", clinico.FinalidadeTratamento, true, "", nowUTC())
+	id, _ := repoC.Guardar(context.Background(), c)
+	aud := &fakeAuditor{err: errSimulado}
+	uc := app.NovoCasoRevogarConsentimento(repoC, aud)
+	_, err := uc.Executar(context.Background(), "actor-1", id)
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro do auditor, obtive %v", err)
+	}
+	if len(aud.registos) != 0 {
+		t.Fatalf("auditor falhado não devia ter registos: %+v", aud.registos)
+	}
+}
+
+func TestRevogarConsentimento_ReleituraFinalFalha(t *testing.T) {
+	repoC := novoFakeConsentimentos()
+	c, _ := clinico.NovoConsentimento("doente-1", clinico.FinalidadeTratamento, true, "", nowUTC())
+	id, _ := repoC.Guardar(context.Background(), c)
+	repoC.obterErr = errSimulado
+	repoC.obterErrNaChamada = 2
+	uc := app.NovoCasoRevogarConsentimento(repoC, &fakeAuditor{})
+	_, err := uc.Executar(context.Background(), "actor-1", id)
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro da releitura final, obtive %v", err)
 	}
 }
 

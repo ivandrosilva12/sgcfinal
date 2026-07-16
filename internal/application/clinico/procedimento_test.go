@@ -2,6 +2,7 @@ package clinico_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -82,6 +83,146 @@ func TestAgendarProcedimento_CatalogoInactivo(t *testing.T) {
 	}
 }
 
+func TestAgendarProcedimento_EpisodioNaoEncontrado(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	uc := app.NovoCasoAgendarProcedimento(novoFakeProcedimentos(), repoE, repoC, novoFakeCatalogo(), &fakeAuditor{})
+
+	_, err := uc.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "inexistente", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: consID,
+	})
+	if erros.CategoriaDe(err) != erros.CategoriaNaoEncontrado {
+		t.Fatalf("esperava NaoEncontrado, obtive %v", err)
+	}
+}
+
+func TestAgendarProcedimento_EpisodioNaoAberto(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	fim := nowUTC().Add(time.Hour)
+	repoE.porID["ep-1"] = clinico.ReconstruirEpisodio(clinico.SnapshotEpisodio{
+		ID: "ep-1", DoenteID: "doente-1", Tipo: clinico.EpisodioCirurgiaAmbulatoria,
+		EspecialidadeID: "esp-1", MedicoID: "med-1", Inicio: nowUTC(), Fim: &fim,
+		Estado: clinico.EstadoEpisodioFechado,
+	})
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	uc := app.NovoCasoAgendarProcedimento(novoFakeProcedimentos(), repoE, repoC, novoFakeCatalogo(), &fakeAuditor{})
+
+	_, err := uc.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: consID,
+	})
+	if err == nil || erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Fatalf("agendar num episódio fechado devia falhar com Conflito, veio %v", err)
+	}
+}
+
+func TestAgendarProcedimento_CatalogoNaoEncontrado(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	uc := app.NovoCasoAgendarProcedimento(novoFakeProcedimentos(), repoE, repoC, novoFakeCatalogo(), &fakeAuditor{})
+
+	_, err := uc.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "INEXISTENTE", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: consID,
+	})
+	if erros.CategoriaDe(err) != erros.CategoriaNaoEncontrado {
+		t.Fatalf("esperava NaoEncontrado, obtive %v", err)
+	}
+}
+
+func TestAgendarProcedimento_ConsentimentoNaoEncontrado(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
+	repoC := novoFakeConsentimentos()
+	uc := app.NovoCasoAgendarProcedimento(novoFakeProcedimentos(), repoE, repoC, novoFakeCatalogo(), &fakeAuditor{})
+
+	_, err := uc.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: "inexistente",
+	})
+	if erros.CategoriaDe(err) != erros.CategoriaNaoEncontrado {
+		t.Fatalf("esperava NaoEncontrado, obtive %v", err)
+	}
+}
+
+func TestAgendarProcedimento_AnestesiaInvalida(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	uc := app.NovoCasoAgendarProcedimento(novoFakeProcedimentos(), repoE, repoC, novoFakeCatalogo(), &fakeAuditor{})
+
+	_, err := uc.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "DESCONHECIDA", ConsentimentoID: consID,
+	})
+	if erros.CategoriaDe(err) != erros.CategoriaValidacao {
+		t.Fatalf("anestesia inválida devia falhar com Validacao, obtive %v", err)
+	}
+}
+
+func TestAgendarProcedimento_GuardarFalha(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	repoP := novoFakeProcedimentos()
+	repoP.guardarErr = errSimulado
+	uc := app.NovoCasoAgendarProcedimento(repoP, repoE, repoC, novoFakeCatalogo(), &fakeAuditor{})
+
+	_, err := uc.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: consID,
+	})
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro de Guardar, obtive %v", err)
+	}
+}
+
+func TestAgendarProcedimento_AuditorFalha(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	aud := &fakeAuditor{err: errSimulado}
+	uc := app.NovoCasoAgendarProcedimento(novoFakeProcedimentos(), repoE, repoC, novoFakeCatalogo(), aud)
+
+	_, err := uc.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: consID,
+	})
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro do auditor, obtive %v", err)
+	}
+	if len(aud.registos) != 0 {
+		t.Fatalf("auditor falhado não devia ter registos: %+v", aud.registos)
+	}
+}
+
+func TestAgendarProcedimento_ReleituraFinalFalha(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	repoP := novoFakeProcedimentos()
+	repoP.obterErr = errSimulado
+	repoP.obterErrNaChamada = 1 // o agendamento não lê procedimentos antes de guardar: a única ObterPorID é a releitura final.
+	uc := app.NovoCasoAgendarProcedimento(repoP, repoE, repoC, novoFakeCatalogo(), &fakeAuditor{})
+
+	_, err := uc.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: consID,
+	})
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro da releitura final, obtive %v", err)
+	}
+}
+
 func TestAgendarProcedimento_RequerAnestesistaSemAnestesista(t *testing.T) {
 	repoE := novoFakeRepoEpisodios()
 	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
@@ -141,6 +282,389 @@ func TestProcedimento_CicloCompleto(t *testing.T) {
 		if aud.registos[i].Accao != a {
 			t.Fatalf("auditoria esperada %v, veio %v", esperadas, aud.registos)
 		}
+	}
+}
+
+func TestIniciarProcedimento_ProcedimentoNaoEncontrado(t *testing.T) {
+	uc := app.NovoCasoIniciarProcedimento(novoFakeProcedimentos(), novoFakeRepoEpisodios(), novoFakeConsentimentos(), &fakeAuditor{})
+	_, err := uc.Executar(context.Background(), "actor-1", "inexistente")
+	if erros.CategoriaDe(err) != erros.CategoriaNaoEncontrado {
+		t.Fatalf("esperava NaoEncontrado, obtive %v", err)
+	}
+}
+
+func TestIniciarProcedimento_ConsentimentoNaoEncontrado(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	repoP := novoFakeProcedimentos()
+	aud := &fakeAuditor{}
+	agendar := app.NovoCasoAgendarProcedimento(repoP, repoE, repoC, novoFakeCatalogo(), aud)
+	det, err := agendar.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: consID,
+	})
+	if err != nil {
+		t.Fatalf("agendar devia funcionar: %v", err)
+	}
+	// O consentimento desaparece do repositório (ex.: apagado por engano) antes do início.
+	delete(repoC.porID, consID)
+
+	iniciar := app.NovoCasoIniciarProcedimento(repoP, repoE, repoC, aud)
+	_, err = iniciar.Executar(context.Background(), "actor-1", det.ID)
+	if erros.CategoriaDe(err) != erros.CategoriaNaoEncontrado {
+		t.Fatalf("esperava NaoEncontrado, obtive %v", err)
+	}
+}
+
+func TestIniciarProcedimento_EpisodioNaoEncontrado(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	repoP := novoFakeProcedimentos()
+	aud := &fakeAuditor{}
+	agendar := app.NovoCasoAgendarProcedimento(repoP, repoE, repoC, novoFakeCatalogo(), aud)
+	det, err := agendar.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: consID,
+	})
+	if err != nil {
+		t.Fatalf("agendar devia funcionar: %v", err)
+	}
+	delete(repoE.porID, "ep-1")
+
+	iniciar := app.NovoCasoIniciarProcedimento(repoP, repoE, repoC, aud)
+	_, err = iniciar.Executar(context.Background(), "actor-1", det.ID)
+	if erros.CategoriaDe(err) != erros.CategoriaNaoEncontrado {
+		t.Fatalf("esperava NaoEncontrado, obtive %v", err)
+	}
+}
+
+func TestIniciarProcedimento_JaEmCurso(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	repoP := novoFakeProcedimentos()
+	aud := &fakeAuditor{}
+	agendar := app.NovoCasoAgendarProcedimento(repoP, repoE, repoC, novoFakeCatalogo(), aud)
+	det, err := agendar.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: consID,
+	})
+	if err != nil {
+		t.Fatalf("agendar devia funcionar: %v", err)
+	}
+	iniciar := app.NovoCasoIniciarProcedimento(repoP, repoE, repoC, aud)
+	if _, err := iniciar.Executar(context.Background(), "actor-1", det.ID); err != nil {
+		t.Fatalf("iniciar devia funcionar: %v", err)
+	}
+	_, err = iniciar.Executar(context.Background(), "actor-1", det.ID)
+	if erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Fatalf("iniciar duas vezes devia falhar com Conflito, obtive %v", err)
+	}
+}
+
+func TestIniciarProcedimento_GuardarFalha(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	repoP := novoFakeProcedimentos()
+	aud := &fakeAuditor{}
+	agendar := app.NovoCasoAgendarProcedimento(repoP, repoE, repoC, novoFakeCatalogo(), aud)
+	det, err := agendar.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: consID,
+	})
+	if err != nil {
+		t.Fatalf("agendar devia funcionar: %v", err)
+	}
+	repoP.guardarErr = errSimulado
+	iniciar := app.NovoCasoIniciarProcedimento(repoP, repoE, repoC, aud)
+	_, err = iniciar.Executar(context.Background(), "actor-1", det.ID)
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro de Guardar, obtive %v", err)
+	}
+}
+
+func TestIniciarProcedimento_AuditorFalha(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	repoP := novoFakeProcedimentos()
+	agendar := app.NovoCasoAgendarProcedimento(repoP, repoE, repoC, novoFakeCatalogo(), &fakeAuditor{})
+	det, err := agendar.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: consID,
+	})
+	if err != nil {
+		t.Fatalf("agendar devia funcionar: %v", err)
+	}
+	aud := &fakeAuditor{err: errSimulado}
+	iniciar := app.NovoCasoIniciarProcedimento(repoP, repoE, repoC, aud)
+	_, err = iniciar.Executar(context.Background(), "actor-1", det.ID)
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro do auditor, obtive %v", err)
+	}
+	if len(aud.registos) != 0 {
+		t.Fatalf("auditor falhado não devia ter registos: %+v", aud.registos)
+	}
+}
+
+func TestIniciarProcedimento_ReleituraFinalFalha(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	repoP := novoFakeProcedimentos()
+	agendar := app.NovoCasoAgendarProcedimento(repoP, repoE, repoC, novoFakeCatalogo(), &fakeAuditor{})
+	det, err := agendar.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: consID,
+	})
+	if err != nil {
+		t.Fatalf("agendar devia funcionar: %v", err)
+	}
+	repoP.obterChamadas = 0 // reinicia a contagem: o agendamento já fez uma releitura final.
+	repoP.obterErr = errSimulado
+	repoP.obterErrNaChamada = 2
+	iniciar := app.NovoCasoIniciarProcedimento(repoP, repoE, repoC, &fakeAuditor{})
+	_, err = iniciar.Executar(context.Background(), "actor-1", det.ID)
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro da releitura final, obtive %v", err)
+	}
+}
+
+func TestConcluirProcedimento_NaoEncontrado(t *testing.T) {
+	uc := app.NovoCasoConcluirProcedimento(novoFakeProcedimentos(), &fakeAuditor{})
+	_, err := uc.Executar(context.Background(), "actor-1", "inexistente", app.DadosConcluirProcedimento{})
+	if erros.CategoriaDe(err) != erros.CategoriaNaoEncontrado {
+		t.Fatalf("esperava NaoEncontrado, obtive %v", err)
+	}
+}
+
+func TestConcluirProcedimento_SemIniciar(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	repoP := novoFakeProcedimentos()
+	aud := &fakeAuditor{}
+	agendar := app.NovoCasoAgendarProcedimento(repoP, repoE, repoC, novoFakeCatalogo(), aud)
+	det, err := agendar.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: consID,
+	})
+	if err != nil {
+		t.Fatalf("agendar devia funcionar: %v", err)
+	}
+	// Ainda AGENDADO — nunca foi iniciado.
+	concluir := app.NovoCasoConcluirProcedimento(repoP, aud)
+	_, err = concluir.Executar(context.Background(), "actor-1", det.ID, app.DadosConcluirProcedimento{})
+	if erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Fatalf("concluir um procedimento agendado (nunca iniciado) devia falhar com Conflito, obtive %v", err)
+	}
+}
+
+func TestConcluirProcedimento_GuardarFalha(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	repoP := novoFakeProcedimentos()
+	aud := &fakeAuditor{}
+	agendar := app.NovoCasoAgendarProcedimento(repoP, repoE, repoC, novoFakeCatalogo(), aud)
+	det, err := agendar.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: consID,
+	})
+	if err != nil {
+		t.Fatalf("agendar devia funcionar: %v", err)
+	}
+	iniciar := app.NovoCasoIniciarProcedimento(repoP, repoE, repoC, aud)
+	if _, err := iniciar.Executar(context.Background(), "actor-1", det.ID); err != nil {
+		t.Fatalf("iniciar devia funcionar: %v", err)
+	}
+	repoP.guardarErr = errSimulado
+	concluir := app.NovoCasoConcluirProcedimento(repoP, aud)
+	_, err = concluir.Executar(context.Background(), "actor-1", det.ID, app.DadosConcluirProcedimento{})
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro de Guardar, obtive %v", err)
+	}
+}
+
+func TestConcluirProcedimento_AuditorFalha(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	repoP := novoFakeProcedimentos()
+	agendar := app.NovoCasoAgendarProcedimento(repoP, repoE, repoC, novoFakeCatalogo(), &fakeAuditor{})
+	det, err := agendar.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: consID,
+	})
+	if err != nil {
+		t.Fatalf("agendar devia funcionar: %v", err)
+	}
+	iniciar := app.NovoCasoIniciarProcedimento(repoP, repoE, repoC, &fakeAuditor{})
+	if _, err := iniciar.Executar(context.Background(), "actor-1", det.ID); err != nil {
+		t.Fatalf("iniciar devia funcionar: %v", err)
+	}
+	aud := &fakeAuditor{err: errSimulado}
+	concluir := app.NovoCasoConcluirProcedimento(repoP, aud)
+	_, err = concluir.Executar(context.Background(), "actor-1", det.ID, app.DadosConcluirProcedimento{})
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro do auditor, obtive %v", err)
+	}
+	if len(aud.registos) != 0 {
+		t.Fatalf("auditor falhado não devia ter registos: %+v", aud.registos)
+	}
+}
+
+func TestConcluirProcedimento_ReleituraFinalFalha(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	repoP := novoFakeProcedimentos()
+	agendar := app.NovoCasoAgendarProcedimento(repoP, repoE, repoC, novoFakeCatalogo(), &fakeAuditor{})
+	det, err := agendar.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: consID,
+	})
+	if err != nil {
+		t.Fatalf("agendar devia funcionar: %v", err)
+	}
+	iniciar := app.NovoCasoIniciarProcedimento(repoP, repoE, repoC, &fakeAuditor{})
+	if _, err := iniciar.Executar(context.Background(), "actor-1", det.ID); err != nil {
+		t.Fatalf("iniciar devia funcionar: %v", err)
+	}
+	repoP.obterChamadas = 0 // reinicia a contagem: agendar+iniciar já fizeram releituras.
+	repoP.obterErr = errSimulado
+	repoP.obterErrNaChamada = 2
+	concluir := app.NovoCasoConcluirProcedimento(repoP, &fakeAuditor{})
+	_, err = concluir.Executar(context.Background(), "actor-1", det.ID, app.DadosConcluirProcedimento{})
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro da releitura final, obtive %v", err)
+	}
+}
+
+func TestCancelarProcedimento_NaoEncontrado(t *testing.T) {
+	uc := app.NovoCasoCancelarProcedimento(novoFakeProcedimentos(), &fakeAuditor{})
+	_, err := uc.Executar(context.Background(), "actor-1", "inexistente", "motivo")
+	if erros.CategoriaDe(err) != erros.CategoriaNaoEncontrado {
+		t.Fatalf("esperava NaoEncontrado, obtive %v", err)
+	}
+}
+
+func TestCancelarProcedimento_AindaAgendado(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	repoP := novoFakeProcedimentos()
+	aud := &fakeAuditor{}
+	agendar := app.NovoCasoAgendarProcedimento(repoP, repoE, repoC, novoFakeCatalogo(), aud)
+	det, err := agendar.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: consID,
+	})
+	if err != nil {
+		t.Fatalf("agendar devia funcionar: %v", err)
+	}
+	cancelar := app.NovoCasoCancelarProcedimento(repoP, aud)
+	_, err = cancelar.Executar(context.Background(), "actor-1", det.ID, "motivo")
+	if erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Fatalf("cancelar um procedimento agendado (nunca iniciado) devia falhar com Conflito, obtive %v", err)
+	}
+}
+
+func TestCancelarProcedimento_GuardarFalha(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	repoP := novoFakeProcedimentos()
+	aud := &fakeAuditor{}
+	agendar := app.NovoCasoAgendarProcedimento(repoP, repoE, repoC, novoFakeCatalogo(), aud)
+	det, err := agendar.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: consID,
+	})
+	if err != nil {
+		t.Fatalf("agendar devia funcionar: %v", err)
+	}
+	iniciar := app.NovoCasoIniciarProcedimento(repoP, repoE, repoC, aud)
+	if _, err := iniciar.Executar(context.Background(), "actor-1", det.ID); err != nil {
+		t.Fatalf("iniciar devia funcionar: %v", err)
+	}
+	repoP.guardarErr = errSimulado
+	cancelar := app.NovoCasoCancelarProcedimento(repoP, aud)
+	_, err = cancelar.Executar(context.Background(), "actor-1", det.ID, "motivo")
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro de Guardar, obtive %v", err)
+	}
+}
+
+func TestCancelarProcedimento_AuditorFalha(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	repoP := novoFakeProcedimentos()
+	agendar := app.NovoCasoAgendarProcedimento(repoP, repoE, repoC, novoFakeCatalogo(), &fakeAuditor{})
+	det, err := agendar.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: consID,
+	})
+	if err != nil {
+		t.Fatalf("agendar devia funcionar: %v", err)
+	}
+	iniciar := app.NovoCasoIniciarProcedimento(repoP, repoE, repoC, &fakeAuditor{})
+	if _, err := iniciar.Executar(context.Background(), "actor-1", det.ID); err != nil {
+		t.Fatalf("iniciar devia funcionar: %v", err)
+	}
+	aud := &fakeAuditor{err: errSimulado}
+	cancelar := app.NovoCasoCancelarProcedimento(repoP, aud)
+	_, err = cancelar.Executar(context.Background(), "actor-1", det.ID, "motivo")
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro do auditor, obtive %v", err)
+	}
+	if len(aud.registos) != 0 {
+		t.Fatalf("auditor falhado não devia ter registos: %+v", aud.registos)
+	}
+}
+
+func TestCancelarProcedimento_ReleituraFinalFalha(t *testing.T) {
+	repoE := novoFakeRepoEpisodios()
+	repoE.porID["ep-1"] = episodioCirurgico("doente-1")
+	repoC := novoFakeConsentimentos()
+	consID := consentimentoGuardado(t, repoC, "doente-1")
+	repoP := novoFakeProcedimentos()
+	agendar := app.NovoCasoAgendarProcedimento(repoP, repoE, repoC, novoFakeCatalogo(), &fakeAuditor{})
+	det, err := agendar.Executar(context.Background(), "actor-1", app.DadosAgendarProcedimento{
+		EpisodioID: "ep-1", Codigo: "PRC001", Descricao: "Sutura", CirurgiaoID: "cir-1",
+		Anestesia: "NENHUMA", ConsentimentoID: consID,
+	})
+	if err != nil {
+		t.Fatalf("agendar devia funcionar: %v", err)
+	}
+	iniciar := app.NovoCasoIniciarProcedimento(repoP, repoE, repoC, &fakeAuditor{})
+	if _, err := iniciar.Executar(context.Background(), "actor-1", det.ID); err != nil {
+		t.Fatalf("iniciar devia funcionar: %v", err)
+	}
+	repoP.obterChamadas = 0 // reinicia a contagem: agendar+iniciar já fizeram releituras.
+	repoP.obterErr = errSimulado
+	repoP.obterErrNaChamada = 2
+	cancelar := app.NovoCasoCancelarProcedimento(repoP, &fakeAuditor{})
+	_, err = cancelar.Executar(context.Background(), "actor-1", det.ID, "motivo")
+	if !errors.Is(err, errSimulado) {
+		t.Fatalf("esperava a propagação do erro da releitura final, obtive %v", err)
 	}
 }
 
