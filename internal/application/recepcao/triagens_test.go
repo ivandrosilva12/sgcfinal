@@ -71,3 +71,91 @@ func TestObterTriagem_Inexistente_NaoEncontrado(t *testing.T) {
 		t.Fatalf("esperava CategoriaNaoEncontrado, veio %v", erros.CategoriaDe(err))
 	}
 }
+
+// fptr é um atalho para obter um ponteiro para um float64 literal nos testes.
+func fptr(v float64) *float64 { return &v }
+
+func TestRegistarTriagem_WalkIn_TransitaAtribuiMedicoECria(t *testing.T) {
+	chegadas := novoFakeChegadas(novoFakeMarcacoes())
+	triagens := novoFakeTriagens(chegadas)
+	// walk-in chamado (sem médico)
+	c, _ := dominio.NovaChegadaWalkIn("doe-1", "esp-1", inst("09:00"))
+	_ = c.Chamar(inst("09:05"))
+	cid, _ := chegadas.Guardar(context.Background(), c)
+
+	aud := &fakeAuditor{}
+	uc := app.NovoCasoRegistarTriagem(triagens, chegadas, aud)
+	uc.DefinirRelogio(agoraFixo("09:10"))
+	out, err := uc.Executar(context.Background(), "enf-1", cid, app.DadosTriagem{
+		Prioridade: "AMARELO", Temperatura: fptr(37.5), MedicoID: "med-9",
+	})
+	if err != nil {
+		t.Fatalf("não esperava erro: %v", err)
+	}
+	if out.EnfermeiroID != "enf-1" || out.Prioridade != "AMARELO" {
+		t.Fatalf("detalhe mal preenchido: %+v", out)
+	}
+	// a chegada ficou TRIADO com o médico atribuído
+	ch, _ := chegadas.ObterPorID(context.Background(), cid)
+	if ch.Estado() != dominio.ChegTriado || ch.MedicoID() != "med-9" {
+		t.Fatalf("chegada mal transitada: estado=%s medico=%s", ch.Estado(), ch.MedicoID())
+	}
+	if !aud.tem("recepcao.triagem.registada") {
+		t.Fatal("esperava auditoria recepcao.triagem.registada")
+	}
+}
+
+func TestRegistarTriagem_SinaisForaDeIntervalo_Validacao(t *testing.T) {
+	chegadas := novoFakeChegadas(novoFakeMarcacoes())
+	triagens := novoFakeTriagens(chegadas)
+	c, _ := dominio.NovaChegadaWalkIn("doe-1", "esp-1", inst("09:00"))
+	_ = c.Chamar(inst("09:05"))
+	cid, _ := chegadas.Guardar(context.Background(), c)
+
+	uc := app.NovoCasoRegistarTriagem(triagens, chegadas, &fakeAuditor{})
+	uc.DefinirRelogio(agoraFixo("09:10"))
+	_, err := uc.Executar(context.Background(), "enf-1", cid, app.DadosTriagem{
+		Prioridade: "VERDE", Temperatura: fptr(60), MedicoID: "med-9", // temperatura absurda
+	})
+	if erros.CategoriaDe(err) != erros.CategoriaValidacao {
+		t.Fatalf("esperava CategoriaValidacao, veio %v", erros.CategoriaDe(err))
+	}
+	// nada foi transitado
+	ch, _ := chegadas.ObterPorID(context.Background(), cid)
+	if ch.Estado() != dominio.ChegChamado {
+		t.Fatalf("a chegada não devia ter transitado, veio %s", ch.Estado())
+	}
+}
+
+func TestRegistarTriagem_ChegadaNaoChamada_Conflito(t *testing.T) {
+	chegadas := novoFakeChegadas(novoFakeMarcacoes())
+	triagens := novoFakeTriagens(chegadas)
+	c, _ := dominio.NovaChegadaWalkIn("doe-1", "esp-1", inst("09:00")) // AGUARDA, não chamada
+	cid, _ := chegadas.Guardar(context.Background(), c)
+
+	uc := app.NovoCasoRegistarTriagem(triagens, chegadas, &fakeAuditor{})
+	uc.DefinirRelogio(agoraFixo("09:10"))
+	_, err := uc.Executar(context.Background(), "enf-1", cid, app.DadosTriagem{Prioridade: "VERDE", MedicoID: "med-9"})
+	if erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Fatalf("esperava CategoriaConflito, veio %v", erros.CategoriaDe(err))
+	}
+}
+
+func TestRegistarTriagem_Duplicada_Conflito(t *testing.T) {
+	chegadas := novoFakeChegadas(novoFakeMarcacoes())
+	triagens := novoFakeTriagens(chegadas)
+	c, _ := dominio.NovaChegadaWalkIn("doe-1", "esp-1", inst("09:00"))
+	_ = c.Chamar(inst("09:05"))
+	cid, _ := chegadas.Guardar(context.Background(), c)
+
+	uc := app.NovoCasoRegistarTriagem(triagens, chegadas, &fakeAuditor{})
+	uc.DefinirRelogio(agoraFixo("09:10"))
+	if _, err := uc.Executar(context.Background(), "enf-1", cid, app.DadosTriagem{Prioridade: "VERDE", MedicoID: "med-9"}); err != nil {
+		t.Fatalf("primeira triagem não devia falhar: %v", err)
+	}
+	// segunda: a chegada já não está CHAMADO → Conflito
+	_, err := uc.Executar(context.Background(), "enf-1", cid, app.DadosTriagem{Prioridade: "VERDE"})
+	if erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Fatalf("triagem duplicada devia dar CategoriaConflito, veio %v", erros.CategoriaDe(err))
+	}
+}
