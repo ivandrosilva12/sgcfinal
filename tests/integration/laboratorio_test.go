@@ -32,9 +32,10 @@ import (
 
 // Ids fixos de pessoal (o BC Laboratório não valida o pessoal — é do Identidade).
 const (
-	medicoLabID  = "00000000-0000-4000-8000-0000000000f1"
-	tecnicoLabID = "00000000-0000-4000-8000-0000000000f2"
-	outroTecnico = "00000000-0000-4000-8000-0000000000f3"
+	medicoLabID      = "00000000-0000-4000-8000-0000000000f1"
+	tecnicoLabID     = "00000000-0000-4000-8000-0000000000f2"
+	outroTecnico     = "00000000-0000-4000-8000-0000000000f3"
+	patologistaLabID = "00000000-0000-4000-8000-0000000000f4"
 )
 
 // migrarLaboratorio aplica as migrações forward-only (idempotente) antes de cada
@@ -588,5 +589,107 @@ func TestLaboratorio_CatalogoRoundTripJSONB(t *testing.T) {
 	}
 	if criticosTexto != "[]" {
 		t.Fatalf("valores_criticos devia ser '[]', veio %q", criticosTexto)
+	}
+}
+
+// TestLaboratorio_ValidacaoECorreccao fecha o ciclo do Sprint 13 contra Postgres:
+// PROCESSADA → VALIDADA (com as colunas de validação persistidas), a CHECK de
+// segregação da BD a negar validador == submissor, e a correcção a arquivar o
+// original (CONCLUIDA) e criar um novo VALIDADA na mesma transacção.
+func TestLaboratorio_ValidacaoECorreccao(t *testing.T) {
+	pool, ctx := ligar(t)
+	migrarLaboratorio(t, pool, ctx)
+
+	repoAnalises := pgrepo.NovoRepositorioAnalises(pool)
+	repoRequisicoes := pgrepo.NovoRepositorioRequisicoes(pool)
+	repoResultados := pgrepo.NovoRepositorioResultados(pool)
+
+	hb, err := repoAnalises.ObterPorCodigo(ctx, "HB")
+	if err != nil {
+		t.Fatalf("obter HB: %v", err)
+	}
+	doenteID, episodioID := fixturaLaboratorio(t, pool, ctx, "12345678LA130", "Elsa Laboratório")
+	req, _ := dominio.NovaRequisicao(dominio.DadosNovaRequisicao{
+		EpisodioID: episodioID, DoenteID: doenteID, MedicoRequisitanteID: medicoLabID,
+		Prioridade: dominio.PrioridadeRotina, Itens: []dominio.ItemRequisicao{{CodigoAnalise: "HB"}},
+	})
+	res0, _ := dominio.NovoResultado("por-atribuir", "HB", hb.Unidade())
+	reqID, err := repoRequisicoes.Emitir(ctx, req, []*dominio.Resultado{res0})
+	if err != nil {
+		t.Fatalf("emitir: %v", err)
+	}
+	fila, _ := repoResultados.ListarFila(ctx, []dominio.EstadoResultado{dominio.ResPendente})
+	var id string
+	for _, r := range fila {
+		if r.RequisicaoID == reqID {
+			id = r.ID
+		}
+	}
+	if id == "" {
+		t.Fatal("não encontrei o resultado PENDENTE emitido")
+	}
+
+	// Colher e submeter (submissor = tecnicoLabID).
+	res, _ := repoResultados.ObterPorID(ctx, id)
+	_ = res.ColherAmostra(tecnicoLabID, time.Now())
+	_ = repoResultados.Transitar(ctx, res)
+	res, _ = repoResultados.ObterPorID(ctx, id)
+	_ = res.SubmeterPreliminar(tecnicoLabID, "2.5", "", time.Now())
+	if err := repoResultados.Transitar(ctx, res); err != nil {
+		t.Fatalf("submeter: %v", err)
+	}
+
+	// Segregação na BD: validar como o próprio submissor viola a CHECK. Constrói-se
+	// um agregado rehidratado em PROCESSADA e força-se validador == submissor por
+	// reconstrução (o domínio recusá-lo-ia, por isso vai-se pela reconstrução).
+	validada := time.Now()
+	autoValidado := dominio.ReconstruirResultado(dominio.SnapshotResultado{
+		ID: id, RequisicaoID: reqID, CodigoAnalise: "HB", Valor: "2.5", Unidade: hb.Unidade(),
+		Estado: dominio.ResValidada, TecnicoSubmissorID: tecnicoLabID,
+		PatologistaValidadorID: tecnicoLabID, ValidadaEm: &validada,
+	})
+	// EstadoAnterior de um agregado rehidratado é o próprio Estado; forçamos a
+	// partida em PROCESSADA reconstruindo de novo com o estado de leitura.
+	autoValidado = dominio.ReconstruirResultado(dominio.SnapshotResultado{
+		ID: id, RequisicaoID: reqID, CodigoAnalise: "HB", Valor: "2.5", Unidade: hb.Unidade(),
+		Estado: dominio.ResProcessada, TecnicoSubmissorID: tecnicoLabID,
+	})
+	_ = autoValidado.Validar(patologistaLabID, false, validada) // válido no domínio (pat != tec)
+	// mas agora sobrepomos o validador para == submissor, só para testar a CHECK:
+	sobreposto := autoValidado.Snapshot()
+	sobreposto.PatologistaValidadorID = tecnicoLabID
+	if err := repoResultados.Transitar(ctx, dominio.ReconstruirResultado(sobreposto)); err == nil {
+		t.Fatal("a CHECK de segregação da BD devia negar validador == submissor")
+	}
+
+	// Validação legítima (patologista distinto).
+	res, _ = repoResultados.ObterPorID(ctx, id)
+	if err := res.Validar(patologistaLabID, true, time.Now()); err != nil {
+		t.Fatalf("validar no domínio: %v", err)
+	}
+	if err := repoResultados.Transitar(ctx, res); err != nil {
+		t.Fatalf("persistir validação: %v", err)
+	}
+	relido, _ := repoResultados.ObterPorID(ctx, id)
+	if relido.Estado() != dominio.ResValidada {
+		t.Fatalf("esperava VALIDADA na BD, veio %s", relido.Estado())
+	}
+
+	// Correcção: novo VALIDADA + original CONCLUIDA, atómico.
+	novo, err := relido.Corrigir(patologistaLabID, "12.5", "releitura", false, time.Now())
+	if err != nil {
+		t.Fatalf("corrigir no domínio: %v", err)
+	}
+	novoID, err := repoResultados.Corrigir(ctx, novo, relido)
+	if err != nil {
+		t.Fatalf("persistir correcção: %v", err)
+	}
+	origFinal, _ := repoResultados.ObterPorID(ctx, id)
+	novoFinal, _ := repoResultados.ObterPorID(ctx, novoID)
+	if origFinal.Estado() != dominio.ResConcluida {
+		t.Fatalf("o original devia ficar CONCLUIDA, veio %s", origFinal.Estado())
+	}
+	if novoFinal.Estado() != dominio.ResValidada || novoFinal.Valor() != "12.5" {
+		t.Fatalf("o novo devia ser VALIDADA com 12.5, veio %s/%s", novoFinal.Estado(), novoFinal.Valor())
 	}
 }
