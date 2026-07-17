@@ -44,6 +44,9 @@ func (r *RepositorioEpisodios) Guardar(ctx context.Context, e *dominio.EpisodioC
 	if err := r.guardarDiagnosticos(ctx, tx, id, s); err != nil {
 		return "", err
 	}
+	if err := inserirEventos(ctx, tx, e.EventosPendentes()); err != nil {
+		return "", err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return "", fmt.Errorf("confirmar transacção: %w", err)
 	}
