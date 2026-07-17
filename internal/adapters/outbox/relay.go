@@ -83,6 +83,15 @@ func (r *Relay) ProcessarLote(ctx context.Context) (int, error) {
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback após commit é no-op
 
+	// Reporta o indicador de pendentes (gauge): o total de linhas por publicar
+	// neste momento, incluindo as bloqueadas por outros pollers concorrentes —
+	// reflecte o backlog real, não apenas o que este lote vai processar.
+	var pendentes int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM shared.outbox WHERE publicado_em IS NULL`).Scan(&pendentes); err != nil {
+		return 0, err
+	}
+	r.obs.Pendentes(pendentes)
+
 	const sel = `SELECT id, agregado, tipo_evento, payload
 		FROM shared.outbox WHERE publicado_em IS NULL
 		ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $1`
@@ -130,7 +139,8 @@ func (r *Relay) ProcessarLote(ctx context.Context) (int, error) {
 }
 
 // Correr executa ProcessarLote em ciclo, no intervalo dado, até ctx ser
-// cancelado (drena a passagem em curso antes de sair — shutdown gracioso).
+// cancelado — shutdown gracioso: o loop pára com o ctx e uma passagem em curso
+// é abortada em segurança (rollback), retomada no ciclo seguinte após reinício.
 func (r *Relay) Correr(ctx context.Context, intervalo time.Duration) {
 	t := time.NewTicker(intervalo)
 	defer t.Stop()

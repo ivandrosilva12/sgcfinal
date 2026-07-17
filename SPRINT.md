@@ -222,7 +222,8 @@
 - [x] Fecho de consulta transita a chegada `EM_CONSULTA → ATENDIDO`
       assincronamente; idempotente; episódio sem chegada é no-op.
 - [x] Migrações `shared/0002` e `recepcao/0005` forward-only aplicadas.
-- [x] Métricas de outbox expostas; shutdown gracioso drena o lote.
+- [x] Métricas de outbox expostas; shutdown gracioso: o loop pára com o ctx e um lote
+  em curso é abortado em segurança (rollback), retomado no arranque seguinte.
 - [x] Gates de cobertura verdes (85/75/60); `go-arch-lint` sem violações.
 - [x] ADR-038 registada; CLAUDE.md §6 e o índice de ADRs actualizados.
 
