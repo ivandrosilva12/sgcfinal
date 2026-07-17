@@ -45,6 +45,7 @@ func (c *CasoObterEHR) Executar(ctx context.Context, actor string, papeis []stri
 	if err != nil {
 		return EHR{}, err
 	}
+	// Enriquecimento antes da auditoria (deliberado): falha aqui devolve erro sem registar o acesso.
 	if err := preencherPrioridadesTriagem(ctx, c.triagem, papeis, pagina.Itens); err != nil {
 		return EHR{}, err
 	}

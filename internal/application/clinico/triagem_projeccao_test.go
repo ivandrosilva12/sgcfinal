@@ -171,6 +171,32 @@ func TestObterEHR_LotePreenchePrioridades(t *testing.T) {
 	}
 }
 
+func TestObterEHR_SemPapel_LeitorNaoInvocado(t *testing.T) {
+	repoDoentes := novoFakeRepo()
+	doenteID := registarNoRepo(t, repoDoentes)
+	repoEp := novoFakeRepoEpisodios()
+	repoEp.pagina = clinico.PaginaEpisodios{Itens: []clinico.ResumoEpisodio{
+		{ID: "ep-1"}, {ID: "ep-2"},
+	}, Total: 2}
+	leitor := &fakeLeitorTriagem{porEpisodio: map[string]appclinico.TriagemDoEpisodio{
+		"ep-2": {Prioridade: "LARANJA"},
+	}}
+	caso := appclinico.NovoCasoObterEHR(repoDoentes, repoEp, leitor, &fakeAuditor{})
+
+	ehr, err := caso.Executar(context.Background(), "farm-1", []string{"Farmaceutico"}, doenteID, appclinico.FiltroEpisodios{})
+	if err != nil {
+		t.Fatalf("ehr: %v", err)
+	}
+	for _, item := range ehr.Episodios.Itens {
+		if item.PrioridadeTriagem != "" {
+			t.Fatalf("sem papel autorizado: prioridade devia ficar vazia: %+v", ehr.Episodios.Itens)
+		}
+	}
+	if leitor.chamadas != 0 {
+		t.Fatalf("sem papel autorizado: o leitor de triagem não devia ser invocado no EHR, chamadas=%d", leitor.chamadas)
+	}
+}
+
 func TestObterEHR_FalhaDoLote_Propaga(t *testing.T) {
 	repoDoentes := novoFakeRepo()
 	doenteID := registarNoRepo(t, repoDoentes)
