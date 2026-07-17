@@ -947,32 +947,64 @@ git commit -m "feat(financeiro): migração 0001 — schema facturas + itens (AD
 
 **Files:**
 - Create: `internal/adapters/pgrepo/facturas_repo.go`
-- Test: `internal/adapters/pgrepo/facturas_repo_test.go`
+- Test: `tests/integration/facturas_test.go`
 
 **Interfaces:**
 - Consumes: `financeiro.RepositorioFacturas`, `financeiro.Factura`, `financeiro.SnapshotFactura`, `financeiro.ReconstruirFactura`.
 - Produces: `func NovoRepositorioFacturas(pool *pgxpool.Pool) *RepositorioFacturas`.
 
+**Nota de infra:** os testes de integração ficam em `tests/integration/`, com build tag `//go:build integration`, pacote `integration_test`, e usam o helper `ligar(t)` (lê `DATABASE_URL`; faz `t.Skip` se ausente). As migrações são aplicadas por `db.AplicarMigracoes(ctx, pool, migrations.FS, logger)` — padrão `migrarLaboratorio` em `laboratorio_test.go`. **Não** se cria teste em `internal/adapters/pgrepo/` (esse pacote só tem testes unitários puros). Corridos com: `go test -tags=integration ./tests/integration/...`. O container `sgc-postgres-1` está a correr; DSN: `postgres://sgc:sgc@localhost:5432/sgc?sslmode=disable`.
+
 - [ ] **Step 1: Escrever o teste de integração que falha**
 
-Criar `internal/adapters/pgrepo/facturas_repo_test.go` (segue o padrão de `helpers_test.go` do pacote — usar o mesmo helper de pool/migrações existente, `poolDeTeste(t)`):
+Criar `tests/integration/facturas_test.go` (segue o padrão de `laboratorio_test.go`: build tag, `ligar(t)`, helper de migração, limpeza registada):
 
 ```go
-package pgrepo_test
+//go:build integration
+
+// Teste de integração do BC Financeiro (ADR-039) contra a BD real. SKIP (nunca
+// FAIL) quando DATABASE_URL não está definido. O repositório pgx de facturas fica
+// fora do gate de cobertura unitário — é este ficheiro que o cobre, provando o
+// upsert transaccional, a reescrita de linhas e o total do read model.
+package integration_test
 
 import (
 	"context"
+	"log/slog"
+	"os"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ivandrosilva12/sgcfinal/internal/adapters/pgrepo"
 	fin "github.com/ivandrosilva12/sgcfinal/internal/domain/financeiro"
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/moeda"
+	"github.com/ivandrosilva12/sgcfinal/internal/platform/db"
+	"github.com/ivandrosilva12/sgcfinal/migrations"
 )
 
+// migrarFinanceiro aplica as migrações forward-only (idempotente); ligar(t) só
+// liga o pool. Modelada em migrarLaboratorio (laboratorio_test.go).
+func migrarFinanceiro(t *testing.T, pool *pgxpool.Pool, ctx context.Context) {
+	t.Helper()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	if err := db.AplicarMigracoes(ctx, pool, migrations.FS, logger); err != nil {
+		t.Fatalf("migrations: %v", err)
+	}
+}
+
+// limparFactura remove a factura e as suas linhas (ON DELETE CASCADE trata as linhas).
+func limparFactura(t *testing.T, pool *pgxpool.Pool, ctx context.Context, id string) {
+	t.Helper()
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM financeiro.facturas WHERE id=$1`, id)
+	})
+}
+
 func TestRepositorioFacturas_GuardarEObter(t *testing.T) {
-	pool := poolDeTeste(t) // helper existente em helpers_test.go
+	pool, ctx := ligar(t)
+	migrarFinanceiro(t, pool, ctx)
 	repo := pgrepo.NovoRepositorioFacturas(pool)
-	ctx := context.Background()
 
 	cli, _ := fin.NovoClienteSnapshot("Clínica Sol", "", "")
 	f, _ := fin.NovaFactura(cli, "11111111-1111-1111-1111-111111111111")
@@ -986,6 +1018,7 @@ func TestRepositorioFacturas_GuardarEObter(t *testing.T) {
 	if id == "" {
 		t.Fatal("id gerado em falta")
 	}
+	limparFactura(t, pool, ctx, id)
 
 	lida, err := repo.ObterPorID(ctx, id)
 	if err != nil {
@@ -1009,14 +1042,15 @@ func TestRepositorioFacturas_GuardarEObter(t *testing.T) {
 }
 
 func TestRepositorioFacturas_ReescreveItens(t *testing.T) {
-	pool := poolDeTeste(t)
+	pool, ctx := ligar(t)
+	migrarFinanceiro(t, pool, ctx)
 	repo := pgrepo.NovoRepositorioFacturas(pool)
-	ctx := context.Background()
 
 	cli, _ := fin.NovoClienteSnapshot("Sol", "", "")
 	f, _ := fin.NovaFactura(cli, "33333333-3333-3333-3333-333333333333")
 	_ = f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1, moeda.DeKwanzas(5000), fin.RegimeIsento)
 	id, _ := repo.Guardar(ctx, f)
+	limparFactura(t, pool, ctx, id)
 
 	lida, _ := repo.ObterPorID(ctx, id)
 	item0 := lida.Itens()[0].ID
@@ -1035,8 +1069,8 @@ func TestRepositorioFacturas_ReescreveItens(t *testing.T) {
 
 - [ ] **Step 2: Correr e confirmar que falha**
 
-Run: `go test ./internal/adapters/pgrepo/ -run TestRepositorioFacturas -v`
-Expected: FAIL — `undefined: pgrepo.NovoRepositorioFacturas`.
+Run: `DATABASE_URL='postgres://sgc:sgc@localhost:5432/sgc?sslmode=disable' go test -tags=integration ./tests/integration/ -run TestRepositorioFacturas -v`
+Expected: FAIL (compilação) — `undefined: pgrepo.NovoRepositorioFacturas`.
 
 - [ ] **Step 3: Implementar o repositório**
 
@@ -1204,13 +1238,13 @@ var _ fin.RepositorioFacturas = (*RepositorioFacturas)(nil)
 
 - [ ] **Step 4: Correr e confirmar que passa**
 
-Run: `go test ./internal/adapters/pgrepo/ -run TestRepositorioFacturas -race`
-Expected: PASS (requer PG de teste, como os restantes testes de integração do pacote).
+Run: `DATABASE_URL='postgres://sgc:sgc@localhost:5432/sgc?sslmode=disable' go test -tags=integration ./tests/integration/ -run TestRepositorioFacturas -v`
+Expected: PASS (o container `sgc-postgres-1` está a correr).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add internal/adapters/pgrepo/facturas_repo.go internal/adapters/pgrepo/facturas_repo_test.go
+git add internal/adapters/pgrepo/facturas_repo.go tests/integration/facturas_test.go
 git commit -m "feat(pgrepo): RepositorioFacturas — upsert transaccional + listagem (ADR-039)"
 ```
 
@@ -2034,7 +2068,10 @@ Expected: sem erros.
 - [ ] **Step 4: Suite completa com corrida de dados**
 
 Run: `go test ./... -race`
-Expected: PASS.
+Expected: PASS (testes não-integração; os de integração estão atrás do build tag).
+
+Run: `DATABASE_URL='postgres://sgc:sgc@localhost:5432/sgc?sslmode=disable' go test -tags=integration ./tests/integration/...`
+Expected: PASS (inclui `TestRepositorioFacturas_*`; requer `sgc-postgres-1`).
 
 - [ ] **Step 5: Verificação de comportamento (skill `verify`)**
 
