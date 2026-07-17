@@ -89,7 +89,11 @@ consulta. Sub-projectos: **Marcação** (ADR-032), **Check-in** (ADR-033) e **Tr
 consulta (Chegada TRIADO → Episódio no BC Clínico) foi entregue como **Integração
 Recepção→Clínico** (ADR-036): transacção única no adaptador de integração, estado
 EM_CONSULTA, só o médico atribuído. A triagem ficou visível no EHR (ADR-037):
-leitura ACL pela ponte episodio_id, filtrada por papel (minimização LPDP).
+leitura ACL pela ponte episodio_id, filtrada por papel (minimização LPDP). O
+mecanismo Outbox (ADR-038) ficou construído — relay in-process com `SKIP LOCKED`,
+escrita transaccional no repositório dono da tx, entrega at-least-once — com o
+primeiro consumidor real: `clinico.episodio.fechado` transita a chegada
+`EM_CONSULTA → ATENDIDO`, fechando o desfecho pós-consulta do percurso.
 
 **M2 — Clínico Core** (entregue; Sprints 7–11): BC Clínico (doente, episódio + EHR,
 cirurgia ambulatória com consentimento LPDP) e BC Farmácia (catálogo, receita, stock
@@ -136,5 +140,6 @@ confirmação humana**. Nunca improvisar decisão arquitectural ou de conformida
 `adrs/ADR-034-bc-recepcao-triagem.md`,
 `adrs/ADR-035-laboratorio-validacao-correccao.md`,
 `adrs/ADR-036-integracao-inicio-consulta.md`,
-`adrs/ADR-037-ehr-triagem.md`.
-Próximo ADR: **ADR-038**.
+`adrs/ADR-037-ehr-triagem.md`,
+`adrs/ADR-038-outbox.md`.
+Próximo ADR: **ADR-039**.

@@ -213,6 +213,19 @@
 - [x] Zero migrações; zero alterações ao BC Recepção; fonte única de verdade.
 - [x] Cobertura nos limiares; integração prova a junção real por episodio_id.
 
+## Critérios de saída — Outbox (ADR-038)
+
+- [x] `EpisodioClinico.Fechar` emite `EpisodioFechado`; `Guardar` persiste episódio
+      + evento na mesma tx (provado por rollback).
+- [x] Relay in-process arranca na Plataforma, processa em lote com `SKIP LOCKED`,
+      marca publicados e regista falhas em `tentativas`/`ultimo_erro`.
+- [x] Fecho de consulta transita a chegada `EM_CONSULTA → ATENDIDO`
+      assincronamente; idempotente; episódio sem chegada é no-op.
+- [x] Migrações `shared/0002` e `recepcao/0005` forward-only aplicadas.
+- [x] Métricas de outbox expostas; shutdown gracioso drena o lote.
+- [x] Gates de cobertura verdes (85/75/60); `go-arch-lint` sem violações.
+- [x] ADR-038 registada; CLAUDE.md §6 e o índice de ADRs actualizados.
+
 ## Critérios de saída M1
 
 - [x] Identidade Keycloak operacional (login, 11 papéis, MFA para papéis sensíveis — positivo e negativo). — Sprint 2/3/4
