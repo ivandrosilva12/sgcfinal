@@ -94,7 +94,35 @@ func NovoClienteSnapshot(nome, nif, morada string) (ClienteSnapshot, error) {
 	return ClienteSnapshot{Nome: nome, NIF: nif, Morada: strings.TrimSpace(morada)}, nil
 }
 
-var (
-	_ = time.Time{} // usado pelo agregado nas tasks seguintes
-	_ = moeda.AOA{} // usado pelo agregado nas tasks seguintes
-)
+// ItemFactura é uma linha de factura: entidade-filho do agregado Factura. Guarda
+// o snapshot (descrição e preço) da operação de origem — sem FK cross-context.
+type ItemFactura struct {
+	ID            string
+	Descricao     string
+	Tipo          TipoLinha
+	OperacaoID    string
+	Quantidade    int
+	PrecoUnitario moeda.AOA
+	RegimeIVA     RegimeIVA
+}
+
+// Subtotal é preço unitário × quantidade (antes de IVA).
+func (i ItemFactura) Subtotal() moeda.AOA {
+	return moeda.DeCentimos(i.PrecoUnitario.Centimos() * int64(i.Quantidade))
+}
+
+// ValorIVA é o IVA da linha, em aritmética inteira de cêntimos, arredondado
+// meia-acima. Linha isenta → 0.
+func (i ItemFactura) ValorIVA() moeda.AOA {
+	taxa := i.RegimeIVA.TaxaPercent()
+	if taxa == 0 {
+		return moeda.DeCentimos(0)
+	}
+	sub := i.Subtotal().Centimos()
+	return moeda.DeCentimos((sub*taxa + 50) / 100)
+}
+
+// Total é subtotal + IVA da linha.
+func (i ItemFactura) Total() moeda.AOA { return i.Subtotal().Somar(i.ValorIVA()) }
+
+var _ = time.Time{} // usado pelo agregado na Task 5
