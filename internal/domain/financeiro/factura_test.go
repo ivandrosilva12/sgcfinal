@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	fin "github.com/ivandrosilva12/sgcfinal/internal/domain/financeiro"
+	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/erros"
 )
 
 func TestTipoLinhaExigeOperacao(t *testing.T) {
@@ -43,7 +44,11 @@ func TestNovoClienteSnapshot(t *testing.T) {
 	if c.Nome != "Clínica Sol" || c.Morada != "Rua 1" {
 		t.Errorf("campos não normalizados: %+v", c)
 	}
-	if _, err := fin.NovoClienteSnapshot("X", "NIF-INVALIDO!!", ""); err == nil {
-		t.Error("NIF presente e inválido devia falhar")
+	_, err = fin.NovoClienteSnapshot("X", "NIF-INVALIDO!!", "")
+	if err == nil {
+		t.Fatal("NIF presente e inválido devia falhar")
+	}
+	if erros.CategoriaDe(err) != erros.CategoriaValidacao {
+		t.Errorf("categoria = %v; esperava Validacao", erros.CategoriaDe(err))
 	}
 }

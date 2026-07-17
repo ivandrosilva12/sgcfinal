@@ -87,7 +87,7 @@ func NovoClienteSnapshot(nome, nif, morada string) (ClienteSnapshot, error) {
 	if nif != "" {
 		n, err := identity.NovoNIF(nif)
 		if err != nil {
-			return ClienteSnapshot{}, err
+			return ClienteSnapshot{}, erros.Novo(erros.CategoriaValidacao, "NIF do cliente inválido")
 		}
 		nif = n.String()
 	}
