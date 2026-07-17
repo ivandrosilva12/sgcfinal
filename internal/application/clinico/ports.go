@@ -210,6 +210,7 @@ type DetalheEpisodio struct {
 	ActualizadoEm   time.Time           `json:"actualizado_em"`
 	FechadoEm       *time.Time          `json:"fechado_em,omitempty"`
 	FechadoPor      string              `json:"fechado_por,omitempty"`
+	Triagem         *TriagemDoEpisodio  `json:"triagem,omitempty"`
 }
 
 // EHR é a projecção de leitura do registo clínico: doente (com alergias e
@@ -242,6 +243,41 @@ type LeitorRecepcao interface {
 // estado e médico) numa única transacção. Devolve o id do episódio criado.
 type ConsumidorChegadas interface {
 	ConsumirEIniciar(ctx context.Context, chegadaID, medicoID string, episodio *dominio.EpisodioClinico) (string, error)
+}
+
+// SinaisVitaisDTO são os sinais vitais da triagem numa resposta clínica.
+// Ponteiro nil = não medido (como no VO da Recepção, sem o importar) — ADR-037.
+type SinaisVitaisDTO struct {
+	TensaoSistolica        *int     `json:"tensao_sistolica,omitempty"`
+	TensaoDiastolica       *int     `json:"tensao_diastolica,omitempty"`
+	FrequenciaCardiaca     *int     `json:"frequencia_cardiaca,omitempty"`
+	Temperatura            *float64 `json:"temperatura,omitempty"`
+	FrequenciaRespiratoria *int     `json:"frequencia_respiratoria,omitempty"`
+	SaturacaoO2            *int     `json:"saturacao_o2,omitempty"`
+	Dor                    *int     `json:"dor,omitempty"`
+	Glicemia               *int     `json:"glicemia,omitempty"`
+	Peso                   *float64 `json:"peso,omitempty"`
+}
+
+// TriagemDoEpisodio é o retrato da triagem que originou um episódio — DTO da
+// porta anti-corrupção, sem tipos do domínio Recepção (ADR-037).
+type TriagemDoEpisodio struct {
+	Prioridade   string          `json:"prioridade"`
+	SinaisVitais SinaisVitaisDTO `json:"sinais_vitais"`
+	Observacoes  string          `json:"observacoes,omitempty"`
+	EnfermeiroID string          `json:"enfermeiro_id"`
+	TriadaEm     time.Time       `json:"triada_em"`
+}
+
+// LeitorTriagem é a porta anti-corrupção para leitura da triagem no BC
+// Recepção (ADR-037). A junção faz-se pela ponte chegadas.episodio_id (ADR-036).
+type LeitorTriagem interface {
+	// TriagemDoEpisodio devolve a triagem que originou o episódio; ok=false se
+	// o episódio não nasceu da fila clínica (sem chegada associada).
+	TriagemDoEpisodio(ctx context.Context, episodioID string) (TriagemDoEpisodio, bool, error)
+	// PrioridadesDosEpisodios devolve a cor de Manchester por episódio (lote,
+	// para páginas de resumos); ids sem triagem ficam fora do mapa.
+	PrioridadesDosEpisodios(ctx context.Context, episodioIDs []string) (map[string]string, error)
 }
 
 // --- Consentimento (LPDP) ---

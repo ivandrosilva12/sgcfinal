@@ -105,8 +105,61 @@ WHERE id=$1 AND estado=$5 AND medico_id=$6::uuid`
 	return epID, nil
 }
 
+// TriagemDoEpisodio devolve a triagem que originou o episódio, pela ponte
+// chegadas.episodio_id (ADR-036/ADR-037). ok=false sem erro quando o episódio
+// não nasceu da fila clínica.
+func (a *IntegracaoInicioConsulta) TriagemDoEpisodio(ctx context.Context, episodioID string) (appclinico.TriagemDoEpisodio, bool, error) {
+	const q = `
+SELECT t.prioridade, t.tensao_sistolica, t.tensao_diastolica, t.frequencia_cardiaca,
+       t.temperatura, t.frequencia_respiratoria, t.saturacao_o2, t.dor, t.glicemia,
+       t.peso, COALESCE(t.observacoes,''), t.enfermeiro_id::text, t.triada_em
+FROM recepcao.chegadas c
+JOIN recepcao.triagens t ON t.chegada_id = c.id
+WHERE c.episodio_id = $1`
+	var tr appclinico.TriagemDoEpisodio
+	sv := &tr.SinaisVitais
+	err := a.pool.QueryRow(ctx, q, episodioID).Scan(&tr.Prioridade,
+		&sv.TensaoSistolica, &sv.TensaoDiastolica, &sv.FrequenciaCardiaca, &sv.Temperatura,
+		&sv.FrequenciaRespiratoria, &sv.SaturacaoO2, &sv.Dor, &sv.Glicemia, &sv.Peso,
+		&tr.Observacoes, &tr.EnfermeiroID, &tr.TriadaEm)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return appclinico.TriagemDoEpisodio{}, false, nil
+		}
+		return appclinico.TriagemDoEpisodio{}, false, fmt.Errorf("obter triagem do episódio: %w", err)
+	}
+	return tr, true, nil
+}
+
+// PrioridadesDosEpisodios devolve a cor de Manchester por episódio (lote).
+func (a *IntegracaoInicioConsulta) PrioridadesDosEpisodios(ctx context.Context, episodioIDs []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(episodioIDs) == 0 {
+		return out, nil
+	}
+	const q = `
+SELECT c.episodio_id::text, t.prioridade
+FROM recepcao.chegadas c
+JOIN recepcao.triagens t ON t.chegada_id = c.id
+WHERE c.episodio_id = ANY($1::uuid[])`
+	linhas, err := a.pool.Query(ctx, q, episodioIDs)
+	if err != nil {
+		return nil, fmt.Errorf("listar prioridades de triagem: %w", err)
+	}
+	defer linhas.Close()
+	for linhas.Next() {
+		var id, prioridade string
+		if err := linhas.Scan(&id, &prioridade); err != nil {
+			return nil, fmt.Errorf("ler prioridade de triagem: %w", err)
+		}
+		out[id] = prioridade
+	}
+	return out, linhas.Err()
+}
+
 // Garantias de conformidade com as portas.
 var (
 	_ appclinico.LeitorRecepcao     = (*IntegracaoInicioConsulta)(nil)
 	_ appclinico.ConsumidorChegadas = (*IntegracaoInicioConsulta)(nil)
+	_ appclinico.LeitorTriagem      = (*IntegracaoInicioConsulta)(nil)
 )
