@@ -14,6 +14,7 @@ import (
 	adhttp "github.com/ivandrosilva12/sgcfinal/internal/adapters/http"
 	"github.com/ivandrosilva12/sgcfinal/internal/adapters/keycloak"
 	adlaboratorio "github.com/ivandrosilva12/sgcfinal/internal/adapters/laboratorio"
+	"github.com/ivandrosilva12/sgcfinal/internal/adapters/outbox"
 	"github.com/ivandrosilva12/sgcfinal/internal/adapters/pgrepo"
 	adrecepcao "github.com/ivandrosilva12/sgcfinal/internal/adapters/recepcao"
 	adredis "github.com/ivandrosilva12/sgcfinal/internal/adapters/redis"
@@ -279,6 +280,14 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 	// chegar aos handlers nem à base de dados. Isenção: :papel (enum de negócio).
 	srv := server.NovoComRotas(cfg, logger, metricas, verificacoes,
 		[]gin.HandlerFunc{segurancaMW, adhttp.ValidarUUIDs("papel")}, registarRotas)
+
+	// Relay do Outbox (ADR-038): publica eventos de domínio inter-BC. Handlers
+	// registados por tipo; o loop pára com o ctx do shutdown gracioso.
+	relay := outbox.NovoRelay(pool, cfg.OutboxLote, metricas, logger)
+	posConsulta := pgrepo.NovaIntegracaoPosConsulta(pool)
+	relay.Registar("clinico.episodio.fechado", posConsulta.HandlerEpisodioFechado)
+	go relay.Correr(ctx, cfg.OutboxIntervalo)
+
 	return srv.Iniciar(ctx)
 }
 

@@ -32,6 +32,8 @@ type Config struct {
 	SMTPRemetente             string        // remetente dos emails (From)
 	SMSEndpoint               string        // endpoint HTTP do gateway SMS (vazio → notificador no-op)
 	SMSRemetente              string        // remetente (sender id) das mensagens SMS
+	OutboxIntervalo           time.Duration // intervalo entre passagens do relay do outbox (ADR-038)
+	OutboxLote                int           // máximo de eventos por passagem do relay
 }
 
 // erroConfig acumula erros de validação para reportar todos de uma vez.
@@ -67,6 +69,8 @@ func Carregar() (Config, error) {
 		SMTPRemetente:             valorOu("SMTP_FROM", "nao-responder@sgc.ao"),
 		SMSEndpoint:               os.Getenv("SMS_ENDPOINT"),
 		SMSRemetente:              valorOu("SMS_FROM", "SGC"),
+		OutboxIntervalo:           time.Duration(inteiroOu("OUTBOX_INTERVALO_MS", 2000)) * time.Millisecond,
+		OutboxLote:                inteiroOu("OUTBOX_LOTE", 100),
 	}
 
 	erro := &erroConfig{}
