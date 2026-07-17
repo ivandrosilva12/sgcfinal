@@ -21,11 +21,11 @@ type (
 	}
 	// ServicoObterEpisodio devolve o detalhe de um episódio.
 	ServicoObterEpisodio interface {
-		Executar(ctx context.Context, actor, id string) (appclinico.DetalheEpisodio, error)
+		Executar(ctx context.Context, actor string, papeis []string, id string) (appclinico.DetalheEpisodio, error)
 	}
 	// ServicoListarEpisodios lista os episódios de um doente.
 	ServicoListarEpisodios interface {
-		Executar(ctx context.Context, doenteID string, filtro appclinico.FiltroEpisodios) (appclinico.PaginaEpisodios, error)
+		Executar(ctx context.Context, doenteID string, papeis []string, filtro appclinico.FiltroEpisodios) (appclinico.PaginaEpisodios, error)
 	}
 	// ServicoActualizarEpisodio actualiza a nota/diagnósticos.
 	ServicoActualizarEpisodio interface {
@@ -41,7 +41,7 @@ type (
 	}
 	// ServicoObterEHR devolve a projecção EHR de um doente.
 	ServicoObterEHR interface {
-		Executar(ctx context.Context, actor, doenteID string, filtro appclinico.FiltroEpisodios) (appclinico.EHR, error)
+		Executar(ctx context.Context, actor string, papeis []string, doenteID string, filtro appclinico.FiltroEpisodios) (appclinico.EHR, error)
 	}
 )
 
@@ -94,6 +94,16 @@ func RegistarEpisodios(r gin.IRouter, h *EpisodiosHandler, protecao ...gin.Handl
 	ge.POST("/:eid/cancelar", soMedico, h.cancelarEpisodio)
 }
 
+// papeisDe converte os papéis da sessão para os literais esperados pela
+// aplicação (a Camada 2 não importa o domínio Identidade — ADR-037).
+func papeisDe(s dominio.Sessao) []string {
+	out := make([]string, 0, len(s.Papeis))
+	for _, p := range s.Papeis {
+		out = append(out, string(p))
+	}
+	return out
+}
+
 type corpoIniciarEpisodio struct {
 	Tipo            string  `json:"tipo"`
 	EspecialidadeID string  `json:"especialidade_id"`
@@ -134,7 +144,8 @@ func (h *EpisodiosHandler) listarEpisodios(c *gin.Context) {
 		Limite:       inteiroQuery(c, "limite"),
 		Deslocamento: inteiroQuery(c, "deslocamento"),
 	}
-	out, err := h.listar.Executar(c.Request.Context(), c.Param("id"), filtro)
+	actor, _ := SessaoDe(c)
+	out, err := h.listar.Executar(c.Request.Context(), c.Param("id"), papeisDe(actor), filtro)
 	if err != nil {
 		responderErro(c, err)
 		return
@@ -149,7 +160,7 @@ func (h *EpisodiosHandler) obterEHR(c *gin.Context) {
 		Limite:       inteiroQuery(c, "limite"),
 		Deslocamento: inteiroQuery(c, "deslocamento"),
 	}
-	out, err := h.ehr.Executar(c.Request.Context(), actor.Sujeito, c.Param("id"), filtro)
+	out, err := h.ehr.Executar(c.Request.Context(), actor.Sujeito, papeisDe(actor), c.Param("id"), filtro)
 	if err != nil {
 		responderErro(c, err)
 		return
@@ -159,7 +170,7 @@ func (h *EpisodiosHandler) obterEHR(c *gin.Context) {
 
 func (h *EpisodiosHandler) obterEpisodio(c *gin.Context) {
 	actor, _ := SessaoDe(c)
-	out, err := h.obter.Executar(c.Request.Context(), actor.Sujeito, c.Param("eid"))
+	out, err := h.obter.Executar(c.Request.Context(), actor.Sujeito, papeisDe(actor), c.Param("eid"))
 	if err != nil {
 		responderErro(c, err)
 		return

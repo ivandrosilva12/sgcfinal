@@ -109,14 +109,17 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 
 	// BC Clínico: episódios e EHR.
 	repoEpisodios := pgrepo.NovoRepositorioEpisodios(pool)
+	// ACL: a leitura de episódios/EHR usa o LeitorTriagem para incluir a
+	// triagem (Recepção) na projecção clínica (ADR-037).
+	integracaoConsulta := pgrepo.NovaIntegracaoInicioConsulta(pool)
 	handlerEpisodios := adhttp.NovoEpisodiosHandler(
 		appclinico.NovoCasoIniciarEpisodio(repoEpisodios, repoDoentes, repoAuditoria),
-		appclinico.NovoCasoObterEpisodio(repoEpisodios, repoAuditoria),
-		appclinico.NovoCasoListarEpisodios(repoEpisodios),
+		appclinico.NovoCasoObterEpisodio(repoEpisodios, integracaoConsulta, repoAuditoria),
+		appclinico.NovoCasoListarEpisodios(repoEpisodios, integracaoConsulta),
 		appclinico.NovoCasoActualizarEpisodio(repoEpisodios, repoAuditoria),
 		appclinico.NovoCasoFecharEpisodio(repoEpisodios, repoAuditoria),
 		appclinico.NovoCasoCancelarEpisodio(repoEpisodios, repoAuditoria),
-		appclinico.NovoCasoObterEHR(repoDoentes, repoEpisodios, repoAuditoria),
+		appclinico.NovoCasoObterEHR(repoDoentes, repoEpisodios, integracaoConsulta, repoAuditoria),
 	)
 
 	// BC Clínico: cirurgia ambulatória + consentimentos (LPDP).
@@ -234,8 +237,8 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 	)
 
 	// Integração Recepção→Clínico — início da consulta (ADR-036). O adaptador de
-	// integração implementa as duas portas (leitor + consumidor transaccional).
-	integracaoConsulta := pgrepo.NovaIntegracaoInicioConsulta(pool)
+	// integração implementa as duas portas (leitor + consumidor transaccional);
+	// `integracaoConsulta` já foi construído acima (junto de repoEpisodios).
 	handlerClinicoConsulta := adhttp.NovoClinicoConsultaHandler(
 		appclinico.NovoCasoIniciarConsulta(integracaoConsulta, integracaoConsulta,
 			repoDoentes, repoEpisodios, repoAuditoria),

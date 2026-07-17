@@ -25,20 +25,24 @@ func (f fakeIniciarEpisodio) Executar(_ context.Context, _ string, _ appclinico.
 }
 
 type fakeObterEpisodio struct {
-	out appclinico.DetalheEpisodio
-	err error
+	out    appclinico.DetalheEpisodio
+	err    error
+	papeis []string
 }
 
-func (f fakeObterEpisodio) Executar(_ context.Context, _, _ string) (appclinico.DetalheEpisodio, error) {
+func (f *fakeObterEpisodio) Executar(_ context.Context, _ string, papeis []string, _ string) (appclinico.DetalheEpisodio, error) {
+	f.papeis = papeis
 	return f.out, f.err
 }
 
 type fakeListarEpisodios struct {
-	out appclinico.PaginaEpisodios
-	err error
+	out    appclinico.PaginaEpisodios
+	err    error
+	papeis []string
 }
 
-func (f fakeListarEpisodios) Executar(_ context.Context, _ string, _ appclinico.FiltroEpisodios) (appclinico.PaginaEpisodios, error) {
+func (f *fakeListarEpisodios) Executar(_ context.Context, _ string, papeis []string, _ appclinico.FiltroEpisodios) (appclinico.PaginaEpisodios, error) {
+	f.papeis = papeis
 	return f.out, f.err
 }
 
@@ -70,25 +74,53 @@ func (f fakeCancelarEpisodio) Executar(_ context.Context, _, _, _ string) (appcl
 }
 
 type fakeObterEHR struct {
-	out appclinico.EHR
-	err error
+	out    appclinico.EHR
+	err    error
+	papeis []string
 }
 
-func (f fakeObterEHR) Executar(_ context.Context, _, _ string, _ appclinico.FiltroEpisodios) (appclinico.EHR, error) {
+func (f *fakeObterEHR) Executar(_ context.Context, _ string, papeis []string, _ string, _ appclinico.FiltroEpisodios) (appclinico.EHR, error) {
+	f.papeis = papeis
 	return f.out, f.err
 }
 
 func routerEpisodios(sessao dominio.Sessao) *gin.Engine {
+	return routerEpisodiosComFakes(sessao, &fakeObterEpisodio{out: appclinico.DetalheEpisodio{ID: "ep-1"}})
+}
+
+// routerEpisodiosComFakes constrói o router com o fake de ObterEpisodio
+// injectado (para os testes que precisam de inspeccionar os papéis
+// recebidos); os restantes casos de uso usam os fakes por omissão.
+func routerEpisodiosComFakes(sessao dominio.Sessao, obter *fakeObterEpisodio) *gin.Engine {
 	r := novoRouter()
 	r.Use(adhttp.RequestID())
 	h := adhttp.NovoEpisodiosHandler(
 		fakeIniciarEpisodio{out: appclinico.DetalheEpisodio{ID: "ep-1", Estado: "ABERTO"}},
-		fakeObterEpisodio{out: appclinico.DetalheEpisodio{ID: "ep-1"}},
-		fakeListarEpisodios{out: appclinico.PaginaEpisodios{Total: 0}},
+		obter,
+		&fakeListarEpisodios{out: appclinico.PaginaEpisodios{Total: 0}},
 		fakeActualizarEpisodio{out: appclinico.DetalheEpisodio{ID: "ep-1"}},
 		fakeFecharEpisodio{out: appclinico.DetalheEpisodio{ID: "ep-1", Estado: "FECHADO"}},
 		fakeCancelarEpisodio{out: appclinico.DetalheEpisodio{ID: "ep-1", Estado: "CANCELADO"}},
-		fakeObterEHR{out: appclinico.EHR{}},
+		&fakeObterEHR{out: appclinico.EHR{}},
+	)
+	adhttp.RegistarEpisodios(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+	return r
+}
+
+// routerEpisodiosComFakesEHR constrói o router com o fake de ObterEHR
+// injectado (para os testes que precisam de inspeccionar os papéis
+// recebidos); os restantes casos de uso usam os fakes por omissão.
+func routerEpisodiosComFakesEHR(sessao dominio.Sessao, ehr *fakeObterEHR) *gin.Engine {
+	r := novoRouter()
+	r.Use(adhttp.RequestID())
+	h := adhttp.NovoEpisodiosHandler(
+		fakeIniciarEpisodio{out: appclinico.DetalheEpisodio{ID: "ep-1", Estado: "ABERTO"}},
+		&fakeObterEpisodio{out: appclinico.DetalheEpisodio{ID: "ep-1"}},
+		&fakeListarEpisodios{out: appclinico.PaginaEpisodios{Total: 0}},
+		fakeActualizarEpisodio{out: appclinico.DetalheEpisodio{ID: "ep-1"}},
+		fakeFecharEpisodio{out: appclinico.DetalheEpisodio{ID: "ep-1", Estado: "FECHADO"}},
+		fakeCancelarEpisodio{out: appclinico.DetalheEpisodio{ID: "ep-1", Estado: "CANCELADO"}},
+		ehr,
 	)
 	adhttp.RegistarEpisodios(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
 	return r
@@ -263,12 +295,36 @@ func TestEpisodios_Obter_Proibido(t *testing.T) {
 	}
 }
 
+func TestEpisodios_Obter_PassaPapeisDaSessao(t *testing.T) {
+	f := &fakeObterEpisodio{out: appclinico.DetalheEpisodio{ID: "ep-1"}}
+	r := routerEpisodiosComFakes(dominio.Sessao{Sujeito: "m1", Papeis: []dominio.Papel{dominio.PapelMedico}}, f)
+	w := pedido(r, "GET", "/api/v1/episodios/ep-1", "Bearer xyz")
+	if w.Code != nethttp.StatusOK {
+		t.Fatalf("esperava 200, veio %d", w.Code)
+	}
+	if len(f.papeis) != 1 || f.papeis[0] != "Medico" {
+		t.Fatalf("papéis da sessão mal passados: %v", f.papeis)
+	}
+}
+
+func TestEpisodios_EHR_PassaPapeisDaSessao(t *testing.T) {
+	f := &fakeObterEHR{out: appclinico.EHR{}}
+	r := routerEpisodiosComFakesEHR(dominio.Sessao{Sujeito: "f1", Papeis: []dominio.Papel{dominio.PapelFarmaceutico}}, f)
+	w := pedido(r, "GET", "/api/v1/doentes/d1/ehr", "Bearer xyz")
+	if w.Code != nethttp.StatusOK {
+		t.Fatalf("esperava 200, veio %d", w.Code)
+	}
+	if len(f.papeis) != 1 || f.papeis[0] != "Farmaceutico" {
+		t.Fatalf("papéis da sessão mal passados: %v", f.papeis)
+	}
+}
+
 func TestEpisodios_Obter_ErroMapeado_404(t *testing.T) {
 	r := novoRouter()
 	r.Use(adhttp.RequestID())
 	h := adhttp.NovoEpisodiosHandler(
-		fakeIniciarEpisodio{}, fakeObterEpisodio{err: erros.Novo(erros.CategoriaNaoEncontrado, "episódio não encontrado")},
-		fakeListarEpisodios{}, fakeActualizarEpisodio{}, fakeFecharEpisodio{}, fakeCancelarEpisodio{}, fakeObterEHR{},
+		fakeIniciarEpisodio{}, &fakeObterEpisodio{err: erros.Novo(erros.CategoriaNaoEncontrado, "episódio não encontrado")},
+		&fakeListarEpisodios{}, fakeActualizarEpisodio{}, fakeFecharEpisodio{}, fakeCancelarEpisodio{}, &fakeObterEHR{},
 	)
 	adhttp.RegistarEpisodios(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}))
 	if w := pedido(r, "GET", "/api/v1/episodios/inexistente", "Bearer xyz"); w.Code != nethttp.StatusNotFound {
@@ -280,9 +336,9 @@ func TestEpisodios_Listar_ErroAplicacaoMapeado_500(t *testing.T) {
 	r := novoRouter()
 	r.Use(adhttp.RequestID())
 	h := adhttp.NovoEpisodiosHandler(
-		fakeIniciarEpisodio{}, fakeObterEpisodio{},
-		fakeListarEpisodios{err: erros.Novo(erros.CategoriaInterno, "falha na base de dados")},
-		fakeActualizarEpisodio{}, fakeFecharEpisodio{}, fakeCancelarEpisodio{}, fakeObterEHR{},
+		fakeIniciarEpisodio{}, &fakeObterEpisodio{},
+		&fakeListarEpisodios{err: erros.Novo(erros.CategoriaInterno, "falha na base de dados")},
+		fakeActualizarEpisodio{}, fakeFecharEpisodio{}, fakeCancelarEpisodio{}, &fakeObterEHR{},
 	)
 	adhttp.RegistarEpisodios(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}))
 	w := pedido(r, "GET", "/api/v1/doentes/d1/episodios", "Bearer xyz")
@@ -295,9 +351,9 @@ func TestEpisodios_Fechar_ErroAplicacaoMapeado(t *testing.T) {
 	r := novoRouter()
 	r.Use(adhttp.RequestID())
 	h := adhttp.NovoEpisodiosHandler(
-		fakeIniciarEpisodio{}, fakeObterEpisodio{}, fakeListarEpisodios{}, fakeActualizarEpisodio{},
+		fakeIniciarEpisodio{}, &fakeObterEpisodio{}, &fakeListarEpisodios{}, fakeActualizarEpisodio{},
 		fakeFecharEpisodio{err: erros.Novo(erros.CategoriaValidacao, "episódio já fechado")},
-		fakeCancelarEpisodio{}, fakeObterEHR{},
+		fakeCancelarEpisodio{}, &fakeObterEHR{},
 	)
 	adhttp.RegistarEpisodios(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}))
 	w := pedidoCorpo(r, "POST", "/api/v1/episodios/ep-1/fechar", ``)
@@ -310,10 +366,10 @@ func TestEpisodios_Cancelar_ErroAplicacaoMapeado(t *testing.T) {
 	r := novoRouter()
 	r.Use(adhttp.RequestID())
 	h := adhttp.NovoEpisodiosHandler(
-		fakeIniciarEpisodio{}, fakeObterEpisodio{}, fakeListarEpisodios{}, fakeActualizarEpisodio{},
+		fakeIniciarEpisodio{}, &fakeObterEpisodio{}, &fakeListarEpisodios{}, fakeActualizarEpisodio{},
 		fakeFecharEpisodio{},
 		fakeCancelarEpisodio{err: erros.Novo(erros.CategoriaValidacao, "motivo obrigatório")},
-		fakeObterEHR{},
+		&fakeObterEHR{},
 	)
 	adhttp.RegistarEpisodios(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}))
 	w := pedidoCorpo(r, "POST", "/api/v1/episodios/ep-1/cancelar", `{}`)
@@ -326,9 +382,9 @@ func TestEpisodios_EHR_ErroAplicacaoMapeado_404(t *testing.T) {
 	r := novoRouter()
 	r.Use(adhttp.RequestID())
 	h := adhttp.NovoEpisodiosHandler(
-		fakeIniciarEpisodio{}, fakeObterEpisodio{}, fakeListarEpisodios{}, fakeActualizarEpisodio{},
+		fakeIniciarEpisodio{}, &fakeObterEpisodio{}, &fakeListarEpisodios{}, fakeActualizarEpisodio{},
 		fakeFecharEpisodio{}, fakeCancelarEpisodio{},
-		fakeObterEHR{err: erros.Novo(erros.CategoriaNaoEncontrado, "doente não encontrado")},
+		&fakeObterEHR{err: erros.Novo(erros.CategoriaNaoEncontrado, "doente não encontrado")},
 	)
 	adhttp.RegistarEpisodios(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}))
 	w := pedido(r, "GET", "/api/v1/doentes/inexistente/ehr", "Bearer xyz")
