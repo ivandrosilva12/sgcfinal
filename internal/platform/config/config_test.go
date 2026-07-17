@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/ivandrosilva12/sgcfinal/internal/platform/config"
 )
@@ -67,6 +68,24 @@ func TestCarregar_AmbienteInvalido(t *testing.T) {
 	t.Setenv("APP_ENV", "producao-errada")
 	if _, err := config.Carregar(); err == nil {
 		t.Fatal("esperava erro por APP_ENV inválido")
+	}
+}
+
+func TestCarregar_OutboxDefaults(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://x")
+	t.Setenv("REDIS_URL", "redis://x")
+	t.Setenv("KEYCLOAK_ISSUER", "http://kc")
+	t.Setenv("KEYCLOAK_ADMIN_CLIENT_ID", "id")
+	t.Setenv("KEYCLOAK_ADMIN_CLIENT_SECRET", "s")
+	cfg, err := config.Carregar()
+	if err != nil {
+		t.Fatalf("carregar: %v", err)
+	}
+	if cfg.OutboxIntervalo != 2*time.Second {
+		t.Fatalf("intervalo por omissão errado: %v", cfg.OutboxIntervalo)
+	}
+	if cfg.OutboxLote != 100 {
+		t.Fatalf("lote por omissão errado: %d", cfg.OutboxLote)
 	}
 }
 

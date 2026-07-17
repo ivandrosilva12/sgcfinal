@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/erros"
+	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/evento"
 )
 
 // EpisodioClinico é um agregado raiz do BC Clínico: um episódio de cuidados
@@ -25,6 +26,7 @@ type EpisodioClinico struct {
 	actualizadoEm   time.Time
 	fechadoEm       *time.Time
 	fechadoPor      string
+	evento.RegistoEventos
 }
 
 // NovoEpisodio valida e constrói um episódio no estado ABERTO. O doente,
@@ -121,6 +123,7 @@ func (e *EpisodioClinico) Fechar(fechadoPor string, em time.Time) error {
 	e.fim = &em
 	e.fechadoEm = &em
 	e.fechadoPor = fechadoPor
+	e.RegistarEvento(EpisodioFechado{EpisodioID: e.id, DoenteID: e.doenteID, Em: em})
 	return nil
 }
 

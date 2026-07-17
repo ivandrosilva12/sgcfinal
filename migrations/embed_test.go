@@ -18,7 +18,9 @@ func TestFS_ContemMigrationsEsperadas(t *testing.T) {
 		"identidade/0001_utilizadores.sql",
 		"identidade/0002_utilizadores_papeis.sql",
 		"identidade/0003_papeis.sql",
+		"recepcao/0005_chegadas_atendido.sql",
 		"shared/0001_outbox.sql",
+		"shared/0002_outbox_tentativas.sql",
 	}
 	for _, caminho := range esperadas {
 		if _, err := fs.Stat(migrations.FS, caminho); err != nil {

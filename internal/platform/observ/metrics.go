@@ -14,11 +14,17 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// Metricas agrupa o registry e os coletores HTTP da API.
+// Metricas agrupa o registry e os coletores HTTP e do outbox da API. Os
+// colectores do outbox (Pendentes/Publicado/FalhaHandler) satisfazem
+// outbox.Observador por estrutura — este pacote não importa o outbox (a regra
+// de dependência confina o Prometheus à Plataforma).
 type Metricas struct {
-	registry     *prometheus.Registry
-	pedidosTotal *prometheus.CounterVec
-	duracao      *prometheus.HistogramVec
+	registry         *prometheus.Registry
+	pedidosTotal     *prometheus.CounterVec
+	duracao          *prometheus.HistogramVec
+	outboxPendentes  prometheus.Gauge
+	outboxPublicados prometheus.Counter
+	outboxFalhas     *prometheus.CounterVec
 }
 
 // Novo constrói as métricas e regista os coletores base (Go runtime + processo)
@@ -48,8 +54,42 @@ func Novo() *Metricas {
 	)
 	reg.MustRegister(pedidosTotal, duracao)
 
-	return &Metricas{registry: reg, pedidosTotal: pedidosTotal, duracao: duracao}
+	outboxPendentes := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "sgc_outbox_pendentes",
+		Help: "Eventos de outbox por publicar.",
+	})
+	outboxPublicados := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "sgc_outbox_publicados_total",
+		Help: "Eventos de outbox publicados.",
+	})
+	outboxFalhas := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "sgc_outbox_falhas_handler_total",
+			Help: "Falhas de handler por tipo de evento.",
+		},
+		[]string{"tipo_evento"},
+	)
+	reg.MustRegister(outboxPendentes, outboxPublicados, outboxFalhas)
+
+	return &Metricas{
+		registry:         reg,
+		pedidosTotal:     pedidosTotal,
+		duracao:          duracao,
+		outboxPendentes:  outboxPendentes,
+		outboxPublicados: outboxPublicados,
+		outboxFalhas:     outboxFalhas,
+	}
 }
+
+// Pendentes regista o número de eventos de outbox por publicar (satisfaz
+// outbox.Observador por estrutura).
+func (m *Metricas) Pendentes(n int) { m.outboxPendentes.Set(float64(n)) }
+
+// Publicado incrementa o total de eventos de outbox publicados com sucesso.
+func (m *Metricas) Publicado() { m.outboxPublicados.Inc() }
+
+// FalhaHandler incrementa o total de falhas de handler por tipo de evento.
+func (m *Metricas) FalhaHandler(tipo string) { m.outboxFalhas.WithLabelValues(tipo).Inc() }
 
 // Middleware devolve o middleware Gin que mede cada pedido. Usa a rota
 // registada (FullPath) como etiqueta, evitando explosão de cardinalidade por
