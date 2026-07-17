@@ -10,7 +10,7 @@ import (
 
 // EstadoChegada é o estado do ciclo de vida de uma chegada (o doente na fila).
 //
-//	AGUARDA ─┬─ Chamar ──────────► CHAMADO ─ RegistarTriada ► TRIADO ─ IniciarConsulta ► EM_CONSULTA
+//	AGUARDA ─┬─ Chamar ──────────► CHAMADO ─ RegistarTriada ► TRIADO ─ IniciarConsulta ► EM_CONSULTA ─ Atender ► ATENDIDO
 //	         └─ RegistarDesistencia► DESISTIU
 type EstadoChegada string
 
@@ -20,6 +20,7 @@ const (
 	ChegDesistiu   EstadoChegada = "DESISTIU"
 	ChegTriado     EstadoChegada = "TRIADO"
 	ChegEmConsulta EstadoChegada = "EM_CONSULTA"
+	ChegAtendido   EstadoChegada = "ATENDIDO"
 )
 
 // Chegada é um agregado raiz do BC Recepção: o doente presente na clínica hoje, à
@@ -146,6 +147,18 @@ func (c *Chegada) IniciarConsulta(medicoID string, em time.Time) error {
 		return erros.Novo(erros.CategoriaProibido, "só o médico atribuído pode iniciar a consulta")
 	}
 	c.estado = ChegEmConsulta
+	c.actualizadoEm = em
+	return nil
+}
+
+// Atender transita EM_CONSULTA → ATENDIDO (o episódio fechou; a consulta
+// concluiu-se). É o desfecho pós-consulta da chegada, accionado de forma
+// assíncrona pelo consumidor do evento clinico.episodio.fechado (ADR-038).
+func (c *Chegada) Atender(em time.Time) error {
+	if c.estado != ChegEmConsulta {
+		return erros.Novo(erros.CategoriaConflito, "só é possível atender uma chegada em consulta")
+	}
+	c.estado = ChegAtendido
 	c.actualizadoEm = em
 	return nil
 }

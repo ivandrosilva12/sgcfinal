@@ -313,3 +313,61 @@ func TestChegada_SnapshotReconstrucao_EpisodioID(t *testing.T) {
 		t.Fatalf("EpisodioID perdido no snapshot: %+v", c.Snapshot())
 	}
 }
+
+// --- Atender (desfecho pós-consulta, ADR-038) ---
+
+func chegadaEmConsulta(t *testing.T) *recepcao.Chegada {
+	t.Helper()
+	c := chegadaTriadaTeste(t) // agendada, TRIADO, com med-1
+	if err := c.IniciarConsulta("med-1", inst("09:30")); err != nil {
+		t.Fatalf("iniciar consulta: %v", err)
+	}
+	return c
+}
+
+func TestAtender_DeEmConsulta_TransitaAtendido(t *testing.T) {
+	c := chegadaEmConsulta(t)
+	if err := c.Atender(inst("10:00")); err != nil {
+		t.Fatalf("atender: %v", err)
+	}
+	if c.Estado() != recepcao.ChegAtendido {
+		t.Fatalf("esperava ATENDIDO, obtive %q", c.Estado())
+	}
+	if !c.Snapshot().ActualizadoEm.Equal(inst("10:00")) {
+		t.Fatal("actualizadoEm devia ser a hora do desfecho")
+	}
+}
+
+func TestAtender_ForaDeEmConsulta_Conflito(t *testing.T) {
+	casos := []struct {
+		nome    string
+		chegada func(t *testing.T) *recepcao.Chegada
+	}{
+		{"AGUARDA", func(t *testing.T) *recepcao.Chegada {
+			c, _ := recepcao.NovaChegadaWalkIn("doe-1", "esp-1", inst("09:00"))
+			return c
+		}},
+		{"CHAMADO", func(t *testing.T) *recepcao.Chegada { return chegadaChamada(t, false) }},
+		{"TRIADO", func(t *testing.T) *recepcao.Chegada { return chegadaTriadaTeste(t) }},
+		{"DESISTIU", func(t *testing.T) *recepcao.Chegada {
+			c, _ := recepcao.NovaChegadaWalkIn("doe-1", "esp-1", inst("09:00"))
+			_ = c.RegistarDesistencia(inst("09:05"))
+			return c
+		}},
+		{"ATENDIDO (duplo desfecho)", func(t *testing.T) *recepcao.Chegada {
+			c := chegadaEmConsulta(t)
+			if err := c.Atender(inst("10:00")); err != nil {
+				t.Fatalf("primeiro atendimento devia suceder: %v", err)
+			}
+			return c
+		}},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nome, func(t *testing.T) {
+			c := caso.chegada(t)
+			if err := c.Atender(inst("10:10")); erros.CategoriaDe(err) != erros.CategoriaConflito {
+				t.Fatalf("esperava CategoriaConflito, veio %v", erros.CategoriaDe(err))
+			}
+		})
+	}
+}
