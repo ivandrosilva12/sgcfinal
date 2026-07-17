@@ -13,17 +13,20 @@ import (
 type CasoObterEHR struct {
 	doentes   dominio.RepositorioDoentes
 	episodios dominio.RepositorioEpisodios
+	triagem   LeitorTriagem
 	auditor   Auditor
 	agora     func() time.Time
 }
 
 // NovoCasoObterEHR constrói o caso de uso.
-func NovoCasoObterEHR(doentes dominio.RepositorioDoentes, ep dominio.RepositorioEpisodios, aud Auditor) *CasoObterEHR {
-	return &CasoObterEHR{doentes: doentes, episodios: ep, auditor: aud, agora: time.Now}
+func NovoCasoObterEHR(doentes dominio.RepositorioDoentes, ep dominio.RepositorioEpisodios, triagem LeitorTriagem, aud Auditor) *CasoObterEHR {
+	return &CasoObterEHR{doentes: doentes, episodios: ep, triagem: triagem, auditor: aud, agora: time.Now}
 }
 
-// Executar carrega o doente e os seus episódios paginados, audita e devolve o EHR.
-func (c *CasoObterEHR) Executar(ctx context.Context, actor, doenteID string, filtroEpisodios FiltroEpisodios) (EHR, error) {
+// Executar carrega o doente e os seus episódios paginados, preenche a
+// prioridade de triagem em lote quando autorizado (ADR-034/ADR-037), audita e
+// devolve o EHR.
+func (c *CasoObterEHR) Executar(ctx context.Context, actor string, papeis []string, doenteID string, filtroEpisodios FiltroEpisodios) (EHR, error) {
 	doente, err := c.doentes.ObterPorID(ctx, doenteID)
 	if err != nil {
 		return EHR{}, err
@@ -40,6 +43,9 @@ func (c *CasoObterEHR) Executar(ctx context.Context, actor, doenteID string, fil
 	}
 	pagina, err := c.episodios.ListarPorDoente(ctx, filtroEpisodios)
 	if err != nil {
+		return EHR{}, err
+	}
+	if err := preencherPrioridadesTriagem(ctx, c.triagem, papeis, pagina.Itens); err != nil {
 		return EHR{}, err
 	}
 	if err := c.auditor.Registar(ctx, auditoria.Registo{
