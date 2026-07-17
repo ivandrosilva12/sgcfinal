@@ -13,6 +13,7 @@ func TestPapelValido(t *testing.T) {
 		"Medico":             true,
 		"Director":           true,
 		"Auditor":            true,
+		"Tesoureiro":         true,
 		"FarmaceuticoSenior": true,
 		"offline_access":     false,
 		"":                   false,
@@ -142,6 +143,15 @@ func TestAutorizar(t *testing.T) {
 	}
 	if erros.CategoriaDe(err) != erros.CategoriaProibido {
 		t.Errorf("esperava CategoriaProibido, obtive %v", erros.CategoriaDe(err))
+	}
+}
+
+func TestPapelTesoureiroNaoSensivel(t *testing.T) {
+	if !ident.PapelValido(string(ident.PapelTesoureiro)) {
+		t.Fatal("PapelTesoureiro devia ser um papel válido")
+	}
+	if ident.EhSensivel(ident.PapelTesoureiro) {
+		t.Error("PapelTesoureiro não é sensível nesta fatia (sem MFA)")
 	}
 }
 
