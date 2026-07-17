@@ -14,7 +14,7 @@ func TestObterEpisodio_Audita(t *testing.T) {
 	repoEp := novoFakeRepoEpisodios()
 	id := iniciarNoRepo(t, repoEp, novoFakeRepo())
 	aud := &fakeAuditor{}
-	out, err := appclinico.NovoCasoObterEpisodio(repoEp, aud).Executar(context.Background(), "medico-1", id)
+	out, err := appclinico.NovoCasoObterEpisodio(repoEp, &fakeLeitorTriagem{}, aud).Executar(context.Background(), "medico-1", nil, id)
 	if err != nil {
 		t.Fatalf("obter: %v", err)
 	}
@@ -27,7 +27,7 @@ func TestObterEpisodio_Audita(t *testing.T) {
 }
 
 func TestObterEpisodio_NaoEncontrado(t *testing.T) {
-	_, err := appclinico.NovoCasoObterEpisodio(novoFakeRepoEpisodios(), &fakeAuditor{}).Executar(context.Background(), "m", "inexistente")
+	_, err := appclinico.NovoCasoObterEpisodio(novoFakeRepoEpisodios(), &fakeLeitorTriagem{}, &fakeAuditor{}).Executar(context.Background(), "m", nil, "inexistente")
 	if erros.CategoriaDe(err) != erros.CategoriaNaoEncontrado {
 		t.Fatalf("esperava NaoEncontrado, obtive %v", err)
 	}
@@ -35,14 +35,14 @@ func TestObterEpisodio_NaoEncontrado(t *testing.T) {
 
 func TestListarEpisodios_AplicaDoenteELimite(t *testing.T) {
 	repoEp := novoFakeRepoEpisodios()
-	caso := appclinico.NovoCasoListarEpisodios(repoEp)
-	if _, err := caso.Executar(context.Background(), "doente-9", appclinico.FiltroEpisodios{}); err != nil {
+	caso := appclinico.NovoCasoListarEpisodios(repoEp, &fakeLeitorTriagem{})
+	if _, err := caso.Executar(context.Background(), "doente-9", nil, appclinico.FiltroEpisodios{}); err != nil {
 		t.Fatalf("listar: %v", err)
 	}
 	if repoEp.ultimoFilt.DoenteID != "doente-9" || repoEp.ultimoFilt.Limite != 20 {
 		t.Fatalf("filtro inesperado: %+v", repoEp.ultimoFilt)
 	}
-	if _, err := caso.Executar(context.Background(), "doente-9", appclinico.FiltroEpisodios{Limite: 5000}); err != nil {
+	if _, err := caso.Executar(context.Background(), "doente-9", nil, appclinico.FiltroEpisodios{Limite: 5000}); err != nil {
 		t.Fatalf("listar: %v", err)
 	}
 	if repoEp.ultimoFilt.Limite != 100 {
@@ -57,7 +57,7 @@ func TestObterEHR_CombinaDoenteEEpisodios(t *testing.T) {
 	repoEp.pagina = clinico.PaginaEpisodios{Total: 1, Itens: []clinico.ResumoEpisodio{{ID: "ep-1", Estado: "ABERTO"}}}
 	aud := &fakeAuditor{}
 
-	ehr, err := appclinico.NovoCasoObterEHR(repoDoentes, repoEp, aud).Executar(context.Background(), "medico-1", doenteID, appclinico.FiltroEpisodios{})
+	ehr, err := appclinico.NovoCasoObterEHR(repoDoentes, repoEp, &fakeLeitorTriagem{}, aud).Executar(context.Background(), "medico-1", nil, doenteID, appclinico.FiltroEpisodios{})
 	if err != nil {
 		t.Fatalf("ehr: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestObterEHR_CombinaDoenteEEpisodios(t *testing.T) {
 
 func TestObterEHR_DoenteNaoEncontrado(t *testing.T) {
 	repoEp := novoFakeRepoEpisodios()
-	_, err := appclinico.NovoCasoObterEHR(novoFakeRepo(), repoEp, &fakeAuditor{}).Executar(context.Background(), "medico-1", "inexistente", appclinico.FiltroEpisodios{})
+	_, err := appclinico.NovoCasoObterEHR(novoFakeRepo(), repoEp, &fakeLeitorTriagem{}, &fakeAuditor{}).Executar(context.Background(), "medico-1", nil, "inexistente", appclinico.FiltroEpisodios{})
 	if erros.CategoriaDe(err) != erros.CategoriaNaoEncontrado {
 		t.Fatalf("esperava NaoEncontrado, obtive %v", err)
 	}
@@ -82,7 +82,7 @@ func TestObterEHR_ListarEpisodiosFalha(t *testing.T) {
 	doenteID := registarNoRepo(t, repoDoentes)
 	repoEp := novoFakeRepoEpisodios()
 	repoEp.listarErr = errSimulado
-	_, err := appclinico.NovoCasoObterEHR(repoDoentes, repoEp, &fakeAuditor{}).Executar(context.Background(), "medico-1", doenteID, appclinico.FiltroEpisodios{})
+	_, err := appclinico.NovoCasoObterEHR(repoDoentes, repoEp, &fakeLeitorTriagem{}, &fakeAuditor{}).Executar(context.Background(), "medico-1", nil, doenteID, appclinico.FiltroEpisodios{})
 	if !errors.Is(err, errSimulado) {
 		t.Fatalf("esperava a propagação do erro de ListarPorDoente, obtive %v", err)
 	}
@@ -93,7 +93,7 @@ func TestObterEHR_AuditorFalha(t *testing.T) {
 	doenteID := registarNoRepo(t, repoDoentes)
 	repoEp := novoFakeRepoEpisodios()
 	aud := &fakeAuditor{err: errSimulado}
-	_, err := appclinico.NovoCasoObterEHR(repoDoentes, repoEp, aud).Executar(context.Background(), "medico-1", doenteID, appclinico.FiltroEpisodios{})
+	_, err := appclinico.NovoCasoObterEHR(repoDoentes, repoEp, &fakeLeitorTriagem{}, aud).Executar(context.Background(), "medico-1", nil, doenteID, appclinico.FiltroEpisodios{})
 	if !errors.Is(err, errSimulado) {
 		t.Fatalf("esperava a propagação do erro do auditor, obtive %v", err)
 	}
@@ -110,16 +110,16 @@ func TestObterEHR_NormalizaLimiteEDeslocamento(t *testing.T) {
 	repoDoentes := novoFakeRepo()
 	doenteID := registarNoRepo(t, repoDoentes)
 	repoEp := novoFakeRepoEpisodios()
-	caso := appclinico.NovoCasoObterEHR(repoDoentes, repoEp, &fakeAuditor{})
+	caso := appclinico.NovoCasoObterEHR(repoDoentes, repoEp, &fakeLeitorTriagem{}, &fakeAuditor{})
 
-	if _, err := caso.Executar(context.Background(), "medico-1", doenteID, appclinico.FiltroEpisodios{Deslocamento: -5}); err != nil {
+	if _, err := caso.Executar(context.Background(), "medico-1", nil, doenteID, appclinico.FiltroEpisodios{Deslocamento: -5}); err != nil {
 		t.Fatalf("ehr: %v", err)
 	}
 	if repoEp.ultimoFilt.Limite != 20 || repoEp.ultimoFilt.Deslocamento != 0 {
 		t.Fatalf("filtro inesperado: %+v", repoEp.ultimoFilt)
 	}
 
-	if _, err := caso.Executar(context.Background(), "medico-1", doenteID, appclinico.FiltroEpisodios{Limite: 5000}); err != nil {
+	if _, err := caso.Executar(context.Background(), "medico-1", nil, doenteID, appclinico.FiltroEpisodios{Limite: 5000}); err != nil {
 		t.Fatalf("ehr: %v", err)
 	}
 	if repoEp.ultimoFilt.Limite != 100 {

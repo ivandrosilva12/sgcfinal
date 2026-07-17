@@ -199,6 +199,20 @@
       recepcao/0004), provado em integração (23505/23514).
 - [x] Comando auditado nos dois contextos; cobertura nos limiares.
 
+## Critérios de saída — Triagem no EHR (ADR-037)
+
+- [x] Médico/Enfermeiro/Director veem no detalhe do episódio o bloco triagem
+      (prioridade, sinais vitais, observações, enfermeiro, instante) quando o
+      episódio nasceu da fila clínica.
+- [x] Os resumos de episódio (EHR e listagem) mostram a cor de Manchester a esses
+      papéis (leitura em lote).
+- [x] Farmacêutico/Técnico de Lab/DPO/Auditor recebem as respostas de sempre — e o
+      leitor de triagem nem é invocado (minimização LPDP, ADR-034).
+- [x] Episódios sem chegada associada ficam exactamente como antes (sem bloco, sem
+      erro); falha do leitor propaga (nunca degrada em silêncio).
+- [x] Zero migrações; zero alterações ao BC Recepção; fonte única de verdade.
+- [x] Cobertura nos limiares; integração prova a junção real por episodio_id.
+
 ## Critérios de saída M1
 
 - [x] Identidade Keycloak operacional (login, 11 papéis, MFA para papéis sensíveis — positivo e negativo). — Sprint 2/3/4

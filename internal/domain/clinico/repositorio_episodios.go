@@ -22,6 +22,10 @@ type ResumoEpisodio struct {
 	Inicio          time.Time  `json:"inicio"`
 	Fim             *time.Time `json:"fim,omitempty"`
 	Estado          string     `json:"estado"`
+	// PrioridadeTriagem é a cor de Manchester da triagem de origem (ADR-037).
+	// Preenchida pela camada de aplicação via ACL — o repositório do Clínico
+	// não conhece a Recepção; vazia quando o episódio não nasceu da fila.
+	PrioridadeTriagem string `json:"prioridade_triagem,omitempty"`
 }
 
 // PaginaEpisodios é uma página de episódios.
