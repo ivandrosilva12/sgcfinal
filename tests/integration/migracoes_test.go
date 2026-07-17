@@ -7,6 +7,7 @@ package integration_test
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"os"
 	"testing"
@@ -104,5 +105,23 @@ func TestSeed_OnzePapeis(t *testing.T) {
 	}
 	if n != 11 {
 		t.Fatalf("esperava 11 papéis (DDM-001), obtive %d", n)
+	}
+}
+
+func TestOutbox_TemColunasDeReentrega(t *testing.T) {
+	pool, ctx := ligar(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if err := db.AplicarMigracoes(ctx, pool, migrations.FS, logger); err != nil {
+		t.Fatalf("aplicar migrations: %v", err)
+	}
+	var n int
+	err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns
+		WHERE table_schema='shared' AND table_name='outbox'
+		AND column_name IN ('tentativas','ultimo_erro')`).Scan(&n)
+	if err != nil {
+		t.Fatalf("consultar colunas: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("esperava 2 colunas novas no outbox, obtive %d", n)
 	}
 }
