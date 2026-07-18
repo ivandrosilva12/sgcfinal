@@ -271,9 +271,38 @@ linhas. A resposta da emissão devolve `numero`, `dataEmissao` e `hash`.
 ## 6. Identidade
 
 `EhSensivel()` passa a incluir `PapelTesoureiro`. O `TestPapelTesoureiroNaoSensivel`
-inverte-se e passa a afirmar o contrário, mantendo a cobertura explícita da
-decisão. Seed e realm Keycloak acompanham. A ERRATA-002 é actualizada com a
-resolução da sua própria nota provisória.
+inverte-se — passa a `TestPapelTesoureiroSensivel` e afirma o contrário — mantendo
+a cobertura explícita da decisão. Seed e realm Keycloak acompanham.
+
+### 6.1 Alteração à ERRATA-002 (não uma errata nova)
+
+A exigência de MFA resolve-se **na própria ERRATA-002**, que foi quem a deixou em
+aberto ("a exigência de MFA fica para reavaliação no ADR-040"). Não se abre uma
+ERRATA-003: a decisão não é nova nem divergente do DDM — é o fecho de uma nota
+provisória já registada, e parti-la em dois documentos obrigaria quem lê a
+ERRATA-002 a saber que existe outra algures para a compreender.
+
+A alteração é **aditiva**. A linha `Decisão` original **não** é reescrita: fica
+como está, com o "não-sensível nesta fatia" intacto, e acrescenta-se um bloco
+datado de revisão. Reescrevê-la apagaria o registo de que o papel alguma vez foi
+não-sensível — e é precisamente esse intervalo que um auditor de certificação
+quererá ver justificado. É a mesma postura que o projecto aplica às facturas
+(anulação por novo documento, nunca por edição) e ao audit log.
+
+Forma do bloco a acrescentar:
+
+```markdown
+- **Revisão (2026-07-XX, ADR-040)**: com a entrega da emissão, o Tesoureiro passa
+  a praticar um acto irreversível com efeito fiscal. `Tesoureiro` passa a **papel
+  sensível**, exigindo MFA, ao lado de Director, Admin, DPO e Auditor. Fecha-se a
+  reavaliação prevista na Decisão original, que se mantém acima como registo do
+  estado anterior.
+- **Impacto da revisão**: `identidade.EhSensivel`, teste de papel sensível,
+  `seeds/papeis.sql`, realm Keycloak, CLAUDE.md §6.
+```
+
+O CLAUDE.md §6 e a ADR-040 passam a referir a ERRATA-002 como o registo único da
+sensibilidade do papel.
 
 ---
 
