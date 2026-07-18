@@ -3,14 +3,11 @@ package financeiro_test
 import (
 	"context"
 	"strconv"
-	"time"
 
 	dominio "github.com/ivandrosilva12/sgcfinal/internal/domain/financeiro"
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/auditoria"
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/erros"
 )
-
-func agoraFixo() time.Time { return time.Date(2026, 7, 18, 9, 0, 0, 0, time.UTC) }
 
 // fakeFacturas é um RepositorioFacturas em memória.
 type fakeFacturas struct {
