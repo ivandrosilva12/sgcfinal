@@ -27,3 +27,10 @@
   em `internal/platform/app.go`, sem o que a marcação do papel não teria efeito
   prático. Prova: `TestFinanceiro_Emitir_TesoureiroSemMFA_403` e
   `TestFinanceiro_Emitir_TesoureiroComMFA_Prossegue`.
+- **Correcção de segurança por direito próprio**: a falta de `MFAObrigatoria()`
+  nas rotas do BC Financeiro não abria brecha só para o Tesoureiro. O Director e
+  o Auditor já eram papéis sensíveis desde o Sprint 3 e tinham leitura no
+  Financeiro (consulta de facturas, verificação da cadeia); sem a imposição
+  agora acrescentada, ambos passavam sem segundo factor nessas rotas. A
+  correcção fecha esse buraco mais antigo, não apenas o do Tesoureiro. Prova:
+  `TestFinanceiro_ObterFactura_DirectorSemMFA_403`.

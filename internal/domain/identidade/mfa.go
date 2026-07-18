@@ -6,7 +6,9 @@ import (
 )
 
 // ExigeAutenticacaoForte indica se algum dos papéis exige segundo factor (MFA).
-// Alinhado com EhSensivel (Director, Admin, DPO, Auditor).
+// Alinhado com EhSensivel (Director, Admin, DPO, Auditor e — desde o ADR-040 —
+// Tesoureiro, que com a emissão passou a praticar um acto irreversível com
+// efeito fiscal).
 func ExigeAutenticacaoForte(papeis []Papel) bool {
 	for _, p := range papeis {
 		if EhSensivel(p) {

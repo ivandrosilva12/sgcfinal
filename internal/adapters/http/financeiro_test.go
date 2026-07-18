@@ -197,6 +197,35 @@ func TestFinanceiro_ObterFactura_Director_200(t *testing.T) {
 	}
 }
 
+// Prova o buraco que esta tarefa fechou: o Director já era papel sensível
+// desde o Sprint 3 (tal como o Auditor) e tinha leitura no Financeiro, mas
+// sem MFAObrigatoria nas rotas do BC passava sem segundo factor. Ao
+// contrário das 403 de RBAC (papel errado), esta é uma rota de leitura
+// permitida ao papel — só falha por faltar o segundo factor.
+func TestFinanceiro_ObterFactura_DirectorSemMFA_403(t *testing.T) {
+	semSegundoFactor := identidade.Sessao{
+		Sujeito:           "dir-1",
+		Papeis:            []identidade.Papel{identidade.PapelDirector},
+		AutenticacaoForte: false,
+	}
+	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil, semSegundoFactor)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/financeiro/facturas/fac-1", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != 403 {
+		t.Fatalf("esperava 403 (MFA obrigatória) para o Director sem segundo factor, veio %d (%s)", w.Code, w.Body.String())
+	}
+	var problema adhttp.Problema
+	if err := json.Unmarshal(w.Body.Bytes(), &problema); err != nil {
+		t.Fatalf("resposta não é JSON válido: %v", err)
+	}
+	if problema.Type != "/erros/mfa-obrigatorio" {
+		t.Errorf("esperava type=/erros/mfa-obrigatorio, veio %q", problema.Type)
+	}
+}
+
 func TestFinanceiro_CriarFactura_Medico_Proibido(t *testing.T) {
 	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil, sessaoFinDe("med-1", identidade.PapelMedico))
 
@@ -308,6 +337,13 @@ func TestFinanceiro_Emitir_TesoureiroSemMFA_403(t *testing.T) {
 
 	if w.Code != 403 {
 		t.Fatalf("esperava 403 (MFA obrigatória), veio %d (%s)", w.Code, w.Body.String())
+	}
+	var problema adhttp.Problema
+	if err := json.Unmarshal(w.Body.Bytes(), &problema); err != nil {
+		t.Fatalf("resposta não é JSON válido: %v", err)
+	}
+	if problema.Type != "/erros/mfa-obrigatorio" {
+		t.Errorf("esperava type=/erros/mfa-obrigatorio (distingue do 403 de RBAC), veio %q", problema.Type)
 	}
 	if emitir.actorRecebido != "" {
 		t.Errorf("o caso de uso não devia sequer ser invocado; actor recebido %q", emitir.actorRecebido)
