@@ -235,3 +235,105 @@ func TestResumoFacturaCampos(t *testing.T) {
 		t.Error("ResumoFactura deve expor o total em cêntimos")
 	}
 }
+
+func TestEmitir_FixaNumeroDataEHash(t *testing.T) {
+	f := novaFacturaValida(t)
+	if err := f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1,
+		moeda.DeCentimos(50000), fin.RegimeIsento); err != nil {
+		t.Fatalf("AdicionarItem: %v", err)
+	}
+	m := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	if err := f.Emitir("2026", 1, "", m); err != nil {
+		t.Fatalf("Emitir: %v", err)
+	}
+	if f.Estado() != fin.FactEmitida {
+		t.Errorf("estado = %q, queria EMITIDA", f.Estado())
+	}
+	if got := f.Numero().String(); got != "FAC 2026/00000001" {
+		t.Errorf("número = %q", got)
+	}
+	if f.Hash() == "" {
+		t.Error("hash não podia ficar vazio")
+	}
+	if len(f.Hash()) != 64 {
+		t.Errorf("hash tem %d caracteres, queria 64 (SHA-256 hex)", len(f.Hash()))
+	}
+}
+
+func TestEmitir_SoDeRascunho(t *testing.T) {
+	f := novaFacturaValida(t)
+	_ = f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1, moeda.DeCentimos(1000), fin.RegimeIsento)
+	m := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	if err := f.Emitir("2026", 1, "", m); err != nil {
+		t.Fatalf("primeira emissão: %v", err)
+	}
+	err := f.Emitir("2026", 2, f.Hash(), m)
+	if err == nil || erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Errorf("segunda emissão devia dar Conflito, deu %v", err)
+	}
+}
+
+func TestEmitir_RecusaFacturaSemLinhas(t *testing.T) {
+	f := novaFacturaValida(t)
+	m := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	err := f.Emitir("2026", 1, "", m)
+	if err == nil || erros.CategoriaDe(err) != erros.CategoriaRegraNegocio {
+		t.Errorf("factura sem linhas devia dar RegraNegocio, deu %v", err)
+	}
+}
+
+func TestHash_DeterministicoEEstavel(t *testing.T) {
+	cria := func() *fin.Factura {
+		f := novaFacturaValida(t)
+		_ = f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1, moeda.DeCentimos(50000), fin.RegimeIsento)
+		return f
+	}
+	m := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	a, b := cria(), cria()
+	_ = a.Emitir("2026", 1, "", m)
+	_ = b.Emitir("2026", 1, "", m)
+	if a.Hash() != b.Hash() {
+		t.Error("mesma entrada devia dar o mesmo hash")
+	}
+}
+
+func TestHash_IgnoraSubSegundo(t *testing.T) {
+	cria := func() *fin.Factura {
+		f := novaFacturaValida(t)
+		_ = f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1, moeda.DeCentimos(50000), fin.RegimeIsento)
+		return f
+	}
+	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	a, b := cria(), cria()
+	_ = a.Emitir("2026", 1, "", base)
+	_ = b.Emitir("2026", 1, "", base.Add(999*time.Millisecond))
+	if a.Hash() != b.Hash() {
+		t.Error("sub-segundo não podia entrar no hash: o valor relido da BD tem outra precisão")
+	}
+}
+
+func TestHash_SelaConteudoDaLinha(t *testing.T) {
+	m := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	comDescricao := func(d string) string {
+		f := novaFacturaValida(t)
+		_ = f.AdicionarItem(d, fin.LinhaConsulta, "", 1, moeda.DeCentimos(50000), fin.RegimeIsento)
+		_ = f.Emitir("2026", 1, "", m)
+		return f.Hash()
+	}
+	if comDescricao("Consulta") == comDescricao("Cirurgia") {
+		t.Error("alterar a descrição da linha tinha de mudar o hash (total igual não chega)")
+	}
+}
+
+func TestHash_EncadeiaComAnterior(t *testing.T) {
+	m := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	comAnterior := func(ha string) string {
+		f := novaFacturaValida(t)
+		_ = f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1, moeda.DeCentimos(50000), fin.RegimeIsento)
+		_ = f.Emitir("2026", 2, ha, m)
+		return f.Hash()
+	}
+	if comAnterior("") == comAnterior("aaaa") {
+		t.Error("o hash anterior tinha de entrar no cálculo")
+	}
+}

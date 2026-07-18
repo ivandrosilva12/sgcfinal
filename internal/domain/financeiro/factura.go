@@ -1,11 +1,15 @@
 // Package financeiro é o Bounded Context Financeiro (Camada 1 — Domínio).
-// Esta fatia (ADR-039) entrega o agregado Factura em estado RASCUNHO: linhas com
-// tipo e snapshot, cálculo de IVA e totais. A emissão (cadeia hash, numeração,
-// imutabilidade) é do ADR-040.
+// O agregado Factura nasce em RASCUNHO (ADR-039): linhas com tipo e snapshot,
+// cálculo de IVA e totais. A emissão (ADR-040) fixa número, data e o hash
+// SHA-256 canónico — invariante do agregado, calculado aqui, nunca num serviço.
 package financeiro
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -137,6 +141,13 @@ type Factura struct {
 	itens         []ItemFactura
 	criadoEm      time.Time
 	actualizadoEm time.Time
+	numero        NumeroFactura
+	serie         string
+	sequencial    int
+	dataEmissao   time.Time
+	hash          string
+	hashAnterior  string
+	versao        int
 }
 
 // NovaFactura cria uma factura em RASCUNHO, sem itens. O episodioID é um id
@@ -207,16 +218,20 @@ type Totais struct {
 	Total    moeda.AOA
 }
 
-// Totais calcula os totais da factura.
-func (f *Factura) Totais() Totais {
+// TotaisDe soma, por linha, subtotais e IVA. Partilhada pelo agregado e pela
+// verificação da cadeia, que trabalha sobre snapshots.
+func TotaisDe(itens []ItemFactura) Totais {
 	sub := moeda.DeCentimos(0)
 	iva := moeda.DeCentimos(0)
-	for _, it := range f.itens {
+	for _, it := range itens {
 		sub = sub.Somar(it.Subtotal())
 		iva = iva.Somar(it.ValorIVA())
 	}
 	return Totais{Subtotal: sub, TotalIVA: iva, Total: sub.Somar(iva)}
 }
+
+// Totais calcula os totais da factura.
+func (f *Factura) Totais() Totais { return TotaisDe(f.itens) }
 
 // ID devolve o identificador (vazio antes de persistir).
 func (f *Factura) ID() string { return f.id }
@@ -240,6 +255,85 @@ func (f *Factura) Itens() []ItemFactura {
 // CriadoEm devolve o instante de criação da factura.
 func (f *Factura) CriadoEm() time.Time { return f.criadoEm }
 
+// Emitir transita a factura de RASCUNHO para EMITIDA, fixando número, data e o
+// seu elo na cadeia de integridade. O hash é calculado aqui — é invariante do
+// agregado, nunca de um serviço (antipadrão M4).
+func (f *Factura) Emitir(serie string, sequencial int, hashAnterior string, momento time.Time) error {
+	if f.estado != FactRascunho {
+		return erros.Novo(erros.CategoriaConflito, "só é possível emitir uma factura em rascunho")
+	}
+	if len(f.itens) == 0 {
+		return erros.Novo(erros.CategoriaRegraNegocio, "não é possível emitir uma factura sem linhas")
+	}
+	numero, err := NovoNumeroFactura(serie, sequencial)
+	if err != nil {
+		return err
+	}
+	f.numero = numero
+	f.serie = strings.TrimSpace(serie)
+	f.sequencial = sequencial
+	f.dataEmissao = momento.UTC().Truncate(time.Second)
+	f.hashAnterior = hashAnterior
+	f.estado = FactEmitida
+	f.hash = HashDe(f.Snapshot())
+	return nil
+}
+
+// digestLinhas resume as linhas por ordem, selando descrição, tipo, quantidade,
+// preço e regime — não só o total. Sem isto, trocar "Consulta" por "Cirurgia"
+// mantendo o valor passaria despercebido.
+func digestLinhas(itens []ItemFactura) string {
+	h := sha256.New()
+	for ordem, it := range itens {
+		fmt.Fprintf(h, "%d|%s|%s|%d|%d|%s\n", ordem, it.Descricao, it.Tipo,
+			it.Quantidade, it.PrecoUnitario.Centimos(), it.RegimeIVA)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// HashDe calcula o SHA-256 canónico de uma factura a partir do seu snapshot.
+// O formato está documentado na ADR-040 e é fixo: não deriva do esquema da BD,
+// para continuar reproduzível ao longo dos 10 anos de retenção legal.
+//
+//	serie|sequencial|dataEmissaoRFC3339UTC|clienteNIF|subtotal|iva|total|digestLinhas|hashAnterior
+func HashDe(s SnapshotFactura) string {
+	t := TotaisDe(s.Itens)
+	canonico := strings.Join([]string{
+		s.Serie,
+		strconv.Itoa(s.Sequencial),
+		s.DataEmissao.UTC().Truncate(time.Second).Format(time.RFC3339),
+		s.Cliente.NIF,
+		strconv.FormatInt(t.Subtotal.Centimos(), 10),
+		strconv.FormatInt(t.TotalIVA.Centimos(), 10),
+		strconv.FormatInt(t.Total.Centimos(), 10),
+		digestLinhas(s.Itens),
+		s.HashAnterior,
+	}, "|")
+	soma := sha256.Sum256([]byte(canonico))
+	return hex.EncodeToString(soma[:])
+}
+
+// Numero devolve o número legal (vazio enquanto RASCUNHO).
+func (f *Factura) Numero() NumeroFactura { return f.numero }
+
+// Serie devolve a série da factura.
+func (f *Factura) Serie() string { return f.serie }
+
+// Sequencial devolve o sequencial dentro da série.
+func (f *Factura) Sequencial() int { return f.sequencial }
+
+// DataEmissao devolve o instante da emissão (zero enquanto RASCUNHO).
+func (f *Factura) DataEmissao() time.Time { return f.dataEmissao }
+
+// Hash devolve o elo desta factura na cadeia de integridade.
+func (f *Factura) Hash() string { return f.hash }
+
+// HashAnterior devolve o elo da factura imediatamente anterior na série.
+func (f *Factura) HashAnterior() string { return f.hashAnterior }
+
+// Versao devolve a versão para bloqueio optimista.
+func (f *Factura) Versao() int { return f.versao }
+
 // SnapshotFactura carrega o estado completo para persistência ou rehidratação.
 type SnapshotFactura struct {
 	ID            string
@@ -249,6 +343,13 @@ type SnapshotFactura struct {
 	Itens         []ItemFactura
 	CriadoEm      time.Time
 	ActualizadoEm time.Time
+	Numero        NumeroFactura
+	Serie         string
+	Sequencial    int
+	DataEmissao   time.Time
+	Hash          string
+	HashAnterior  string
+	Versao        int
 }
 
 // Snapshot devolve o estado completo do agregado.
@@ -258,6 +359,9 @@ func (f *Factura) Snapshot() SnapshotFactura {
 	return SnapshotFactura{
 		ID: f.id, Estado: f.estado, Cliente: f.cliente, EpisodioID: f.episodioID,
 		Itens: itens, CriadoEm: f.criadoEm, ActualizadoEm: f.actualizadoEm,
+		Numero: f.numero, Serie: f.serie, Sequencial: f.sequencial,
+		DataEmissao: f.dataEmissao, Hash: f.hash, HashAnterior: f.hashAnterior,
+		Versao: f.versao,
 	}
 }
 
@@ -268,6 +372,9 @@ func ReconstruirFactura(s SnapshotFactura) *Factura {
 	return &Factura{
 		id: s.ID, estado: s.Estado, cliente: s.Cliente, episodioID: s.EpisodioID,
 		itens: itens, criadoEm: s.CriadoEm, actualizadoEm: s.ActualizadoEm,
+		numero: s.Numero, serie: s.Serie, sequencial: s.Sequencial,
+		dataEmissao: s.DataEmissao, hash: s.Hash, hashAnterior: s.HashAnterior,
+		versao: s.Versao,
 	}
 }
 
