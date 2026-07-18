@@ -15,6 +15,11 @@ type NumeroFactura string
 
 const prefixoNumero = "FAC"
 
+// maxSequencial é o maior sequencial representável em 8 dígitos. O formato legal
+// AGT fixa a largura do campo: acima deste valor o "%08d" alargaria o número em
+// silêncio, pelo que a série tem de esgotar com um erro explícito.
+const maxSequencial = 99999999
+
 // NovoNumeroFactura compõe o número legal a partir da série e do sequencial.
 func NovoNumeroFactura(serie string, sequencial int) (NumeroFactura, error) {
 	serie = strings.TrimSpace(serie)
@@ -23,6 +28,10 @@ func NovoNumeroFactura(serie string, sequencial int) (NumeroFactura, error) {
 	}
 	if sequencial <= 0 {
 		return "", erros.Novo(erros.CategoriaValidacao, "sequencial da factura tem de ser positivo")
+	}
+	if sequencial > maxSequencial {
+		return "", erros.Novo(erros.CategoriaRegraNegocio,
+			"a série esgotou os 8 dígitos do sequencial legal — abrir uma nova série")
 	}
 	return NumeroFactura(fmt.Sprintf("%s %s/%08d", prefixoNumero, serie, sequencial)), nil
 }

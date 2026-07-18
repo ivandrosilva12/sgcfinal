@@ -48,3 +48,18 @@ func TestSerieDe_EhOAno(t *testing.T) {
 		t.Errorf("SerieDe = %q, queria \"2026\" (ano em UTC)", got)
 	}
 }
+
+// O formato legal AGT fixa o sequencial em 8 dígitos. Acima de 99999999 o
+// "%08d" alargaria o campo em silêncio, produzindo um número fora do formato
+// sem qualquer erro — a série tem de esgotar com um erro explícito.
+func TestNovoNumeroFactura_RejeitaSequencialAcimaDoLimite(t *testing.T) {
+	if _, err := fin.NovoNumeroFactura("2026", 99999999); err != nil {
+		t.Errorf("99999999 é o último sequencial válido, não devia falhar: %v", err)
+	}
+	for _, seq := range []int{100000000, 123456789} {
+		n, err := fin.NovoNumeroFactura("2026", seq)
+		if err == nil {
+			t.Errorf("NovoNumeroFactura(2026, %d) devia falhar, devolveu %q", seq, n)
+		}
+	}
+}
