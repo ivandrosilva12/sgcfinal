@@ -190,7 +190,7 @@ INSERT INTO financeiro.facturas
      data_emissao, hash, hash_anterior)
 VALUES ('EMITIDA','Cliente',gen_random_uuid(),$1,'2026',9999999,
         now(),'abc','')
-ON CONFLICT (numero) DO NOTHING
+ON CONFLICT (numero) WHERE numero IS NOT NULL DO NOTHING
 RETURNING id::text`, numero).Scan(&id)
 	if err != nil {
 		// Uma corrida anterior deste teste já deixou esta factura na BD — o
