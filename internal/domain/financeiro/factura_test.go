@@ -410,3 +410,36 @@ func TestReconstruirFactura_PreservaFacturaEmitida(t *testing.T) {
 		t.Errorf("HashDe(recon.Snapshot()) = %q; esperava o mesmo elo %q", got, f.Hash())
 	}
 }
+
+// Vector dourado: fixa o hash canónico de uma factura conhecida. Se a
+// canonicalização mudar (ordem dos campos, separadores, formato da data), este
+// teste falha — é a única salvaguarda contra tornar irreproduzível a cadeia das
+// facturas já emitidas (retenção AGT/SAF-T-AO, 10 anos).
+const hashDourado = "8caeeee0017219380ffbca9560b2d24894b07a45ba1fdb63a6cc4710293cc169"
+
+func TestHash_VectorDourado(t *testing.T) {
+	c, err := fin.NovoClienteSnapshot("Sol", "", "")
+	if err != nil {
+		t.Fatalf("cliente: %v", err)
+	}
+	f, err := fin.NovaFactura(c, "11111111-1111-1111-1111-111111111111")
+	if err != nil {
+		t.Fatalf("factura: %v", err)
+	}
+	if err := f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1,
+		moeda.DeCentimos(50000), fin.RegimeIsento); err != nil {
+		t.Fatalf("item1: %v", err)
+	}
+	if err := f.AdicionarItem("Paracetamol", fin.LinhaDispensa,
+		"22222222-2222-2222-2222-222222222222", 2,
+		moeda.DeCentimos(1000), fin.RegimeStandard); err != nil {
+		t.Fatalf("item2: %v", err)
+	}
+	m := time.Date(2026, 7, 18, 10, 0, 0, 123456789, time.UTC)
+	if err := f.Emitir("2026", 7, "abc", m); err != nil {
+		t.Fatalf("Emitir: %v", err)
+	}
+	if f.Hash() != hashDourado {
+		t.Errorf("hash = %q, queria %q", f.Hash(), hashDourado)
+	}
+}
