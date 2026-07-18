@@ -44,13 +44,21 @@ VALUES ($1,$2,NULLIF($3,''),NULLIF($4,''),$5::uuid) RETURNING id::text`
 	} else {
 		const qUpd = `
 UPDATE financeiro.facturas
-SET cliente_nome=$2, cliente_nif=NULLIF($3,''), cliente_morada=NULLIF($4,''), actualizado_em=now()
-WHERE id=$1 AND estado='RASCUNHO'`
-		ct, err := tx.Exec(ctx, qUpd, id, s.Cliente.Nome, s.Cliente.NIF, s.Cliente.Morada)
+SET cliente_nome=$2, cliente_nif=NULLIF($3,''), cliente_morada=NULLIF($4,''),
+    versao=versao+1, actualizado_em=now()
+WHERE id=$1 AND estado='RASCUNHO' AND versao=$5`
+		ct, err := tx.Exec(ctx, qUpd, id, s.Cliente.Nome, s.Cliente.NIF, s.Cliente.Morada, s.Versao)
 		if err != nil {
 			return "", fmt.Errorf("actualizar factura: %w", err)
 		}
 		if ct.RowsAffected() != 1 {
+			// Distingue-se pela leitura do estado actual: se continua em rascunho, o
+			// que falhou foi a versão (outra escrita passou à frente).
+			var estado string
+			if e := tx.QueryRow(ctx, `SELECT estado FROM financeiro.facturas WHERE id=$1`, id).Scan(&estado); e == nil && estado == "RASCUNHO" {
+				return "", erros.Novo(erros.CategoriaConflito,
+					"a factura foi alterada entretanto — recarregue e tente de novo")
+			}
 			return "", erros.Novo(erros.CategoriaConflito, "a factura já não está em rascunho ou não existe")
 		}
 	}
@@ -79,12 +87,12 @@ VALUES (COALESCE(NULLIF($1,'')::uuid, gen_random_uuid()), $2, $3, $4, NULLIF($5,
 func (r *RepositorioFacturas) ObterPorID(ctx context.Context, id string) (*fin.Factura, error) {
 	const q = `
 SELECT id::text, estado, cliente_nome, COALESCE(cliente_nif,''), COALESCE(cliente_morada,''),
-       episodio_id::text, criado_em, actualizado_em
+       episodio_id::text, criado_em, actualizado_em, versao
 FROM financeiro.facturas WHERE id=$1`
 	var s fin.SnapshotFactura
 	var estado string
 	err := r.pool.QueryRow(ctx, q, id).Scan(&s.ID, &estado, &s.Cliente.Nome, &s.Cliente.NIF,
-		&s.Cliente.Morada, &s.EpisodioID, &s.CriadoEm, &s.ActualizadoEm)
+		&s.Cliente.Morada, &s.EpisodioID, &s.CriadoEm, &s.ActualizadoEm, &s.Versao)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, erros.Novo(erros.CategoriaNaoEncontrado, "factura não encontrada")

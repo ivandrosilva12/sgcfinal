@@ -13,11 +13,13 @@ import (
 	"os"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ivandrosilva12/sgcfinal/internal/adapters/pgrepo"
 	fin "github.com/ivandrosilva12/sgcfinal/internal/domain/financeiro"
+	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/erros"
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/moeda"
 	"github.com/ivandrosilva12/sgcfinal/internal/platform/db"
 	"github.com/ivandrosilva12/sgcfinal/migrations"
@@ -361,5 +363,70 @@ RETURNING id::text`, facturaID).Scan(&itemID); err != nil {
 
 	if _, err := pool.Exec(ctx, `DELETE FROM financeiro.itens_factura WHERE id=$1`, itemID); err == nil {
 		t.Error("DELETE numa linha de factura emitida tinha de falhar")
+	}
+}
+
+// TestGuardarFactura_BloqueioOptimista prova que o Guardar fecha o lost-update
+// do rascunho (dívida técnica assumida do ADR-039, fechada no ADR-040): dois
+// leitores carregam a mesma versão, a primeira escrita vence e avança a versão,
+// a segunda (sobre a versão velha) recebe CategoriaConflito — e, decisivo, a
+// linha da vencedora sobrevive na releitura (sem isto, um teste que só
+// confirmasse o erro da segunda escrita não provaria que a primeira não foi
+// silenciosamente apagada).
+func TestGuardarFactura_BloqueioOptimista(t *testing.T) {
+	pool, ctx := ligar(t)
+	migrarFinanceiro(t, pool, ctx)
+	repo := pgrepo.NovoRepositorioFacturas(pool)
+
+	cliente, err := fin.NovoClienteSnapshot("Cliente", "", "")
+	if err != nil {
+		t.Fatalf("NovoClienteSnapshot: %v", err)
+	}
+	f, err := fin.NovaFactura(cliente, uuid.NewString())
+	if err != nil {
+		t.Fatalf("NovaFactura: %v", err)
+	}
+	id, err := repo.Guardar(ctx, f)
+	if err != nil {
+		t.Fatalf("Guardar: %v", err)
+	}
+	limparFactura(t, pool, ctx, id)
+
+	// Dois leitores carregam a MESMA versão.
+	a, err := repo.ObterPorID(ctx, id)
+	if err != nil {
+		t.Fatalf("ObterPorID a: %v", err)
+	}
+	b, err := repo.ObterPorID(ctx, id)
+	if err != nil {
+		t.Fatalf("ObterPorID b: %v", err)
+	}
+	if err := a.AdicionarItem("Consulta A", fin.LinhaConsulta, "", 1,
+		moeda.DeCentimos(1000), fin.RegimeIsento); err != nil {
+		t.Fatalf("AdicionarItem a: %v", err)
+	}
+	if err := b.AdicionarItem("Consulta B", fin.LinhaConsulta, "", 1,
+		moeda.DeCentimos(2000), fin.RegimeIsento); err != nil {
+		t.Fatalf("AdicionarItem b: %v", err)
+	}
+
+	if _, err := repo.Guardar(ctx, a); err != nil {
+		t.Fatalf("a primeira escrita devia passar: %v", err)
+	}
+	_, err = repo.Guardar(ctx, b)
+	if err == nil {
+		t.Fatal("a segunda escrita sobre versão velha tinha de dar conflito (lost update)")
+	}
+	if erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Errorf("esperava Conflito, deu %v", err)
+	}
+
+	// A linha de 'a' sobreviveu — nada se perdeu.
+	final, err := repo.ObterPorID(ctx, id)
+	if err != nil {
+		t.Fatalf("ObterPorID final: %v", err)
+	}
+	if len(final.Itens()) != 1 || final.Itens()[0].Descricao != "Consulta A" {
+		t.Errorf("esperava só a linha de A, tem %d linhas", len(final.Itens()))
 	}
 }
