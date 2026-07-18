@@ -8,6 +8,7 @@ package integration_test
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -36,6 +36,26 @@ func migrarFinanceiro(t *testing.T, pool *pgxpool.Pool, ctx context.Context) {
 	if err := db.AplicarMigracoes(ctx, pool, migrations.FS, logger); err != nil {
 		t.Fatalf("migrations: %v", err)
 	}
+}
+
+// gerarUUIDv4 produz um UUID v4 aleatório a partir de crypto/rand (stdlib), sem
+// recorrer a github.com/google/uuid: o componente tests não pode depender de
+// bibliotecas externas arbitrárias (go-arch-lint, regra "tests"), e o
+// google/uuid continua legítimo nos adaptadores (internal/adapters/http), que
+// não têm essa restrição. Serve para produzir um episodio_id válido em Go
+// antes de tocar na BD; gen_random_uuid() do próprio Postgres (já usado
+// noutros pontos deste ficheiro) continua a ser a via preferida quando já há
+// ligação disponível. Nunca entra em pânico — um erro de crypto/rand é
+// praticamente impossível, mas fica reportado por t.Fatalf, não silenciado.
+func gerarUUIDv4(t *testing.T) string {
+	t.Helper()
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		t.Fatalf("gerar uuid v4: %v", err)
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // versão 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variante RFC 4122
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 // limparFactura remove a factura e as suas linhas (ON DELETE CASCADE trata as linhas).
@@ -556,7 +576,7 @@ func TestGuardarFactura_BloqueioOptimista(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NovoClienteSnapshot: %v", err)
 	}
-	f, err := fin.NovaFactura(cliente, uuid.NewString())
+	f, err := fin.NovaFactura(cliente, gerarUUIDv4(t))
 	if err != nil {
 		t.Fatalf("NovaFactura: %v", err)
 	}
@@ -630,7 +650,7 @@ func TestGuardarFactura_DuasEdicoesSequenciais(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NovoClienteSnapshot: %v", err)
 	}
-	f, err := fin.NovaFactura(cliente, uuid.NewString())
+	f, err := fin.NovaFactura(cliente, gerarUUIDv4(t))
 	if err != nil {
 		t.Fatalf("NovaFactura: %v", err)
 	}
@@ -729,7 +749,7 @@ RETURNING id::text, versao`, numero).Scan(&id, &versao)
 	}
 	emitida := fin.ReconstruirFactura(fin.SnapshotFactura{
 		ID: id, Estado: fin.FactEmitida, Cliente: cliente,
-		EpisodioID: uuid.NewString(), Versao: versao,
+		EpisodioID: gerarUUIDv4(t), Versao: versao,
 	})
 
 	_, err = repo.Guardar(ctx, emitida)
@@ -775,7 +795,7 @@ func TestEmitirFacturas_NumeracaoSemBuracosSobConcorrencia(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NovoClienteSnapshot: %v", err)
 		}
-		f, err := fin.NovaFactura(cliente, uuid.NewString())
+		f, err := fin.NovaFactura(cliente, gerarUUIDv4(t))
 		if err != nil {
 			t.Fatalf("NovaFactura: %v", err)
 		}
