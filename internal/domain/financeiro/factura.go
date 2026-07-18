@@ -237,6 +237,9 @@ func (f *Factura) Itens() []ItemFactura {
 	return out
 }
 
+// CriadoEm devolve o instante de criação da factura.
+func (f *Factura) CriadoEm() time.Time { return f.criadoEm }
+
 // SnapshotFactura carrega o estado completo para persistência ou rehidratação.
 type SnapshotFactura struct {
 	ID            string

@@ -23,5 +23,6 @@ func paraDetalheFactura(f *dominio.Factura) DetalheFactura {
 		ClienteMorada: c.Morada, EpisodioID: f.EpisodioID(), Itens: itens,
 		SubtotalCentimos: tot.Subtotal.Centimos(), TotalIVACentimos: tot.TotalIVA.Centimos(),
 		TotalCentimos: tot.Total.Centimos(), Total: tot.Total.String(),
+		CriadoEm: f.CriadoEm(),
 	}
 }

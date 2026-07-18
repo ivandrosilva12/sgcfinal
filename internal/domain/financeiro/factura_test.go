@@ -2,6 +2,7 @@ package financeiro_test
 
 import (
 	"testing"
+	"time"
 
 	fin "github.com/ivandrosilva12/sgcfinal/internal/domain/financeiro"
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/erros"
@@ -189,6 +190,18 @@ func TestFacturaGetters(t *testing.T) {
 	}
 	if f.EpisodioID() != "11111111-1111-1111-1111-111111111111" {
 		t.Errorf("episodioID = %s", f.EpisodioID())
+	}
+	// CriadoEm: zero antes de persistir; reconstrução a partir de snapshot
+	// devolve o instante gravado.
+	if !f.CriadoEm().IsZero() {
+		t.Errorf("criadoEm devia ser zero antes de persistir; tem %v", f.CriadoEm())
+	}
+	esperado := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+	s := f.Snapshot()
+	s.CriadoEm = esperado
+	f = fin.ReconstruirFactura(s)
+	if !f.CriadoEm().Equal(esperado) {
+		t.Errorf("criadoEm = %v; esperava %v", f.CriadoEm(), esperado)
 	}
 }
 
