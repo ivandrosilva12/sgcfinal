@@ -1,0 +1,10 @@
+# Corpus do grafo de conhecimento (graphify).
+#
+# Estes ficheiros continuam versionados em git — apenas não entram no grafo.
+# As skills e a configuração dos agentes descrevem ferramentas (o pipeline do
+# próprio graphify), não o domínio SGC. Incluí-las produziu ruído medido:
+# 68 dos 82 nós que não alcançavam código vinham daqui, e as "ligações
+# surpreendentes" do relatório eram dominadas por pares .claude/ ↔ .codex/
+# (6 dos 8 ficheiros de referência são byte-idênticos entre as duas árvores).
+/.claude/
+/.codex/

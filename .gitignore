@@ -40,3 +40,9 @@ desktop.ini
 # Dados locais de infra (docker volumes montados no repo)
 /docker/data/
 /.data/
+
+# Configuração local dos agentes (permissões por máquina, não partilhável)
+/.claude/settings.local.json
+
+# Saída gerada pelo graphify (artefacto, reconstruível com `graphify update .`)
+/graphify-out/
