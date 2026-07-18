@@ -82,3 +82,135 @@ func TestItemFacturaCalculo(t *testing.T) {
 		t.Errorf("IVA arredondado = %d; esperava 45", got)
 	}
 }
+
+func novaFacturaValida(t *testing.T) *fin.Factura {
+	t.Helper()
+	c, err := fin.NovoClienteSnapshot("Clínica Sol", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := fin.NovaFactura(c, "11111111-1111-1111-1111-111111111111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func TestNovaFacturaArrancaEmRascunho(t *testing.T) {
+	f := novaFacturaValida(t)
+	if f.Estado() != fin.FactRascunho {
+		t.Errorf("estado = %s; esperava RASCUNHO", f.Estado())
+	}
+	if len(f.Itens()) != 0 {
+		t.Error("factura nova não tem itens")
+	}
+}
+
+func TestAdicionarItemInvariantes(t *testing.T) {
+	f := novaFacturaValida(t)
+	// Quantidade tem de ser > 0.
+	if err := f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 0, moeda.DeKwanzas(10), fin.RegimeIsento); err == nil {
+		t.Error("quantidade 0 devia falhar")
+	}
+	// DISPENSA exige operacaoID.
+	if err := f.AdicionarItem("Paracetamol", fin.LinhaDispensa, "", 1, moeda.DeKwanzas(10), fin.RegimeStandard); err == nil {
+		t.Error("DISPENSA sem operacaoID devia falhar")
+	}
+	// Tipo inválido.
+	if err := f.AdicionarItem("X", fin.TipoLinha("X"), "", 1, moeda.DeKwanzas(10), fin.RegimeIsento); err == nil {
+		t.Error("tipo inválido devia falhar")
+	}
+	// Linha válida.
+	if err := f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1, moeda.DeKwanzas(5000), fin.RegimeIsento); err != nil {
+		t.Fatalf("linha válida devia passar: %v", err)
+	}
+	if len(f.Itens()) != 1 {
+		t.Errorf("esperava 1 item; tem %d", len(f.Itens()))
+	}
+}
+
+func TestTotaisSomaPorLinha(t *testing.T) {
+	f := novaFacturaValida(t)
+	_ = f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1, moeda.DeKwanzas(5000), fin.RegimeIsento)
+	_ = f.AdicionarItem("Medicamento", fin.LinhaDispensa, "22222222-2222-2222-2222-222222222222", 2, moeda.DeKwanzas(1000), fin.RegimeStandard)
+	tot := f.Totais()
+	// Subtotal: 5000 + 2×1000 = 7000 Kz = 700000 cent.
+	if tot.Subtotal.Centimos() != 700000 {
+		t.Errorf("subtotal = %d; esperava 700000", tot.Subtotal.Centimos())
+	}
+	// IVA: consulta isenta (0) + medicamento 14% de 200000 = 28000.
+	if tot.TotalIVA.Centimos() != 28000 {
+		t.Errorf("IVA = %d; esperava 28000", tot.TotalIVA.Centimos())
+	}
+	if tot.Total.Centimos() != 728000 {
+		t.Errorf("total = %d; esperava 728000", tot.Total.Centimos())
+	}
+}
+
+func TestRemoverItem(t *testing.T) {
+	f := novaFacturaValida(t)
+	_ = f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1, moeda.DeKwanzas(5000), fin.RegimeIsento)
+	// Dar id ao item via reconstrução (simula item já persistido).
+	s := f.Snapshot()
+	s.Itens[0].ID = "item-1"
+	f = fin.ReconstruirFactura(s)
+	if err := f.RemoverItem("nao-existe"); err == nil {
+		t.Error("remover item inexistente devia falhar")
+	}
+	if err := f.RemoverItem("item-1"); err != nil {
+		t.Fatalf("remover item existente: %v", err)
+	}
+	if len(f.Itens()) != 0 {
+		t.Error("item devia ter sido removido")
+	}
+}
+
+func TestNovaFacturaValidaCliente(t *testing.T) {
+	if _, err := fin.NovaFactura(fin.ClienteSnapshot{}, "11111111-1111-1111-1111-111111111111"); err == nil {
+		t.Error("cliente sem nome devia falhar")
+	}
+	c, _ := fin.NovoClienteSnapshot("Clínica Sol", "", "")
+	if _, err := fin.NovaFactura(c, "   "); err == nil {
+		t.Error("episodioID em branco devia falhar")
+	}
+}
+
+func TestFacturaGetters(t *testing.T) {
+	c, _ := fin.NovoClienteSnapshot("Clínica Sol", "", "")
+	f, err := fin.NovaFactura(c, "11111111-1111-1111-1111-111111111111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.ID() != "" {
+		t.Error("id vazio antes de persistir")
+	}
+	if f.Cliente() != c {
+		t.Errorf("cliente = %+v; esperava %+v", f.Cliente(), c)
+	}
+	if f.EpisodioID() != "11111111-1111-1111-1111-111111111111" {
+		t.Errorf("episodioID = %s", f.EpisodioID())
+	}
+}
+
+func TestAdicionarItemPrecoNegativoERegimeInvalido(t *testing.T) {
+	f := novaFacturaValida(t)
+	if err := f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1, moeda.DeCentimos(-100), fin.RegimeIsento); err == nil {
+		t.Error("preço negativo devia falhar")
+	}
+	if err := f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1, moeda.DeKwanzas(10), fin.RegimeIVA("OUTRO")); err == nil {
+		t.Error("regime inválido devia falhar")
+	}
+}
+
+func TestAlterarLinhasForaDeRascunhoFalha(t *testing.T) {
+	f := novaFacturaValida(t)
+	s := f.Snapshot()
+	s.Estado = fin.FactEmitida
+	f = fin.ReconstruirFactura(s)
+	if err := f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1, moeda.DeKwanzas(10), fin.RegimeIsento); err == nil {
+		t.Error("adicionar item fora de RASCUNHO devia falhar")
+	}
+	if err := f.RemoverItem("qualquer"); err == nil {
+		t.Error("remover item fora de RASCUNHO devia falhar")
+	}
+}

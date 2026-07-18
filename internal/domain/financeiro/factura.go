@@ -125,4 +125,144 @@ func (i ItemFactura) ValorIVA() moeda.AOA {
 // Total é subtotal + IVA da linha.
 func (i ItemFactura) Total() moeda.AOA { return i.Subtotal().Somar(i.ValorIVA()) }
 
-var _ = time.Time{} // usado pelo agregado na Task 5
+// Factura é o agregado raiz do BC Financeiro. Nasce em RASCUNHO; as linhas
+// podem ser adicionadas e removidas enquanto está em rascunho. A emissão
+// (ADR-040) fixa a factura.
+type Factura struct {
+	id            string
+	estado        EstadoFactura
+	cliente       ClienteSnapshot
+	episodioID    string
+	itens         []ItemFactura
+	criadoEm      time.Time
+	actualizadoEm time.Time
+}
+
+// NovaFactura cria uma factura em RASCUNHO, sem itens. O episodioID é um id
+// lógico (uuid) sem FK cross-context.
+func NovaFactura(cliente ClienteSnapshot, episodioID string) (*Factura, error) {
+	if cliente.Nome == "" {
+		return nil, erros.Novo(erros.CategoriaValidacao, "cliente da factura em falta")
+	}
+	episodioID = strings.TrimSpace(episodioID)
+	if episodioID == "" {
+		return nil, erros.Novo(erros.CategoriaValidacao, "episódio da factura em falta")
+	}
+	return &Factura{estado: FactRascunho, cliente: cliente, episodioID: episodioID}, nil
+}
+
+// AdicionarItem acrescenta uma linha. Só é permitido em RASCUNHO. O item nasce
+// sem id — o repositório atribui-o na persistência.
+func (f *Factura) AdicionarItem(descricao string, tipo TipoLinha, operacaoID string, quantidade int, preco moeda.AOA, regime RegimeIVA) error {
+	if f.estado != FactRascunho {
+		return erros.Novo(erros.CategoriaConflito, "só é possível alterar linhas de uma factura em rascunho")
+	}
+	descricao = strings.TrimSpace(descricao)
+	if descricao == "" {
+		return erros.Novo(erros.CategoriaValidacao, "descrição da linha em falta")
+	}
+	if !tipo.Valido() {
+		return erros.Novo(erros.CategoriaValidacao, "tipo de linha inválido")
+	}
+	operacaoID = strings.TrimSpace(operacaoID)
+	if tipo.ExigeOperacao() && operacaoID == "" {
+		return erros.Novo(erros.CategoriaValidacao, "operação de origem da linha em falta")
+	}
+	if quantidade <= 0 {
+		return erros.Novo(erros.CategoriaValidacao, "quantidade tem de ser positiva")
+	}
+	if preco.Negativo() {
+		return erros.Novo(erros.CategoriaValidacao, "preço unitário não pode ser negativo")
+	}
+	if !regime.Valido() {
+		return erros.Novo(erros.CategoriaValidacao, "regime de IVA inválido")
+	}
+	f.itens = append(f.itens, ItemFactura{
+		Descricao: descricao, Tipo: tipo, OperacaoID: operacaoID,
+		Quantidade: quantidade, PrecoUnitario: preco, RegimeIVA: regime,
+	})
+	return nil
+}
+
+// RemoverItem retira a linha com o id dado. Só é permitido em RASCUNHO.
+func (f *Factura) RemoverItem(itemID string) error {
+	if f.estado != FactRascunho {
+		return erros.Novo(erros.CategoriaConflito, "só é possível alterar linhas de uma factura em rascunho")
+	}
+	for idx, it := range f.itens {
+		if it.ID == itemID && itemID != "" {
+			f.itens = append(f.itens[:idx], f.itens[idx+1:]...)
+			return nil
+		}
+	}
+	return erros.Novo(erros.CategoriaNaoEncontrado, "linha da factura não encontrada")
+}
+
+// Totais soma, por linha, os subtotais e o IVA (arredondar por linha e somar,
+// prática fiscal). O total autoritário vive aqui — nunca em SQL.
+type Totais struct {
+	Subtotal moeda.AOA
+	TotalIVA moeda.AOA
+	Total    moeda.AOA
+}
+
+// Totais calcula os totais da factura.
+func (f *Factura) Totais() Totais {
+	sub := moeda.DeCentimos(0)
+	iva := moeda.DeCentimos(0)
+	for _, it := range f.itens {
+		sub = sub.Somar(it.Subtotal())
+		iva = iva.Somar(it.ValorIVA())
+	}
+	return Totais{Subtotal: sub, TotalIVA: iva, Total: sub.Somar(iva)}
+}
+
+// ID devolve o identificador (vazio antes de persistir).
+func (f *Factura) ID() string { return f.id }
+
+// Estado devolve o estado actual.
+func (f *Factura) Estado() EstadoFactura { return f.estado }
+
+// Cliente devolve o snapshot do cliente.
+func (f *Factura) Cliente() ClienteSnapshot { return f.cliente }
+
+// EpisodioID devolve o id lógico do episódio.
+func (f *Factura) EpisodioID() string { return f.episodioID }
+
+// Itens devolve uma cópia das linhas.
+func (f *Factura) Itens() []ItemFactura {
+	out := make([]ItemFactura, len(f.itens))
+	copy(out, f.itens)
+	return out
+}
+
+// SnapshotFactura carrega o estado completo para persistência ou rehidratação.
+type SnapshotFactura struct {
+	ID            string
+	Estado        EstadoFactura
+	Cliente       ClienteSnapshot
+	EpisodioID    string
+	Itens         []ItemFactura
+	CriadoEm      time.Time
+	ActualizadoEm time.Time
+}
+
+// Snapshot devolve o estado completo do agregado.
+func (f *Factura) Snapshot() SnapshotFactura {
+	itens := make([]ItemFactura, len(f.itens))
+	copy(itens, f.itens)
+	return SnapshotFactura{
+		ID: f.id, Estado: f.estado, Cliente: f.cliente, EpisodioID: f.episodioID,
+		Itens: itens, CriadoEm: f.criadoEm, ActualizadoEm: f.actualizadoEm,
+	}
+}
+
+// ReconstruirFactura reconstrói o agregado a partir de um snapshot persistido.
+func ReconstruirFactura(s SnapshotFactura) *Factura {
+	itens := make([]ItemFactura, len(s.Itens))
+	copy(itens, s.Itens)
+	return &Factura{
+		id: s.ID, estado: s.Estado, cliente: s.Cliente, episodioID: s.EpisodioID,
+		itens: itens, criadoEm: s.CriadoEm, actualizadoEm: s.ActualizadoEm,
+	}
+}
