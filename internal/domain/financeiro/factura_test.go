@@ -214,3 +214,11 @@ func TestAlterarLinhasForaDeRascunhoFalha(t *testing.T) {
 		t.Error("remover item fora de RASCUNHO devia falhar")
 	}
 }
+
+func TestResumoFacturaCampos(t *testing.T) {
+	var _ fin.RepositorioFacturas // a porta tem de existir
+	r := fin.ResumoFactura{ID: "f1", Estado: "RASCUNHO", ClienteNome: "Sol", NumItens: 2, TotalCentimos: 728000}
+	if r.TotalCentimos != 728000 {
+		t.Error("ResumoFactura deve expor o total em cêntimos")
+	}
+}

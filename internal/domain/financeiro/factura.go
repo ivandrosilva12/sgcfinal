@@ -5,6 +5,7 @@
 package financeiro
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -265,4 +266,27 @@ func ReconstruirFactura(s SnapshotFactura) *Factura {
 		id: s.ID, estado: s.Estado, cliente: s.Cliente, episodioID: s.EpisodioID,
 		itens: itens, criadoEm: s.CriadoEm, actualizadoEm: s.ActualizadoEm,
 	}
+}
+
+// ResumoFactura é a projecção de leitura de uma factura (listagem).
+type ResumoFactura struct {
+	ID            string    `json:"id"`
+	Estado        string    `json:"estado"`
+	ClienteNome   string    `json:"cliente_nome"`
+	EpisodioID    string    `json:"episodio_id,omitempty"`
+	NumItens      int       `json:"num_itens"`
+	TotalCentimos int64     `json:"total_centimos"`
+	Total         string    `json:"total"`
+	CriadoEm      time.Time `json:"criado_em"`
+}
+
+// RepositorioFacturas é a porta de saída de persistência de facturas.
+//
+// Guardar é um upsert transaccional: INSERT da factura (id gerado) quando nova, ou
+// UPDATE guardado por estado=RASCUNHO quando existente, reescrevendo as linhas numa
+// única transacção. Devolve o id da factura.
+type RepositorioFacturas interface {
+	Guardar(ctx context.Context, f *Factura) (string, error)
+	ObterPorID(ctx context.Context, id string) (*Factura, error)
+	ListarPorEpisodio(ctx context.Context, episodioID string) ([]ResumoFactura, error)
 }
