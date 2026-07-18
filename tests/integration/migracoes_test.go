@@ -84,7 +84,7 @@ func TestAuditoria_Imutavel(t *testing.T) {
 	}
 }
 
-func TestSeed_OnzePapeis(t *testing.T) {
+func TestSeed_DozePapeis(t *testing.T) {
 	pool, ctx := ligar(t)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if err := db.AplicarMigracoes(ctx, pool, migrations.FS, logger); err != nil {
@@ -103,8 +103,8 @@ func TestSeed_OnzePapeis(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM identidade.papeis`).Scan(&n); err != nil {
 		t.Fatalf("contar papéis: %v", err)
 	}
-	if n != 11 {
-		t.Fatalf("esperava 11 papéis (DDM-001), obtive %d", n)
+	if n != 12 {
+		t.Fatalf("esperava 12 papéis (DDM-001 + Tesoureiro/ERRATA-002), obtive %d", n)
 	}
 }
 

@@ -65,7 +65,7 @@ resolvida por esta fatia — ver secção Diferido.
    'EM_CONSULTA'` — 0 linhas afectadas é no-op, cobrindo tanto a reentrega
    at-least-once de um evento já processado como um episódio que não nasceu da fila
    clínica (mesmo contrato de "episódio sem chegada" da ADR-037). Cancelamento de
-   episódio → chegada fica pendente (candidato ADR-039, ver Diferido).
+   episódio → chegada fica pendente (candidato a ADR futura, ver Diferido).
 6. **Colunas `tentativas`/`ultimo_erro` em vez de dead-lettering.**
    `migrations/shared/0002` acrescenta as duas colunas ao outbox: falha de handler
    incrementa `tentativas` e grava `ultimo_erro`, sem marcar `publicado_em` — a linha
@@ -101,10 +101,11 @@ resolvida por esta fatia — ver secção Diferido.
 
 ## Diferido
 
-- **Candidato ADR-039**: cancelamento de episódio → chegada (evento
+- **ADR-039 foi atribuído ao arranque do BC Financeiro** (factura, ADR-039-bc-financeiro-factura),
+  não a este candidato. Cancelamento de episódio → chegada (evento
   `clinico.episodio.cancelado`), e/ou auditoria-na-tx via outbox (encaminhar o
   registo de auditoria pelo mesmo mecanismo mexe em toda a base de casos de uso e
-  fica para uma ADR própria).
+  fica para uma ADR própria) continuam pendentes, para uma **ADR a atribuir**.
 - LISTEN/NOTIFY como optimização de latência sobre o poll existente.
 - Dead-lettering/quarentena por limite de tentativas.
 - Consumidores out-of-process (fora do binário `cmd/api`).

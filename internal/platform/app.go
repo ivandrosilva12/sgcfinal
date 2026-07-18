@@ -22,6 +22,7 @@ import (
 	adsmtp "github.com/ivandrosilva12/sgcfinal/internal/adapters/smtp"
 	appclinico "github.com/ivandrosilva12/sgcfinal/internal/application/clinico"
 	appfarmacia "github.com/ivandrosilva12/sgcfinal/internal/application/farmacia"
+	appfinanceiro "github.com/ivandrosilva12/sgcfinal/internal/application/financeiro"
 	appident "github.com/ivandrosilva12/sgcfinal/internal/application/identidade"
 	applaboratorio "github.com/ivandrosilva12/sgcfinal/internal/application/laboratorio"
 	apprecepcao "github.com/ivandrosilva12/sgcfinal/internal/application/recepcao"
@@ -203,6 +204,16 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		applaboratorio.NovoCasoCorrigirResultado(repoResultados, repoRequisicoes, repoAnalises, resolvedorContacto, notificadorCritico, repoAuditoria),
 	)
 
+	// BC Financeiro (M4, ADR-039): agregado Factura em RASCUNHO.
+	repoFacturas := pgrepo.NovoRepositorioFacturas(pool)
+	handlerFinanceiro := adhttp.NovoFinanceiroHandler(
+		appfinanceiro.NovoCasoCriarFactura(repoFacturas, repoAuditoria),
+		appfinanceiro.NovoCasoAdicionarItem(repoFacturas, repoAuditoria),
+		appfinanceiro.NovoCasoRemoverItem(repoFacturas, repoAuditoria),
+		appfinanceiro.NovoCasoObterFactura(repoFacturas),
+		appfinanceiro.NovoCasoListarFacturasPorEpisodio(repoFacturas),
+	)
+
 	// BC Recepção (marco Percurso Ambulatório): marcação e agenda por disponibilidade.
 	repoJanelas := pgrepo.NovoRepositorioJanelas(pool)
 	repoMarcacoes := pgrepo.NovoRepositorioMarcacoes(pool)
@@ -268,6 +279,7 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		adhttp.RegistarFarmacia(r, handlerFarmacia, limiteMW, authMW)
 		adhttp.RegistarFarmaciaStock(r, handlerFarmaciaStock, limiteMW, authMW)
 		adhttp.RegistarLaboratorio(r, handlerLaboratorio, limiteMW, authMW)
+		adhttp.RegistarFinanceiro(r, handlerFinanceiro, limiteMW, authMW)
 		adhttp.RegistarRecepcao(r, handlerRecepcao, limiteMW, authMW)
 		adhttp.RegistarRecepcaoChegadas(r, handlerRecepcaoChegadas, limiteMW, authMW)
 		adhttp.RegistarRecepcaoTriagem(r, handlerRecepcaoTriagem, limiteMW, authMW)

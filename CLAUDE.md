@@ -76,6 +76,17 @@ seeds/  tests/  docs/  adrs/  docker/
 
 ## 6. Marco Actual
 
+**M4 — Financeiro** (em curso; Sprint 14; ver `SPRINT.md`). Arranque do último dos 5
+bounded contexts, precedido da fundação RBAC do 12.º papel **Tesoureiro** (ERRATA-002,
+`docs/ERRATA-002-papel-tesoureiro.md`; não-sensível nesta fatia, sem MFA). Entrega o
+agregado `Factura` em estado **RASCUNHO** (ADR-039, Opção A): `ItemFactura` com
+snapshot de linha (descrição/preço fornecidos no pedido) e id lógico da operação de
+origem (sem FK cross-context), IVA por item (ISENTO/STANDARD 14%, arredondamento
+meia-acima por linha) com total autoritário no domínio, persistência por upsert
+transaccional e RBAC (escrita Tesoureiro; leitura Tesoureiro/Director/Auditor). A
+emissão — cadeia hash SHA-256, numeração sequencial por série, imutabilidade — fica
+deliberadamente fora desta fatia, para o ADR-040.
+
 **M3 — Laboratório** (entregue; Sprints 12–13; ver `SPRINT.md`). Entrega o BC
 Laboratório completo: catálogo de análises, requisição (via ACL sobre o Clínico),
 amostra e resultado com state machine até ao preliminar (Sprint 12); validação com
@@ -102,7 +113,9 @@ e dispensa FEFO).
 **M1 — Fundações** (entregue; ver `docs/PLANO-M1-Fundacao-Identidade.md`): esqueleto
 arquitectural + infra (Docker Compose) + fatia vertical do BC Identidade (Keycloak
 OIDC + JWT RS256 + RBAC 11 papéis — DDM-001, ver `docs/ERRATA-001-papeis.md`) +
-audit log + observabilidade. Pendente: deploy de staging em CI/CD.
+audit log + observabilidade. Pendente: deploy de staging em CI/CD. **Nota**: o
+catálogo RBAC do DDM-001 v2.0 passou a **12 papéis** com o arranque do M4 —
+Tesoureiro, ver `docs/ERRATA-002-papel-tesoureiro.md`.
 
 ## 7. Antipadrões a Rejeitar
 
@@ -141,5 +154,6 @@ confirmação humana**. Nunca improvisar decisão arquitectural ou de conformida
 `adrs/ADR-035-laboratorio-validacao-correccao.md`,
 `adrs/ADR-036-integracao-inicio-consulta.md`,
 `adrs/ADR-037-ehr-triagem.md`,
-`adrs/ADR-038-outbox.md`.
-Próximo ADR: **ADR-039**.
+`adrs/ADR-038-outbox.md`,
+`adrs/ADR-039-bc-financeiro-factura.md`.
+Próximo ADR: **ADR-040**.

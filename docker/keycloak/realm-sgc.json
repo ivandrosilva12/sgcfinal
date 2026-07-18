@@ -24,7 +24,8 @@
       { "name": "Director", "description": "Director Clínico" },
       { "name": "Admin", "description": "Administrador de Sistema" },
       { "name": "DPO", "description": "Encarregado de Protecção de Dados" },
-      { "name": "Auditor", "description": "Auditor" }
+      { "name": "Auditor", "description": "Auditor" },
+      { "name": "Tesoureiro", "description": "Tesoureiro (facturação)" }
     ]
   },
   "clients": [

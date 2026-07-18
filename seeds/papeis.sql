@@ -1,5 +1,6 @@
--- Seed dos 11 papéis RBAC do SGC Angola (fonte: DDM-001 v2.0).
+-- Seed dos 12 papéis RBAC do SGC Angola (fonte: DDM-001 v2.0).
 -- Ver docs/ERRATA-001-papeis.md (divergência 8 vs 11, resolvida a favor do DDM-001).
+-- O 12.º papel (Tesoureiro) provém da ERRATA-002 (ver docs/ERRATA-002-papel-tesoureiro.md).
 -- Idempotente: reexecutar não duplica nem altera atribuições existentes.
 -- Papéis sensíveis (sensivel=true) exigirão MFA em M1/Sprint 3.
 
@@ -14,7 +15,8 @@ INSERT INTO identidade.papeis (codigo, descricao, sensivel) VALUES
     ('Director',           'Director Clínico',             true),
     ('Admin',              'Administrador de Sistema',     true),
     ('DPO',                'Encarregado de Protecção de Dados (DPO)', true),
-    ('Auditor',            'Auditor',                      true)
+    ('Auditor',            'Auditor',                      true),
+    ('Tesoureiro',         'Tesoureiro (facturação)',      false)
 ON CONFLICT (codigo) DO UPDATE
     SET descricao = EXCLUDED.descricao,
         sensivel  = EXCLUDED.sensivel;

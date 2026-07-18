@@ -1,8 +1,8 @@
 package identidade
 
-// Papel é um papel RBAC do SGC Angola. Os 11 valores canónicos provêm do
-// DDM-001 v2.0 (ver docs/ERRATA-001-papeis.md) e são semeados em
-// seeds/papeis.sql. Correspondem aos realm roles do Keycloak.
+// Papel é um papel RBAC do SGC Angola. Os 12 valores canónicos provêm do
+// DDM-001 v2.0 (ver docs/ERRATA-001-papeis.md) (12.º papel: ERRATA-002) e são
+// semeados em seeds/papeis.sql. Correspondem aos realm roles do Keycloak.
 type Papel string
 
 const (
@@ -17,9 +17,10 @@ const (
 	PapelAdmin              Papel = "Admin"
 	PapelDPO                Papel = "DPO"
 	PapelAuditor            Papel = "Auditor"
+	PapelTesoureiro         Papel = "Tesoureiro"
 )
 
-// papeisValidos é o conjunto canónico dos 11 papéis.
+// papeisValidos é o conjunto canónico dos 12 papéis.
 var papeisValidos = map[Papel]bool{
 	PapelMedico:             true,
 	PapelEnfermeiro:         true,
@@ -32,6 +33,7 @@ var papeisValidos = map[Papel]bool{
 	PapelAdmin:              true,
 	PapelDPO:                true,
 	PapelAuditor:            true,
+	PapelTesoureiro:         true,
 }
 
 // papeisSensiveis exigem MFA (Sprint 3). Alinhado com sensivel=true em
@@ -43,7 +45,7 @@ var papeisSensiveis = map[Papel]bool{
 	PapelAuditor:  true,
 }
 
-// PapelValido indica se o código corresponde a um dos 11 papéis canónicos.
+// PapelValido indica se o código corresponde a um dos 12 papéis canónicos.
 func PapelValido(codigo string) bool {
 	return papeisValidos[Papel(codigo)]
 }

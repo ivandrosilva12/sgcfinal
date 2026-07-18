@@ -1,10 +1,28 @@
 # SPRINT ACTUAL
 
-- **Marco**: M3 — Laboratório — **entregue**
-- **Sprint**: 13 (BC Laboratório — validação, valores críticos, correcção) — **entregue**
-- **Objectivo**: fechar o BC Laboratório com a validação pelo patologista (segregação
-  de funções), a detecção e notificação de valores críticos e a correcção de um
-  resultado já validado, preservando o original.
+- **Marco**: M4 — Financeiro — **em curso**
+- **Sprint**: 14 (BC Financeiro — arranque, agregado Factura RASCUNHO) — **entregue**
+- **Objectivo**: arrancar o último dos 5 bounded contexts com uma fatia vertical fina
+  (domínio Factura em RASCUNHO, IVA/totais, persistência transaccional, HTTP+RBAC),
+  precedida da fundação RBAC do papel Tesoureiro (ERRATA-002); a emissão (hash,
+  numeração, imutabilidade) fica para o ADR-040 (Sprint 15).
+
+## Sprint 14 — entregue
+
+- [x] 12.º papel RBAC `Tesoureiro` (ERRATA-002): não-sensível nesta fatia (sem
+      MFA — decisão a rever no ADR-040), seed idempotente e realm role Keycloak.
+- [x] Agregado `Factura` (RASCUNHO) + `ItemFactura` + `ClienteSnapshot`: tipos de
+      linha (CONSULTA/DISPENSA/EXAME_ANALISE/ESTUDO_IMAGEM/PROCEDIMENTO_CIRURGICO)
+      com snapshot de descrição/preço e id lógico da operação de origem, sem FK
+      cross-context.
+- [x] IVA por item (ISENTO/STANDARD 14%), arredondamento meia-acima por linha,
+      total autoritário calculado no domínio (nunca em SQL).
+- [x] Persistência `financeiro/0001_facturas.sql` (schema + `facturas`/
+      `itens_factura`, FK intra-BC permitida) e `RepositorioFacturas` pgx com
+      upsert transaccional (reescrita de linhas por substituição).
+- [x] Casos de uso auditados (`financeiro.factura.*`) e HTTP+RBAC (escrita
+      Tesoureiro; leitura Tesoureiro/Director/Auditor).
+- [x] ADR-039.
 
 ## Sprint 13 — entregue
 
@@ -226,6 +244,29 @@
   em curso é abortado em segurança (rollback), retomado no arranque seguinte.
 - [x] Gates de cobertura verdes (85/75/60); `go-arch-lint` sem violações.
 - [x] ADR-038 registada; CLAUDE.md §6 e o índice de ADRs actualizados.
+
+## Critérios de saída — Arranque do BC Financeiro (ADR-039)
+
+- [x] Agregado `Factura` nasce em RASCUNHO (`NovaFactura`); `AdicionarItem`/
+      `RemoverItem` só permitidos em RASCUNHO; `EstadoFactura` antecipa
+      EMITIDA/ANULADA no enum e na CHECK, inalcançáveis nesta fatia.
+- [x] Papel `Tesoureiro` (12.º, ERRATA-002) válido no enum `identidade.Papel`,
+      não-sensível (sem MFA), semeado (`identidade/0005`) e no realm Keycloak.
+- [x] IVA por item (ISENTO/STANDARD 14%) com arredondamento meia-acima por linha;
+      `Totais()` soma por linha (arredondar e somar, não somar e arredondar) —
+      total autoritário no domínio, provado em testes de unidade.
+- [x] RBAC nas rotas financeiras: escrita (`POST`/`DELETE`) só Tesoureiro; leitura
+      (`GET`) Tesoureiro/Director/Auditor.
+- [x] Migração `financeiro/0001_facturas.sql` aplicada (schema `financeiro`,
+      `facturas`+`itens_factura`, CHECKs de estado/tipo/regime/quantidade/preço,
+      FK intra-BC `itens_factura → facturas`; sem FK cross-context em
+      `episodio_id`/`operacao_id`), embebida em `migrations/embed.go`.
+- [x] `RepositorioFacturas` pgx: upsert transaccional (INSERT/UPDATE guardado por
+      `estado='RASCUNHO'`) com reescrita de linhas, provado por integração real
+      contra Postgres.
+- [x] Gates de cobertura verdes (domínio ≥85%, aplicação ≥75%, adaptadores ≥60%);
+      `go-arch-lint` sem violações.
+- [x] ADR-039 registada; CLAUDE.md §6 e o índice de ADRs actualizados.
 
 ## Critérios de saída M1
 
