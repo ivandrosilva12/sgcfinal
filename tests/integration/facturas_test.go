@@ -314,29 +314,41 @@ func TestFacturaRascunho_ActualizarLinhaAlteraOValor(t *testing.T) {
 // TestItemFacturaEmitida_ImutavelNaBD reconfirma, depois da correcção ao
 // RETURN OLD acima, que a imutabilidade das linhas de uma factura EMITIDA se
 // mantém estanque: UPDATE e DELETE continuam bloqueados com SQLSTATE 23001
-// (restrict_violation). A linha é inserida directamente por SQL (contornando
-// o domínio, tal como TestFacturaEmitida_ImutavelNaBD) porque o alvo é o
-// trigger, não o repositório.
+// (restrict_violation). A fixture semeia a linha ENQUANTO a factura ainda está
+// em RASCUNHO e só depois promove a EMITIDA por UPDATE — desde a correcção ao
+// achado F1 da revisão final (trg_itens_factura_imutaveis passou a disparar
+// também em INSERT), inserir a linha directamente numa factura já EMITIDA é,
+// de propósito, o próprio comportamento que este teste (e
+// TestInserirItemEmFacturaEmitida_RejeitadoNaBD) prova estar bloqueado.
 func TestItemFacturaEmitida_ImutavelNaBD(t *testing.T) {
 	pool, ctx := ligar(t)
 	migrarFinanceiro(t, pool, ctx)
 
 	const numero = "FAC 2026/09999998"
 	var facturaID string
-	err := pool.QueryRow(ctx, `
-INSERT INTO financeiro.facturas
-    (estado, cliente_nome, episodio_id, numero, serie, sequencial,
-     data_emissao, hash, hash_anterior)
-VALUES ('EMITIDA','Cliente',gen_random_uuid(),$1,'2026',9999998,
-        now(),'abc','')
-ON CONFLICT (numero) WHERE numero IS NOT NULL DO NOTHING
-RETURNING id::text`, numero).Scan(&facturaID)
-	if err != nil {
-		// Corrida anterior já deixou esta factura (e a sua linha) na BD —
-		// permanentemente irremovíveis, de propósito. Reutiliza-as.
-		if err := pool.QueryRow(ctx,
-			`SELECT id::text FROM financeiro.facturas WHERE numero=$1`, numero).Scan(&facturaID); err != nil {
-			t.Fatalf("inserir/obter factura emitida: %v", err)
+	if err := pool.QueryRow(ctx,
+		`SELECT id::text FROM financeiro.facturas WHERE numero=$1`, numero).Scan(&facturaID); err != nil {
+		// Ainda não existe: cria como RASCUNHO, semeia a linha (permitido em
+		// RASCUNHO) e só então promove a EMITIDA — a emissão parte sempre de
+		// um RASCUNHO e o UPDATE passa (OLD.estado='RASCUNHO').
+		if err := pool.QueryRow(ctx, `
+INSERT INTO financeiro.facturas (estado, cliente_nome, episodio_id)
+VALUES ('RASCUNHO','Cliente',gen_random_uuid())
+RETURNING id::text`).Scan(&facturaID); err != nil {
+			t.Fatalf("inserir factura rascunho: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `
+INSERT INTO financeiro.itens_factura
+    (factura_id, descricao, tipo, quantidade, preco_unitario_centimos, regime_iva, ordem)
+VALUES ($1,'Linha emitida','CONSULTA',1,5000,'ISENTO',0)`, facturaID); err != nil {
+			t.Fatalf("inserir linha em rascunho: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `
+UPDATE financeiro.facturas
+   SET estado='EMITIDA', numero=$2, serie='2026', sequencial=9999998,
+       data_emissao=now(), hash='abc', hash_anterior=''
+ WHERE id=$1`, facturaID, numero); err != nil {
+			t.Fatalf("promover factura a emitida: %v", err)
 		}
 	}
 	t.Cleanup(func() {
@@ -346,16 +358,10 @@ RETURNING id::text`, numero).Scan(&facturaID)
 	var itemID string
 	if err := pool.QueryRow(ctx,
 		`SELECT id::text FROM financeiro.itens_factura WHERE factura_id=$1 LIMIT 1`, facturaID).Scan(&itemID); err != nil {
-		if err := pool.QueryRow(ctx, `
-INSERT INTO financeiro.itens_factura
-    (factura_id, descricao, tipo, quantidade, preco_unitario_centimos, regime_iva, ordem)
-VALUES ($1,'Linha emitida','CONSULTA',1,5000,'ISENTO',0)
-RETURNING id::text`, facturaID).Scan(&itemID); err != nil {
-			t.Fatalf("inserir linha de factura emitida: %v", err)
-		}
+		t.Fatalf("obter linha da factura emitida: %v", err)
 	}
 
-	_, err = pool.Exec(ctx, `UPDATE financeiro.itens_factura SET quantidade=99 WHERE id=$1`, itemID)
+	_, err := pool.Exec(ctx, `UPDATE financeiro.itens_factura SET quantidade=99 WHERE id=$1`, itemID)
 	if err == nil {
 		t.Fatal("UPDATE numa linha de factura emitida tinha de falhar")
 	}
@@ -366,6 +372,105 @@ RETURNING id::text`, facturaID).Scan(&itemID); err != nil {
 
 	if _, err := pool.Exec(ctx, `DELETE FROM financeiro.itens_factura WHERE id=$1`, itemID); err == nil {
 		t.Error("DELETE numa linha de factura emitida tinha de falhar")
+	}
+}
+
+// TestInserirItemEmFacturaEmitida_RejeitadoNaBD prova o achado F1 da revisão
+// final ao ADR-040: trg_itens_factura_imutaveis passou a disparar também em
+// INSERT (antes só UPDATE OR DELETE), pelo que já não é possível ACRESCENTAR
+// uma linha a uma factura EMITIDA por SQL directo. Reutiliza a factura
+// permanente FAC 2026/09999999 (a mesma de TestFacturaEmitida_ImutavelNaBD):
+// o alvo é o trigger, não uma factura nova.
+func TestInserirItemEmFacturaEmitida_RejeitadoNaBD(t *testing.T) {
+	pool, ctx := ligar(t)
+	migrarFinanceiro(t, pool, ctx)
+
+	const numero = "FAC 2026/09999999"
+	var facturaID string
+	err := pool.QueryRow(ctx, `
+INSERT INTO financeiro.facturas
+    (estado, cliente_nome, episodio_id, numero, serie, sequencial,
+     data_emissao, hash, hash_anterior)
+VALUES ('EMITIDA','Cliente',gen_random_uuid(),$1,'2026',9999999,
+        now(),'abc','')
+ON CONFLICT (numero) WHERE numero IS NOT NULL DO NOTHING
+RETURNING id::text`, numero).Scan(&facturaID)
+	if err != nil {
+		// Corrida anterior (ou TestFacturaEmitida_ImutavelNaBD) já deixou esta
+		// factura na BD — permanentemente irremovível, de propósito. Reutiliza-a.
+		if err := pool.QueryRow(ctx,
+			`SELECT id::text FROM financeiro.facturas WHERE numero=$1`, numero).Scan(&facturaID); err != nil {
+			t.Fatalf("inserir/obter factura emitida: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM financeiro.facturas WHERE id=$1 AND estado='RASCUNHO'`, facturaID)
+	})
+
+	_, err = pool.Exec(ctx, `
+INSERT INTO financeiro.itens_factura
+    (factura_id, descricao, tipo, quantidade, preco_unitario_centimos, regime_iva, ordem)
+VALUES ($1,'Linha intrusa','CONSULTA',1,999900,'ISENTO',99)`, facturaID)
+	if err == nil {
+		t.Fatal("INSERT de uma linha numa factura emitida tinha de falhar")
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23001" {
+		t.Errorf("esperava SQLSTATE 23001 (restrict_violation), deu: %v", err)
+	}
+
+	var n int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM financeiro.itens_factura WHERE factura_id=$1 AND descricao='Linha intrusa'`,
+		facturaID).Scan(&n); err != nil {
+		t.Fatalf("contar linhas intrusas: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("a linha intrusa não devia ter entrado na tabela, encontrou %d", n)
+	}
+}
+
+// TestFacturaRascunho_InserirLinhaContinuaAPassar confirma, a par da correcção
+// acima, que fechar o buraco do INSERT numa factura EMITIDA não partiu o
+// caminho normal de edição: um INSERT directo de uma linha numa factura em
+// RASCUNHO continua a passar. Sem este teste, a correcção ao F1 poderia ter
+// bloqueado por engano também o INSERT legítimo (por exemplo trocando
+// COALESCE(NEW.factura_id, OLD.factura_id) por OLD.factura_id, que em INSERT é
+// sempre NULL e faria estado_pai ficar sempre NULL — mascarando o problema
+// inverso: nenhum INSERT seria bloqueado, nem sequer o de uma EMITIDA).
+func TestFacturaRascunho_InserirLinhaContinuaAPassar(t *testing.T) {
+	pool, ctx := ligar(t)
+	migrarFinanceiro(t, pool, ctx)
+	repo := pgrepo.NovoRepositorioFacturas(pool)
+
+	cli, _ := fin.NovoClienteSnapshot("Cliente Rascunho Insert", "", "")
+	f, _ := fin.NovaFactura(cli, "99999999-9999-9999-9999-999999999999")
+	_ = f.AdicionarItem("Original", fin.LinhaConsulta, "", 1, moeda.DeKwanzas(1000), fin.RegimeIsento)
+	id, err := repo.Guardar(ctx, f)
+	if err != nil {
+		t.Fatalf("guardar: %v", err)
+	}
+	limparFactura(t, pool, ctx, id)
+
+	var novoID string
+	err = pool.QueryRow(ctx, `
+INSERT INTO financeiro.itens_factura
+    (factura_id, descricao, tipo, quantidade, preco_unitario_centimos, regime_iva, ordem)
+VALUES ($1,'Linha adicionada em rascunho','CONSULTA',1,200000,'ISENTO',1)
+RETURNING id::text`, id).Scan(&novoID)
+	if err != nil {
+		t.Fatalf("INSERT de linha numa factura RASCUNHO devia passar, deu: %v", err)
+	}
+	if novoID == "" {
+		t.Fatal("id da nova linha em falta")
+	}
+
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM financeiro.itens_factura WHERE factura_id=$1`, id).Scan(&n); err != nil {
+		t.Fatalf("contar linhas: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("esperava 2 linhas (original + inserida) numa factura RASCUNHO, tem %d", n)
 	}
 }
 

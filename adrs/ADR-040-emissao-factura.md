@@ -147,11 +147,16 @@ A migração acrescenta ainda os índices únicos parciais `uq_facturas_numero` 
 
 ### 6. Imutabilidade por trigger, em defesa em profundidade
 
-Dois triggers `BEFORE UPDATE OR DELETE` rejeitam qualquer escrita sobre factura já
-emitida — `trg_facturas_imutaveis` (condição `WHEN (OLD.estado <> 'RASCUNHO')`) e
-`trg_itens_factura_imutaveis`, que consulta o estado da factura-mãe no corpo da função
-porque o PostgreSQL não admite subconsulta na cláusula `WHEN`. O domínio já recusa
-alterar uma factura emitida; o trigger garante que nem um `UPDATE` directo em SQL o
+Dois triggers rejeitam qualquer escrita sobre factura já emitida —
+`trg_facturas_imutaveis` (`BEFORE UPDATE OR DELETE`, condição
+`WHEN (OLD.estado <> 'RASCUNHO')`) e `trg_itens_factura_imutaveis`
+(`BEFORE INSERT OR UPDATE OR DELETE`), que consulta o estado da factura-mãe no
+corpo da função porque o PostgreSQL não admite subconsulta na cláusula `WHEN`
+— e usa `COALESCE(NEW.factura_id, OLD.factura_id)` para obter o id da
+factura-mãe, já que `OLD` é `NULL` num `INSERT`. O `INSERT` está incluído de
+propósito: sem ele seria possível acrescentar linhas a uma factura já emitida,
+o que o domínio não impede por SQL directo. O domínio já recusa alterar uma
+factura emitida; os triggers garantem que nem uma escrita directa em SQL o
 consegue. Espelha `auditoria.impedir_mutacao`.
 
 Dois detalhes ficaram registados no próprio SQL por serem armadilhas reais: a função

@@ -12,8 +12,8 @@ import (
 // propriedades, devolvendo o PRIMEIRO problema encontrado —
 //
 //  1. a numeração é contígua desde 1 (sem buracos, REG-001 §3.2);
-//  2. o hash de cada factura corresponde ao recálculo do seu conteúdo;
-//  3. o hashAnterior de cada uma é o hash da que a precede.
+//  2. o hashAnterior de cada uma é o hash da que a precede;
+//  3. o hash de cada factura corresponde ao recálculo do seu conteúdo.
 //
 // É esta função que torna a "quebra detectável" do REG-001 §3.2 verificável, e
 // é sobre ela que assentará o cron diário do §3.4.
