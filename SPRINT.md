@@ -1,11 +1,46 @@
 # SPRINT ACTUAL
 
 - **Marco**: M4 — Financeiro — **em curso**
-- **Sprint**: 14 (BC Financeiro — arranque, agregado Factura RASCUNHO) — **entregue**
-- **Objectivo**: arrancar o último dos 5 bounded contexts com uma fatia vertical fina
-  (domínio Factura em RASCUNHO, IVA/totais, persistência transaccional, HTTP+RBAC),
-  precedida da fundação RBAC do papel Tesoureiro (ERRATA-002); a emissão (hash,
-  numeração, imutabilidade) fica para o ADR-040 (Sprint 15).
+- **Sprint**: 15 (Financeiro — emissão: numeração por série, cadeia hash,
+  imutabilidade) — **entregue**
+- **Objectivo**: dar valor legal à factura — fixar número, data e elo de integridade na
+  emissão, com numeração sequencial sem buracos, cadeia hash SHA-256 verificável e
+  imutabilidade do documento emitido (REG-001 §3.2), pagando de caminho a dívida do
+  bloqueio optimista assumida no ADR-039. A anulação (ADR-041) e o SAF-T-AO (ADR-042)
+  ficam fora.
+
+## Sprint 15 — entregue
+
+- [x] VO `NumeroFactura` (`internal/domain/financeiro/numero.go`): formato legal
+      `FAC <série>/<8 dígitos>` (DDM-001 v2.0 §5.2.1), `SerieDe` = ano civil UTC,
+      rejeição explícita de sequencial acima dos 8 dígitos (série esgotada).
+- [x] `Factura.Emitir(serie, sequencial, hashAnterior, momento)` com o **hash SHA-256
+      canónico calculado no agregado** — invariante do domínio, nunca de um serviço —
+      e vector dourado (`TestHash_VectorDourado`) a travar a canonicalização.
+- [x] `VerificarCadeia` (`internal/domain/financeiro/cadeia.go`) como função pura:
+      detecta buraco na numeração, elo anterior errado e conteúdo adulterado,
+      devolvendo o primeiro problema encontrado.
+- [x] Migração `financeiro/0002_emissao_facturas.sql`: colunas de emissão, índices
+      únicos parciais de `numero` e de `(serie, sequencial)`, CHECK de coerência
+      estado↔emissão, tabela `financeiro.series` e **triggers de imutabilidade** em
+      `facturas` e `itens_factura`.
+- [x] **Bloqueio optimista** (coluna `versao`) no `Guardar` e no `Emitir` — fecha a
+      dívida técnica que o ADR-039 assumiu, provada por teste de lost-update.
+- [x] `RepositorioFacturas.Emitir` com alocação **serializada** por
+      `SELECT ... FOR UPDATE` na linha da série; numeração sem buracos provada com 12
+      emissões concorrentes na mesma série.
+- [x] Casos de uso `CasoEmitirFactura` (auditado com número legal e hash no detalhe) e
+      `CasoVerificarCadeia` — cadeia quebrada é **resultado** (`integra:false`, 200),
+      não erro de execução.
+- [x] Rotas `POST /api/v1/financeiro/facturas/:fid/emitir` e
+      `GET /api/v1/financeiro/facturas/cadeia/verificacao` + composition root.
+- [x] `PapelTesoureiro` passa a **sensível** (5 sensíveis em 12 papéis) e
+      `MFAObrigatoria()` passa a ser imposta nas rotas do Financeiro — o que corrige
+      também o bypass anterior de Director e Auditor. Migração
+      `identidade/0006_papel_tesoureiro_sensivel.sql`, seed, realm Keycloak
+      (`tesoureiro.teste` com OTP) e ERRATA-002 alterada **aditivamente**.
+- [x] ADR-040, com a dívida sistémica de MFA (R3), as duas decisões conscientes sobre
+      o conteúdo do digest (R1, R2) e as restrições impostas ao ADR-041 (R5).
 
 ## Sprint 14 — entregue
 
