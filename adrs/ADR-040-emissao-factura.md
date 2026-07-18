@@ -147,17 +147,35 @@ A migração acrescenta ainda os índices únicos parciais `uq_facturas_numero` 
 
 ### 6. Imutabilidade por trigger, em defesa em profundidade
 
-Dois triggers rejeitam qualquer escrita sobre factura já emitida —
+Dois triggers rejeitam qualquer escrita sobre factura já emitida.
+`migrations/financeiro/0002_emissao_facturas.sql` **estabelece** ambos:
 `trg_facturas_imutaveis` (`BEFORE UPDATE OR DELETE`, condição
 `WHEN (OLD.estado <> 'RASCUNHO')`) e `trg_itens_factura_imutaveis`
-(`BEFORE INSERT OR UPDATE OR DELETE`), que consulta o estado da factura-mãe no
-corpo da função porque o PostgreSQL não admite subconsulta na cláusula `WHEN`
-— e usa `COALESCE(NEW.factura_id, OLD.factura_id)` para obter o id da
-factura-mãe, já que `OLD` é `NULL` num `INSERT`. O `INSERT` está incluído de
-propósito: sem ele seria possível acrescentar linhas a uma factura já emitida,
-o que o domínio não impede por SQL directo. O domínio já recusa alterar uma
-factura emitida; os triggers garantem que nem uma escrita directa em SQL o
-consegue. Espelha `auditoria.impedir_mutacao`.
+(`BEFORE UPDATE OR DELETE`), que consulta o estado da factura-mãe no corpo da
+função porque o PostgreSQL não admite subconsulta na cláusula `WHEN`. O domínio
+já recusa alterar uma factura emitida; os triggers garantem que nem uma escrita
+directa em SQL o consegue. Espelha `auditoria.impedir_mutacao`.
+
+`migrations/financeiro/0003_itens_factura_imutaveis_insert.sql` **estende** o
+trigger de `itens_factura` ao `INSERT` (`BEFORE INSERT OR UPDATE OR DELETE`) e
+passa a obter o id da factura-mãe por `COALESCE(NEW.factura_id, OLD.factura_id)`,
+já que `OLD` é `NULL` num `INSERT`. Sem o `INSERT` era possível **acrescentar**
+linhas a uma factura já emitida por SQL directo — o que não escapa ao
+`VerificarCadeia` (o `digestLinhas` muda e a cadeia acusa a adulteração), mas
+contradizia a promessa de que a própria base de dados já rejeita a escrita.
+
+**Nota honesta sobre o caminho da correcção.** O buraco do `INSERT` foi apanhado
+na revisão final e corrigido, num primeiro momento, **editando a `0002` no
+lugar**, com a justificação — errada — de que a `0002` nunca teria sido aplicada
+fora de desenvolvimento/CI. A `0002` estava já registada em
+`public.schema_migrations`, e o executor salta as versões registadas: a edição
+nunca chegaria a nenhuma base de dados que já a tivesse aplicado. O resultado foi
+o modo de falha clássico — verde numa base de dados criada do zero, vermelho numa
+existente (`TestInserirItemEmFacturaEmitida_RejeitadoNaBD`). A `0002` foi por isso
+reposta no estado em que foi aplicada, e a correcção passou para a `0003`. Uma
+migração já aplicada é um facto histórico: editá-la faz o ficheiro mentir sobre o
+que existe nas bases de dados que a aplicaram. Com a `0003`, toda a base de dados
+— nova ou existente — percorre o mesmo caminho e converge para o mesmo estado.
 
 Dois detalhes ficaram registados no próprio SQL por serem armadilhas reais: a função
 dos itens devolve `NEW` (nunca `OLD`) num `BEFORE UPDATE`, sob pena de o `UPDATE`

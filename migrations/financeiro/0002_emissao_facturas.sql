@@ -3,9 +3,8 @@
 -- série, cadeia hash SHA-256 e imutabilidade.
 --
 -- A imutabilidade é defesa em profundidade: o domínio já recusa alterar uma
--- factura emitida, e os triggers abaixo garantem que nem uma escrita directa em
--- SQL o consegue — UPDATE, DELETE ou INSERT de novas linhas numa factura já
--- emitida. Espelha auditoria.impedir_mutacao (migrations/auditoria/0001).
+-- factura emitida, e o trigger abaixo garante que nem um UPDATE directo em SQL o
+-- consegue. Espelha auditoria.impedir_mutacao (migrations/auditoria/0001).
 
 ALTER TABLE financeiro.facturas
     ADD COLUMN IF NOT EXISTS numero        text,
@@ -64,15 +63,10 @@ CREATE TRIGGER trg_facturas_imutaveis
     FOR EACH ROW WHEN (OLD.estado <> 'RASCUNHO')
     EXECUTE FUNCTION financeiro.impedir_mutacao_factura();
 
--- As linhas de uma factura emitida seguem a mesma regra — incluindo o INSERT:
--- sem ele seria possível ACRESCENTAR linhas a uma factura já emitida, o que
--- não escapa ao VerificarCadeia (o digestLinhas muda e a cadeia acusa a
--- adulteração), mas contradiria a promessa desta fatia de que a BD, por si só,
--- já rejeita a escrita. O PostgreSQL não admite subconsulta na condição WHEN de
--- um trigger, pelo que a verificação ao estado da factura-mãe fica no corpo da
--- função (em vez de WHEN, como em trg_facturas_imutaveis, que testa OLD.estado
--- directamente). Em INSERT, OLD é NULL — por isso COALESCE(NEW.factura_id,
--- OLD.factura_id) para obter o id da factura-mãe em qualquer dos três casos.
+-- As linhas de uma factura emitida seguem a mesma regra. O PostgreSQL não admite
+-- subconsulta na condição WHEN de um trigger, pelo que a verificação ao estado
+-- da factura-mãe fica no corpo da função (em vez de WHEN, como em
+-- trg_facturas_imutaveis, que testa OLD.estado directamente).
 --
 -- estado_pai NULL (factura-mãe já não encontrada) NÃO bloqueia: é o que acontece
 -- quando este trigger dispara pelo ON DELETE CASCADE de uma factura RASCUNHO —
@@ -84,22 +78,20 @@ CREATE OR REPLACE FUNCTION financeiro.impedir_mutacao_item_factura() RETURNS tri
 DECLARE
     estado_pai text;
 BEGIN
-    SELECT estado INTO estado_pai FROM financeiro.facturas
-        WHERE id = COALESCE(NEW.factura_id, OLD.factura_id);
+    SELECT estado INTO estado_pai FROM financeiro.facturas WHERE id = OLD.factura_id;
     IF estado_pai IS NOT NULL AND estado_pai <> 'RASCUNHO' THEN
         RAISE EXCEPTION 'linha de factura emitida é imutável: operação % não permitida', TG_OP
             USING ERRCODE = 'restrict_violation';
     END IF;
     -- Devolver sempre OLD faria o PostgreSQL gravar os valores antigos num
     -- BEFORE UPDATE: o UPDATE reportaria sucesso (UPDATE 1) sem alterar nada —
-    -- perda silenciosa de dados. Em DELETE não há NEW; em INSERT/UPDATE tem de
-    -- ser NEW — em INSERT é o próprio valor a inserir, sem o que a linha nunca
-    -- entraria na tabela.
+    -- perda silenciosa de dados. Em DELETE não há NEW; em UPDATE tem de ser NEW
+    -- para a escrita prosseguir com os valores novos.
     RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
 END;
 $$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS trg_itens_factura_imutaveis ON financeiro.itens_factura;
 CREATE TRIGGER trg_itens_factura_imutaveis
-    BEFORE INSERT OR UPDATE OR DELETE ON financeiro.itens_factura
+    BEFORE UPDATE OR DELETE ON financeiro.itens_factura
     FOR EACH ROW EXECUTE FUNCTION financeiro.impedir_mutacao_item_factura();
