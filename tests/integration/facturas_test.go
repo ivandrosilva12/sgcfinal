@@ -8,10 +8,12 @@ package integration_test
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ivandrosilva12/sgcfinal/internal/adapters/pgrepo"
@@ -167,5 +169,90 @@ func TestRepositorioFacturas_PreservaIdsEOrdemNaReescrita(t *testing.T) {
 	}
 	if relItens[0].Descricao != "Linha A" || relItens[1].Descricao != "Linha C" {
 		t.Errorf("ordem errada após reescrita: %v, %v", relItens[0].Descricao, relItens[1].Descricao)
+	}
+}
+
+// TestFacturaEmitida_ImutavelNaBD prova o trg_facturas_imutaveis (ADR-040): uma
+// factura EMITIDA não pode ser alterada nem apagada por SQL directo — a
+// imutabilidade é defesa em profundidade, para além da guarda no domínio. A
+// factura é inserida com um sequencial fora do alcance da aplicação (9999999)
+// porque o alvo é o trigger, não o repositório; o Cleanup não a consegue apagar
+// e essa impossibilidade é precisamente a propriedade em teste.
+func TestFacturaEmitida_ImutavelNaBD(t *testing.T) {
+	pool, ctx := ligar(t)
+	migrarFinanceiro(t, pool, ctx)
+
+	const numero = "FAC 2026/09999999"
+	var id string
+	err := pool.QueryRow(ctx, `
+INSERT INTO financeiro.facturas
+    (estado, cliente_nome, episodio_id, numero, serie, sequencial,
+     data_emissao, hash, hash_anterior)
+VALUES ('EMITIDA','Cliente',gen_random_uuid(),$1,'2026',9999999,
+        now(),'abc','')
+ON CONFLICT (numero) DO NOTHING
+RETURNING id::text`, numero).Scan(&id)
+	if err != nil {
+		// Uma corrida anterior deste teste já deixou esta factura na BD — o
+		// trigger torna-a permanentemente irremovível, de propósito. Reutiliza-a:
+		// o alvo do teste é o trigger, não a inserção.
+		if err := pool.QueryRow(ctx,
+			`SELECT id::text FROM financeiro.facturas WHERE numero=$1`, numero).Scan(&id); err != nil {
+			t.Fatalf("inserir/obter factura emitida: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM financeiro.facturas WHERE id=$1 AND estado='RASCUNHO'`, id)
+	})
+
+	_, err = pool.Exec(ctx, `UPDATE financeiro.facturas SET cliente_nome='Outro' WHERE id=$1`, id)
+	if err == nil {
+		t.Fatal("UPDATE numa factura emitida tinha de falhar")
+	}
+	// SQLSTATE 23001 é restrict_violation (classe 23, Integrity Constraint
+	// Violation) — o código que o PostgreSQL atribui de facto a
+	// USING ERRCODE = 'restrict_violation'. Não é 2F004 (classe 2F, SQL Routine
+	// Exception): confirmado empiricamente contra o Postgres real nesta migração.
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23001" {
+		t.Errorf("esperava SQLSTATE 23001 (restrict_violation), deu: %v", err)
+	}
+
+	if _, err := pool.Exec(ctx, `DELETE FROM financeiro.facturas WHERE id=$1`, id); err == nil {
+		t.Error("DELETE numa factura emitida tinha de falhar (retenção 10 anos)")
+	}
+}
+
+// TestFacturaRascunho_ApagarComLinhasNaoDisparaOTriggerDeImutabilidade prova que
+// apagar uma factura RASCUNHO com linhas não é bloqueado pelo trigger dos itens.
+// trg_itens_factura_imutaveis dispara via ON DELETE CASCADE quando a factura-mãe
+// é apagada; nesse instante a linha da factura-mãe já não existe (foi apagada
+// dentro da mesma instrução), pelo que a função tem de tratar "factura-mãe não
+// encontrada" como não-bloqueio — e não como equivalente a "não está em
+// RASCUNHO". Regressão real encontrada durante o Task 4: a primeira versão da
+// função bloqueava qualquer DELETE em cascata de uma factura RASCUNHO com linhas.
+func TestFacturaRascunho_ApagarComLinhasNaoDisparaOTriggerDeImutabilidade(t *testing.T) {
+	pool, ctx := ligar(t)
+	migrarFinanceiro(t, pool, ctx)
+	repo := pgrepo.NovoRepositorioFacturas(pool)
+
+	cli, _ := fin.NovoClienteSnapshot("Cliente Cascata", "", "")
+	f, _ := fin.NovaFactura(cli, "66666666-6666-6666-6666-666666666666")
+	_ = f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1, moeda.DeKwanzas(5000), fin.RegimeIsento)
+	id, err := repo.Guardar(ctx, f)
+	if err != nil {
+		t.Fatalf("guardar: %v", err)
+	}
+
+	if _, err := pool.Exec(ctx, `DELETE FROM financeiro.facturas WHERE id=$1`, id); err != nil {
+		t.Fatalf("apagar factura RASCUNHO com linhas devia passar, deu: %v", err)
+	}
+
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM financeiro.itens_factura WHERE factura_id=$1`, id).Scan(&n); err != nil {
+		t.Fatalf("contar linhas remanescentes: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("esperava 0 linhas após CASCADE, tem %d", n)
 	}
 }
