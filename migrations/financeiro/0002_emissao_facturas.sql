@@ -83,7 +83,11 @@ BEGIN
         RAISE EXCEPTION 'linha de factura emitida é imutável: operação % não permitida', TG_OP
             USING ERRCODE = 'restrict_violation';
     END IF;
-    RETURN OLD;
+    -- Devolver sempre OLD faria o PostgreSQL gravar os valores antigos num
+    -- BEFORE UPDATE: o UPDATE reportaria sucesso (UPDATE 1) sem alterar nada —
+    -- perda silenciosa de dados. Em DELETE não há NEW; em UPDATE tem de ser NEW
+    -- para a escrita prosseguir com os valores novos.
+    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
 END;
 $$ LANGUAGE plpgsql;
 

@@ -256,3 +256,110 @@ func TestFacturaRascunho_ApagarComLinhasNaoDisparaOTriggerDeImutabilidade(t *tes
 		t.Errorf("esperava 0 linhas após CASCADE, tem %d", n)
 	}
 }
+
+// TestFacturaRascunho_ActualizarLinhaAlteraOValor prova a correcção ao achado
+// Important da revisão à Task 4: impedir_mutacao_item_factura() terminava com
+// RETURN OLD, o que num trigger BEFORE UPDATE FOR EACH ROW faz o PostgreSQL
+// gravar os valores ANTIGOS — o UPDATE reporta sucesso (UPDATE 1) mas não
+// altera nada, perda silenciosa de dados num contexto fiscal. A correcção
+// devolve NEW em UPDATE (só OLD em DELETE, onde NEW não existe). O teste lê o
+// valor de volta depois do UPDATE: sem essa leitura, "UPDATE 1" sozinho não
+// distingue o comportamento correcto do defeito.
+func TestFacturaRascunho_ActualizarLinhaAlteraOValor(t *testing.T) {
+	pool, ctx := ligar(t)
+	migrarFinanceiro(t, pool, ctx)
+	repo := pgrepo.NovoRepositorioFacturas(pool)
+
+	cli, _ := fin.NovoClienteSnapshot("Cliente Rascunho", "", "")
+	f, _ := fin.NovaFactura(cli, "77777777-7777-7777-7777-777777777777")
+	_ = f.AdicionarItem("Original", fin.LinhaConsulta, "", 1, moeda.DeKwanzas(1000), fin.RegimeIsento)
+	id, err := repo.Guardar(ctx, f)
+	if err != nil {
+		t.Fatalf("guardar: %v", err)
+	}
+	limparFactura(t, pool, ctx, id)
+
+	lida, err := repo.ObterPorID(ctx, id)
+	if err != nil {
+		t.Fatalf("obter: %v", err)
+	}
+	itemID := lida.Itens()[0].ID
+
+	ct, err := pool.Exec(ctx,
+		`UPDATE financeiro.itens_factura SET descricao='NOVO', quantidade=7 WHERE id=$1`, itemID)
+	if err != nil {
+		t.Fatalf("actualizar linha de rascunho devia passar, deu: %v", err)
+	}
+	if ct.RowsAffected() != 1 {
+		t.Fatalf("esperava 1 linha afectada, teve %d", ct.RowsAffected())
+	}
+
+	var descricao string
+	var quantidade int
+	if err := pool.QueryRow(ctx,
+		`SELECT descricao, quantidade FROM financeiro.itens_factura WHERE id=$1`, itemID).
+		Scan(&descricao, &quantidade); err != nil {
+		t.Fatalf("reler linha: %v", err)
+	}
+	if descricao != "NOVO" || quantidade != 7 {
+		t.Fatalf("UPDATE reportou sucesso mas não alterou a linha (defeito RETURN OLD reintroduzido): descricao=%q quantidade=%d", descricao, quantidade)
+	}
+}
+
+// TestItemFacturaEmitida_ImutavelNaBD reconfirma, depois da correcção ao
+// RETURN OLD acima, que a imutabilidade das linhas de uma factura EMITIDA se
+// mantém estanque: UPDATE e DELETE continuam bloqueados com SQLSTATE 23001
+// (restrict_violation). A linha é inserida directamente por SQL (contornando
+// o domínio, tal como TestFacturaEmitida_ImutavelNaBD) porque o alvo é o
+// trigger, não o repositório.
+func TestItemFacturaEmitida_ImutavelNaBD(t *testing.T) {
+	pool, ctx := ligar(t)
+	migrarFinanceiro(t, pool, ctx)
+
+	const numero = "FAC 2026/09999998"
+	var facturaID string
+	err := pool.QueryRow(ctx, `
+INSERT INTO financeiro.facturas
+    (estado, cliente_nome, episodio_id, numero, serie, sequencial,
+     data_emissao, hash, hash_anterior)
+VALUES ('EMITIDA','Cliente',gen_random_uuid(),$1,'2026',9999998,
+        now(),'abc','')
+ON CONFLICT (numero) WHERE numero IS NOT NULL DO NOTHING
+RETURNING id::text`, numero).Scan(&facturaID)
+	if err != nil {
+		// Corrida anterior já deixou esta factura (e a sua linha) na BD —
+		// permanentemente irremovíveis, de propósito. Reutiliza-as.
+		if err := pool.QueryRow(ctx,
+			`SELECT id::text FROM financeiro.facturas WHERE numero=$1`, numero).Scan(&facturaID); err != nil {
+			t.Fatalf("inserir/obter factura emitida: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM financeiro.facturas WHERE id=$1 AND estado='RASCUNHO'`, facturaID)
+	})
+
+	var itemID string
+	if err := pool.QueryRow(ctx,
+		`SELECT id::text FROM financeiro.itens_factura WHERE factura_id=$1 LIMIT 1`, facturaID).Scan(&itemID); err != nil {
+		if err := pool.QueryRow(ctx, `
+INSERT INTO financeiro.itens_factura
+    (factura_id, descricao, tipo, quantidade, preco_unitario_centimos, regime_iva, ordem)
+VALUES ($1,'Linha emitida','CONSULTA',1,5000,'ISENTO',0)
+RETURNING id::text`, facturaID).Scan(&itemID); err != nil {
+			t.Fatalf("inserir linha de factura emitida: %v", err)
+		}
+	}
+
+	_, err = pool.Exec(ctx, `UPDATE financeiro.itens_factura SET quantidade=99 WHERE id=$1`, itemID)
+	if err == nil {
+		t.Fatal("UPDATE numa linha de factura emitida tinha de falhar")
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23001" {
+		t.Errorf("esperava SQLSTATE 23001 (restrict_violation), deu: %v", err)
+	}
+
+	if _, err := pool.Exec(ctx, `DELETE FROM financeiro.itens_factura WHERE id=$1`, itemID); err == nil {
+		t.Error("DELETE numa linha de factura emitida tinha de falhar")
+	}
+}
