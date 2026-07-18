@@ -106,7 +106,7 @@ func TestRepositorioFacturas_ReescreveItens(t *testing.T) {
 
 // TestRepositorioFacturas_PreservaIdsEOrdemNaReescrita prova, com 3 linhas
 // reais, que o re-INSERT do Guardar preserva o id das linhas existentes
-// (via COALESCE(NULLIF($1,'')::uuid, gen_random_uuid())) e que a ordem de
+// (o id existente é preservado no re-INSERT, gen_random_uuid() só para linhas novas) e que a ordem de
 // leitura (ORDER BY ordem) segue a ordem de inserção — não a ordem de
 // remoção nem uma ordem alfabética/aleatória. Uma regressão que baralhasse a
 // ordem ou regenerasse ids a cada gravação passaria despercebida no teste
