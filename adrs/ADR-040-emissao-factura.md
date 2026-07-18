@@ -357,6 +357,45 @@ Tem de ser uma transição de estado que preserve número, sequencial, hash e
 `hashAnterior` intactos — a anulação faz-se por nova factura, e a factura anulada
 permanece na cadeia.
 
+### R6 — `trg_facturas_imutaveis` não cobre `INSERT`: uma factura pode nascer `EMITIDA`
+
+Apanhado na revisão final do ramo. O trigger da tabela `facturas` é `BEFORE UPDATE OR
+DELETE` — ao contrário do de `itens_factura`, que passou a cobrir também o `INSERT`.
+Um `INSERT` directo de uma factura já com `estado = 'EMITIDA'` é aceite pela base de dados.
+
+**Não é o irmão do buraco fechado em `itens_factura`; difere em espécie.** Aquele era
+**mutação**: permitia alterar um documento já selado, que é exactamente o que o REG-001
+§3.2 proíbe. Este é **fabricação**: nada do que já está selado muda — aparece uma linha
+nova. A fabricação já está defendida pelos mecanismos que esta ADR escolheu em vez de
+triggers: `uq_facturas_numero` e `uq_facturas_serie_sequencial` impedem reutilizar um
+número ou um par `(série, sequencial)`; a CHECK `facturas_coerencia_emissao` obriga ao
+conjunto completo de campos de emissão; e, decisivamente, **a emissão legítima seguinte
+lê `series.ultimo_hash` e não a linha fabricada** — pelo que uma factura fabricada fica
+órfã da cadeia e o `VerificarCadeia` denuncia-a. A detectabilidade, que é a obrigação
+regulatória, mantém-se.
+
+Há também uma assimetria de desenho que justifica não a fechar por trigger nesta fatia:
+o trigger de `itens_factura` pode fazer um juízo objectivo, porque o estado da
+factura-mãe é um facto independente de quem escreve. Um trigger de `INSERT` em
+`facturas` não consegue distinguir "a aplicação a emitir correctamente" de "um
+atacante a inserir" — são ambos SQL vindo do mesmo papel.
+
+Correcção candidata: `BEFORE INSERT ... WHEN (NEW.estado <> 'RASCUNHO')`, forçando toda
+a factura a nascer RASCUNHO. É um invariante genuíno e vale a pena tê-lo.
+
+**Mas o controlo mais eficaz em produção é o R7, não mais triggers.**
+
+### R7 — O papel da aplicação é dono das tabelas fiscais e pode desactivar os triggers
+
+Demonstrado na revisão final: com o papel da própria aplicação, um
+`ALTER TABLE ... DISABLE TRIGGER` desactiva a imutabilidade imposta pela base de dados.
+Nenhum trigger defende contra um escritor autorizado a desligá-lo.
+
+Em produção, o papel da aplicação **não deve ser dono** de `financeiro.facturas` nem de
+`financeiro.itens_factura`. Enquanto o for, a "imutabilidade imposta pela BD" é
+contornável pela própria aplicação, e a separação de propriedade — não mais triggers —
+é o que fecha a classe da fabricação.
+
 ## Fora do âmbito desta fatia
 
 Registado explicitamente para não haver leitura optimista desta ADR:
@@ -379,6 +418,10 @@ Registado explicitamente para não haver leitura optimista desta ADR:
 - **ADR-043**: integração EMIS Multicaixa.
 - **Fatia própria de segurança**: impor `MFAObrigatoria()` nos 10 grupos de rotas com
   papéis sensíveis identificados em R3, e completar as credenciais OTP do realm de
-  desenvolvimento para `Admin`, `DPO` e `Auditor`.
+  desenvolvimento para `Admin`, `DPO` e `Auditor`. Acrescentar a esta fatia o R7
+  (retirar a propriedade das tabelas fiscais ao papel da aplicação) e, se se decidir
+  fechá-lo, o R6 (`INSERT` com `WHEN (NEW.estado <> 'RASCUNHO')`) — note-se que o R6
+  obriga a reescrever as fixtures de dois testes que semeiam facturas nascidas
+  `EMITIDA`.
 - Auto-população de linhas via ACL e validação de `episodio_id` cross-BC (herdados do
   ADR-039).
