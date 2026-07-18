@@ -103,3 +103,69 @@ func TestRepositorioFacturas_ReescreveItens(t *testing.T) {
 		t.Errorf("esperava 0 itens após remoção; tem %d", len(rel.Itens()))
 	}
 }
+
+// TestRepositorioFacturas_PreservaIdsEOrdemNaReescrita prova, com 3 linhas
+// reais, que o re-INSERT do Guardar preserva o id das linhas existentes
+// (via COALESCE(NULLIF($1,'')::uuid, gen_random_uuid())) e que a ordem de
+// leitura (ORDER BY ordem) segue a ordem de inserção — não a ordem de
+// remoção nem uma ordem alfabética/aleatória. Uma regressão que baralhasse a
+// ordem ou regenerasse ids a cada gravação passaria despercebida no teste
+// TestRepositorioFacturas_ReescreveItens (que só usa 1 item).
+func TestRepositorioFacturas_PreservaIdsEOrdemNaReescrita(t *testing.T) {
+	pool, ctx := ligar(t)
+	migrarFinanceiro(t, pool, ctx)
+	repo := pgrepo.NovoRepositorioFacturas(pool)
+
+	cli, _ := fin.NovoClienteSnapshot("Sol", "", "")
+	f, _ := fin.NovaFactura(cli, "44444444-4444-4444-4444-444444444444")
+	_ = f.AdicionarItem("Linha A", fin.LinhaConsulta, "", 1, moeda.DeKwanzas(1000), fin.RegimeIsento)
+	_ = f.AdicionarItem("Linha B", fin.LinhaDispensa, "55555555-5555-5555-5555-555555555555", 1, moeda.DeKwanzas(2000), fin.RegimeStandard)
+	_ = f.AdicionarItem("Linha C", fin.LinhaConsulta, "", 1, moeda.DeKwanzas(3000), fin.RegimeIsento)
+	id, err := repo.Guardar(ctx, f)
+	if err != nil {
+		t.Fatalf("guardar: %v", err)
+	}
+	limparFactura(t, pool, ctx, id)
+
+	lida, err := repo.ObterPorID(ctx, id)
+	if err != nil {
+		t.Fatalf("obter: %v", err)
+	}
+	itens := lida.Itens()
+	if len(itens) != 3 {
+		t.Fatalf("esperava 3 itens; tem %d", len(itens))
+	}
+	// A ordem de leitura deve seguir ORDER BY ordem = ordem de inserção.
+	if itens[0].Descricao != "Linha A" || itens[1].Descricao != "Linha B" || itens[2].Descricao != "Linha C" {
+		t.Fatalf("ordem inicial errada: %v %v %v", itens[0].Descricao, itens[1].Descricao, itens[2].Descricao)
+	}
+	idA, idB, idC := itens[0].ID, itens[1].ID, itens[2].ID
+	if idA == "" || idB == "" || idC == "" {
+		t.Fatalf("ids em falta após a primeira gravação: A=%q B=%q C=%q", idA, idB, idC)
+	}
+
+	// Remove a linha do meio (B) e re-guarda — A e C têm ids não-vazios, o
+	// re-INSERT tem de os PRESERVAR (não regenerar) e manter a ordem A→C.
+	if err := lida.RemoverItem(idB); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Guardar(ctx, lida); err != nil {
+		t.Fatalf("reguardar: %v", err)
+	}
+
+	rel, err := repo.ObterPorID(ctx, id)
+	if err != nil {
+		t.Fatalf("reobter: %v", err)
+	}
+	relItens := rel.Itens()
+	if len(relItens) != 2 {
+		t.Fatalf("esperava 2 itens após remoção; tem %d", len(relItens))
+	}
+	if relItens[0].ID != idA || relItens[1].ID != idC {
+		t.Errorf("ids não preservados/ordem trocada: [%s,%s] esperava [%s,%s]",
+			relItens[0].ID, relItens[1].ID, idA, idC)
+	}
+	if relItens[0].Descricao != "Linha A" || relItens[1].Descricao != "Linha C" {
+		t.Errorf("ordem errada após reescrita: %v, %v", relItens[0].Descricao, relItens[1].Descricao)
+	}
+}
