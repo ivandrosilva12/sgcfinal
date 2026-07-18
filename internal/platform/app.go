@@ -212,6 +212,8 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		appfinanceiro.NovoCasoRemoverItem(repoFacturas, repoAuditoria),
 		appfinanceiro.NovoCasoObterFactura(repoFacturas),
 		appfinanceiro.NovoCasoListarFacturasPorEpisodio(repoFacturas),
+		appfinanceiro.NovoCasoEmitirFactura(repoFacturas, repoAuditoria),
+		appfinanceiro.NovoCasoVerificarCadeia(repoFacturas),
 	)
 
 	// BC Recepção (marco Percurso Ambulatório): marcação e agenda por disponibilidade.
