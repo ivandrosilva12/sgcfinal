@@ -285,7 +285,10 @@ func (f *Factura) Emitir(serie string, sequencial int, hashAnterior string, mome
 func digestLinhas(itens []ItemFactura) string {
 	h := sha256.New()
 	for ordem, it := range itens {
-		fmt.Fprintf(h, "%d|%s|%s|%d|%d|%s\n", ordem, it.Descricao, it.Tipo,
+		// hash.Hash.Write nunca devolve erro (contrato do pacote hash), pelo que o
+		// retorno se descarta explicitamente — errcheck exige-o e um panic aqui
+		// seria pior: partiria a emissão por uma condição que não pode ocorrer.
+		_, _ = fmt.Fprintf(h, "%d|%s|%s|%d|%d|%s\n", ordem, it.Descricao, it.Tipo,
 			it.Quantidade, it.PrecoUnitario.Centimos(), it.RegimeIVA)
 	}
 	return hex.EncodeToString(h.Sum(nil))
