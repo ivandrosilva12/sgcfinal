@@ -429,4 +429,136 @@ func TestGuardarFactura_BloqueioOptimista(t *testing.T) {
 	if len(final.Itens()) != 1 || final.Itens()[0].Descricao != "Consulta A" {
 		t.Errorf("esperava só a linha de A, tem %d linhas", len(final.Itens()))
 	}
+	// Prova o read-back de versao em ObterPorID (achado Important da revisão à
+	// Task 5, mutação M2): sem ele, esta asserção sozinha já falha, porque o
+	// snapshot lido traria sempre versao=0 em vez do valor real gravado pela
+	// escrita vencedora (0→1).
+	if final.Versao() != 1 {
+		t.Errorf("esperava versao=1 após a escrita vencedora, tem %d", final.Versao())
+	}
+}
+
+// TestGuardarFactura_DuasEdicoesSequenciais prova, contra a mutação M2 do
+// achado Important da revisão à Task 5 (retirar 'versao' do SELECT/Scan de
+// ObterPorID), que o read-back de versao em ObterPorID é real e não um
+// acidente de coincidência com o teste de bloqueio optimista. Sem ele, todas
+// as leituras trazem versao=0 e qualquer factura já em versao>=1 fica
+// permanentemente ingravável: a segunda de duas edições sequenciais — sem
+// qualquer concorrência real — falharia com um 409 espúrio
+// ("a factura foi alterada entretanto"), porque o snapshot lido nunca reflecte
+// a versão que a própria escrita anterior avançou.
+func TestGuardarFactura_DuasEdicoesSequenciais(t *testing.T) {
+	pool, ctx := ligar(t)
+	migrarFinanceiro(t, pool, ctx)
+	repo := pgrepo.NovoRepositorioFacturas(pool)
+
+	cliente, err := fin.NovoClienteSnapshot("Cliente Sequencial", "", "")
+	if err != nil {
+		t.Fatalf("NovoClienteSnapshot: %v", err)
+	}
+	f, err := fin.NovaFactura(cliente, uuid.NewString())
+	if err != nil {
+		t.Fatalf("NovaFactura: %v", err)
+	}
+	id, err := repo.Guardar(ctx, f)
+	if err != nil {
+		t.Fatalf("Guardar inicial: %v", err)
+	}
+	limparFactura(t, pool, ctx, id)
+
+	// Primeira edição: carregar, alterar, guardar.
+	primeira, err := repo.ObterPorID(ctx, id)
+	if err != nil {
+		t.Fatalf("ObterPorID (1ª edição): %v", err)
+	}
+	if err := primeira.AdicionarItem("Consulta 1", fin.LinhaConsulta, "", 1,
+		moeda.DeCentimos(1000), fin.RegimeIsento); err != nil {
+		t.Fatalf("AdicionarItem (1ª edição): %v", err)
+	}
+	if _, err := repo.Guardar(ctx, primeira); err != nil {
+		t.Fatalf("Guardar (1ª edição): %v", err)
+	}
+
+	// Segunda edição: recarregar (a BD já vai em versao=1), alterar de novo,
+	// guardar. Sem o read-back de versao, ObterPorID devolveria sempre
+	// versao=0 e esta segunda escrita — apesar de não haver qualquer outra
+	// escrita concorrente — falharia com um 409 espúrio.
+	segunda, err := repo.ObterPorID(ctx, id)
+	if err != nil {
+		t.Fatalf("ObterPorID (2ª edição): %v", err)
+	}
+	if err := segunda.AdicionarItem("Consulta 2", fin.LinhaConsulta, "", 1,
+		moeda.DeCentimos(2000), fin.RegimeIsento); err != nil {
+		t.Fatalf("AdicionarItem (2ª edição): %v", err)
+	}
+	if _, err := repo.Guardar(ctx, segunda); err != nil {
+		t.Fatalf("a segunda escrita, sem qualquer concorrência, tinha de passar: %v", err)
+	}
+
+	final, err := repo.ObterPorID(ctx, id)
+	if err != nil {
+		t.Fatalf("ObterPorID final: %v", err)
+	}
+	if final.Versao() != 2 {
+		t.Errorf("esperava versao=2 após duas edições sequenciais, tem %d", final.Versao())
+	}
+}
+
+// TestGuardarFactura_GuardaDeEstadoRejeitaFacturaEmitida prova, contra a
+// mutação M3 do achado Important da revisão à Task 5 (retirar
+// "AND estado='RASCUNHO'" do WHERE do UPDATE em Guardar), que a guarda de
+// estado está coberta e distingue o 409 correcto do 500 espúrio. A guarda
+// está presente e correcta no código actual: sem ela, o UPDATE alcançaria uma
+// factura EMITIDA e chegaria ao trigger de imutabilidade da Task 4
+// (SQLSTATE 23001), cujo erro cru não é um erros.ErroDominio — propagar-se-ia
+// como CategoriaInterno (→ HTTP 500) em vez de CategoriaConflito (→ HTTP 409).
+// Confirmar só err != nil não distingue os dois casos; esta é precisamente a
+// distinção em causa. Cria a sua própria factura EMITIDA (não depende das
+// residuais doutros testes) com o mesmo padrão de
+// TestFacturaEmitida_ImutavelNaBD: ON CONFLICT DO NOTHING + fallback SELECT,
+// para reutilizar entre corridas em vez de acumular linhas permanentes.
+func TestGuardarFactura_GuardaDeEstadoRejeitaFacturaEmitida(t *testing.T) {
+	pool, ctx := ligar(t)
+	migrarFinanceiro(t, pool, ctx)
+	repo := pgrepo.NovoRepositorioFacturas(pool)
+
+	const numero = "FAC 2026/09999997"
+	var id string
+	var versao int
+	err := pool.QueryRow(ctx, `
+INSERT INTO financeiro.facturas
+    (estado, cliente_nome, episodio_id, numero, serie, sequencial,
+     data_emissao, hash, hash_anterior)
+VALUES ('EMITIDA','Cliente Emitido',gen_random_uuid(),$1,'2026',9999997,
+        now(),'abc','')
+ON CONFLICT (numero) WHERE numero IS NOT NULL DO NOTHING
+RETURNING id::text, versao`, numero).Scan(&id, &versao)
+	if err != nil {
+		// Uma corrida anterior já deixou esta factura na BD — o trigger torna-a
+		// permanentemente irremovível, de propósito. Reutiliza-a.
+		if err := pool.QueryRow(ctx,
+			`SELECT id::text, versao FROM financeiro.facturas WHERE numero=$1`, numero).Scan(&id, &versao); err != nil {
+			t.Fatalf("inserir/obter factura emitida: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM financeiro.facturas WHERE id=$1 AND estado='RASCUNHO'`, id)
+	})
+
+	cliente, err := fin.NovoClienteSnapshot("Outro Cliente", "", "")
+	if err != nil {
+		t.Fatalf("NovoClienteSnapshot: %v", err)
+	}
+	emitida := fin.ReconstruirFactura(fin.SnapshotFactura{
+		ID: id, Estado: fin.FactEmitida, Cliente: cliente,
+		EpisodioID: uuid.NewString(), Versao: versao,
+	})
+
+	_, err = repo.Guardar(ctx, emitida)
+	if err == nil {
+		t.Fatal("guardar sobre uma factura EMITIDA tinha de falhar")
+	}
+	if erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Errorf("esperava CategoriaConflito (409), deu %v (categoria %v)", err, erros.CategoriaDe(err))
+	}
 }
