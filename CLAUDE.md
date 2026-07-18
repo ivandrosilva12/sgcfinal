@@ -78,7 +78,8 @@ seeds/  tests/  docs/  adrs/  docker/
 
 **M4 — Financeiro** (em curso; Sprint 14; ver `SPRINT.md`). Arranque do último dos 5
 bounded contexts, precedido da fundação RBAC do 12.º papel **Tesoureiro** (ERRATA-002,
-`docs/ERRATA-002-papel-tesoureiro.md`; não-sensível nesta fatia, sem MFA). Entrega o
+`docs/ERRATA-002-papel-tesoureiro.md`; não-sensível na fatia do ADR-039 e **sensível,
+com MFA obrigatória**, desde a emissão — ver a revisão de 2026-07-18 na ERRATA). Entrega o
 agregado `Factura` em estado **RASCUNHO** (ADR-039, Opção A): `ItemFactura` com
 snapshot de linha (descrição/preço fornecidos no pedido) e id lógico da operação de
 origem (sem FK cross-context), IVA por item (ISENTO/STANDARD 14%, arredondamento

@@ -36,13 +36,15 @@ var papeisValidos = map[Papel]bool{
 	PapelTesoureiro:         true,
 }
 
-// papeisSensiveis exigem MFA (Sprint 3). Alinhado com sensivel=true em
-// seeds/papeis.sql: Director, Admin, DPO, Auditor.
+// papeisSensiveis exigem MFA. Alinhado com sensivel=true em seeds/papeis.sql:
+// Director, Admin, DPO, Auditor e — desde o ADR-040 — Tesoureiro, que com a
+// emissão passou a praticar um acto irreversível com efeito fiscal (ERRATA-002).
 var papeisSensiveis = map[Papel]bool{
-	PapelDirector: true,
-	PapelAdmin:    true,
-	PapelDPO:      true,
-	PapelAuditor:  true,
+	PapelDirector:   true,
+	PapelAdmin:      true,
+	PapelDPO:        true,
+	PapelAuditor:    true,
+	PapelTesoureiro: true,
 }
 
 // PapelValido indica se o código corresponde a um dos 12 papéis canónicos.

@@ -67,8 +67,11 @@ func NovoFinanceiroHandler(criar ServicoCriarFactura, adicionar ServicoAdicionar
 		listar: listar, emitir: emitir, verificar: verificar}
 }
 
-// RegistarFinanceiro regista as rotas, aplicando `protecao` e o RBAC por rota. A
-// escrita (facturação) é do Tesoureiro; a leitura abre também ao Director e Auditor.
+// RegistarFinanceiro regista as rotas, aplicando `protecao` (rate limit + Auth +
+// MFAObrigatoria) e o RBAC por rota. A escrita (facturação) é do Tesoureiro; a
+// leitura abre também ao Director e Auditor. Desde o ADR-040 os três papéis são
+// sensíveis (ERRATA-002, revisão de 2026-07-18), pelo que a MFAObrigatoria no
+// grupo é o que torna efectiva a exigência de segundo factor no Financeiro.
 func RegistarFinanceiro(r gin.IRouter, h *FinanceiroHandler, protecao ...gin.HandlerFunc) {
 	escrita := RBAC(dominio.PapelTesoureiro)
 	leitura := RBAC(dominio.PapelTesoureiro, dominio.PapelDirector, dominio.PapelAuditor)

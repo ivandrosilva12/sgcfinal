@@ -102,11 +102,26 @@ func (d duploVerificarCadeia) Executar(_ context.Context, serie string) (appfina
 	return appfinanceiro.ResultadoVerificacao{Serie: serie, TotalFacturas: 3, Integra: true}, nil
 }
 
-// routerFin monta o router com os duplos e uma sessão fixa. Usa o `fakeAuth` já
-// existente no pacote de testes (ver `identidade_test.go`) e a `sessaoLabDe`
-// genérica (ver `laboratorio_test.go`) — não redefine nenhum dos dois. O
-// `verificar` é variádico e opcional (por omissão, cadeia íntegra) para não
-// obrigar os chamadores já existentes a mudar.
+// sessaoFinDe constrói uma sessão de teste do Financeiro com segundo factor
+// comprovado. Desde o ADR-040 o Tesoureiro é papel sensível (tal como o Director
+// e o Auditor), e as rotas do Financeiro correm sob MFAObrigatoria — sem
+// AutenticacaoForte, estas sessões receberiam 403. Não se usa a `sessaoLabDe`
+// (ver `laboratorio_test.go`) porque essa não comprova segundo factor; o teste
+// TestFinanceiro_Emitir_TesoureiroSemMFA_403 constrói-a de propósito assim.
+func sessaoFinDe(sujeito string, papel identidade.Papel) identidade.Sessao {
+	return identidade.Sessao{
+		Sujeito:           sujeito,
+		Papeis:            []identidade.Papel{papel},
+		AutenticacaoForte: true,
+	}
+}
+
+// routerFin monta o router com os duplos e uma sessão fixa, aplicando a mesma
+// protecção da composition root (Auth + MFAObrigatoria, ver
+// `internal/platform/app.go`). Usa o `fakeAuth` já existente no pacote de testes
+// (ver `identidade_test.go`) — não o redefine. O `verificar` é variádico e
+// opcional (por omissão, cadeia íntegra) para não obrigar os chamadores já
+// existentes a mudar.
 func routerFin(t *testing.T, criar *duploCriarFactura, adicionar *duploAdicionarItemFin,
 	emitir *duploEmitirFactura, sessao identidade.Sessao, verificar ...*duploVerificarCadeia) *gin.Engine {
 	t.Helper()
@@ -121,13 +136,13 @@ func routerFin(t *testing.T, criar *duploCriarFactura, adicionar *duploAdicionar
 	}
 	h := adhttp.NovoFinanceiroHandler(criar, adicionar, duploRemoverItemFin{},
 		duploObterFactura{}, duploListarFacturas{}, emitir, v)
-	adhttp.RegistarFinanceiro(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+	adhttp.RegistarFinanceiro(r, h, adhttp.Auth(fakeAuth{sessao: sessao}), adhttp.MFAObrigatoria())
 	return r
 }
 
 func TestFinanceiro_CriarFactura_Tesoureiro_201_UsaOSujeitoAutenticado(t *testing.T) {
 	criar := &duploCriarFactura{}
-	r := routerFin(t, criar, &duploAdicionarItemFin{}, nil, sessaoLabDe("tes-1", identidade.PapelTesoureiro))
+	r := routerFin(t, criar, &duploAdicionarItemFin{}, nil, sessaoFinDe("tes-1", identidade.PapelTesoureiro))
 
 	corpo, _ := json.Marshal(map[string]string{
 		"episodio_id": "11111111-1111-1111-1111-111111111111", "cliente_nome": "Maria João", "cliente_nif": "", "cliente_morada": "Luanda",
@@ -147,7 +162,7 @@ func TestFinanceiro_CriarFactura_Tesoureiro_201_UsaOSujeitoAutenticado(t *testin
 
 func TestFinanceiro_AdicionarItem_Tesoureiro_201_TotalCorrecto(t *testing.T) {
 	adicionar := &duploAdicionarItemFin{}
-	r := routerFin(t, &duploCriarFactura{}, adicionar, nil, sessaoLabDe("tes-1", identidade.PapelTesoureiro))
+	r := routerFin(t, &duploCriarFactura{}, adicionar, nil, sessaoFinDe("tes-1", identidade.PapelTesoureiro))
 
 	corpo, _ := json.Marshal(map[string]any{
 		"descricao": "Dispensa de Paracetamol", "tipo": "DISPENSA", "operacao_id": "disp-1",
@@ -171,7 +186,7 @@ func TestFinanceiro_AdicionarItem_Tesoureiro_201_TotalCorrecto(t *testing.T) {
 }
 
 func TestFinanceiro_ObterFactura_Director_200(t *testing.T) {
-	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil, sessaoLabDe("dir-1", identidade.PapelDirector))
+	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil, sessaoFinDe("dir-1", identidade.PapelDirector))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/financeiro/facturas/fac-1", nil)
@@ -183,7 +198,7 @@ func TestFinanceiro_ObterFactura_Director_200(t *testing.T) {
 }
 
 func TestFinanceiro_CriarFactura_Medico_Proibido(t *testing.T) {
-	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil, sessaoLabDe("med-1", identidade.PapelMedico))
+	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil, sessaoFinDe("med-1", identidade.PapelMedico))
 
 	corpo, _ := json.Marshal(map[string]string{"episodio_id": "ep-1", "cliente_nome": "Maria João"})
 	w := httptest.NewRecorder()
@@ -197,7 +212,7 @@ func TestFinanceiro_CriarFactura_Medico_Proibido(t *testing.T) {
 }
 
 func TestFinanceiro_CriarFactura_CorpoMalformado_400(t *testing.T) {
-	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil, sessaoLabDe("tes-1", identidade.PapelTesoureiro))
+	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil, sessaoFinDe("tes-1", identidade.PapelTesoureiro))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/financeiro/facturas", bytes.NewReader([]byte("{nao-json")))
@@ -215,7 +230,7 @@ func TestFinanceiro_CriarFactura_CorpoMalformado_400(t *testing.T) {
 // de 400.
 
 func TestFinanceiro_ListarFacturas_SemEpisodioID_400(t *testing.T) {
-	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil, sessaoLabDe("tes-1", identidade.PapelTesoureiro))
+	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil, sessaoFinDe("tes-1", identidade.PapelTesoureiro))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/financeiro/facturas", nil)
@@ -227,7 +242,7 @@ func TestFinanceiro_ListarFacturas_SemEpisodioID_400(t *testing.T) {
 }
 
 func TestFinanceiro_ListarFacturas_EpisodioValido_200(t *testing.T) {
-	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil, sessaoLabDe("tes-1", identidade.PapelTesoureiro))
+	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil, sessaoFinDe("tes-1", identidade.PapelTesoureiro))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/financeiro/facturas?episodio_id=11111111-1111-1111-1111-111111111111", nil)
@@ -239,7 +254,7 @@ func TestFinanceiro_ListarFacturas_EpisodioValido_200(t *testing.T) {
 }
 
 func TestFinanceiro_CriarFactura_EpisodioInvalido_400(t *testing.T) {
-	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil, sessaoLabDe("tes-1", identidade.PapelTesoureiro))
+	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil, sessaoFinDe("tes-1", identidade.PapelTesoureiro))
 
 	corpo, _ := json.Marshal(map[string]string{
 		"episodio_id": "nao-uuid", "cliente_nome": "Maria João", "cliente_nif": "", "cliente_morada": "Luanda",
@@ -258,7 +273,7 @@ const facturaIDTeste = "22222222-2222-2222-2222-222222222222"
 
 func TestFinanceiro_Emitir_Tesoureiro_200(t *testing.T) {
 	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil,
-		sessaoLabDe("tes-1", identidade.PapelTesoureiro))
+		sessaoFinDe("tes-1", identidade.PapelTesoureiro))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/financeiro/facturas/"+facturaIDTeste+"/emitir", nil)
@@ -272,9 +287,53 @@ func TestFinanceiro_Emitir_Tesoureiro_200(t *testing.T) {
 	}
 }
 
+// A emissão é um acto irreversível com efeito fiscal, pelo que o Tesoureiro
+// passou a papel sensível (ADR-040, ERRATA-002 revisão de 2026-07-18). Este par
+// de casos prova a imposição na fronteira HTTP: sem segundo factor a emissão é
+// recusada com 403; com segundo factor prossegue. Se algum dia se retirar a
+// MFAObrigatoria das rotas do Financeiro (ver `internal/platform/app.go`), é
+// este teste que o denuncia.
+func TestFinanceiro_Emitir_TesoureiroSemMFA_403(t *testing.T) {
+	semSegundoFactor := identidade.Sessao{
+		Sujeito:           "tes-1",
+		Papeis:            []identidade.Papel{identidade.PapelTesoureiro},
+		AutenticacaoForte: false,
+	}
+	emitir := &duploEmitirFactura{}
+	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, emitir, semSegundoFactor)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/financeiro/facturas/"+facturaIDTeste+"/emitir", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != 403 {
+		t.Fatalf("esperava 403 (MFA obrigatória), veio %d (%s)", w.Code, w.Body.String())
+	}
+	if emitir.actorRecebido != "" {
+		t.Errorf("o caso de uso não devia sequer ser invocado; actor recebido %q", emitir.actorRecebido)
+	}
+}
+
+func TestFinanceiro_Emitir_TesoureiroComMFA_Prossegue(t *testing.T) {
+	emitir := &duploEmitirFactura{}
+	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, emitir,
+		sessaoFinDe("tes-1", identidade.PapelTesoureiro))
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/financeiro/facturas/"+facturaIDTeste+"/emitir", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("esperava 200 com segundo factor, veio %d (%s)", w.Code, w.Body.String())
+	}
+	if emitir.actorRecebido != "tes-1" {
+		t.Fatalf("esperava o actor da sessão (tes-1), veio %q", emitir.actorRecebido)
+	}
+}
+
 func TestFinanceiro_Emitir_Medico_Proibido(t *testing.T) {
 	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil,
-		sessaoLabDe("med-1", identidade.PapelMedico))
+		sessaoFinDe("med-1", identidade.PapelMedico))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/financeiro/facturas/"+facturaIDTeste+"/emitir", nil)
@@ -290,7 +349,7 @@ func TestFinanceiro_Emitir_SemLinhas_422(t *testing.T) {
 		err: erros.Novo(erros.CategoriaRegraNegocio, "não é possível emitir uma factura sem linhas"),
 	}
 	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, emitir,
-		sessaoLabDe("tes-1", identidade.PapelTesoureiro))
+		sessaoFinDe("tes-1", identidade.PapelTesoureiro))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/financeiro/facturas/"+facturaIDTeste+"/emitir", nil)
@@ -306,7 +365,7 @@ func TestFinanceiro_Emitir_JaEmitida_409(t *testing.T) {
 		err: erros.Novo(erros.CategoriaConflito, "só é possível emitir uma factura em rascunho"),
 	}
 	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, emitir,
-		sessaoLabDe("tes-1", identidade.PapelTesoureiro))
+		sessaoFinDe("tes-1", identidade.PapelTesoureiro))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/financeiro/facturas/"+facturaIDTeste+"/emitir", nil)
@@ -323,7 +382,7 @@ func TestFinanceiro_Emitir_JaEmitida_409(t *testing.T) {
 func TestFinanceiro_Emitir_ActorVemDaSessaoNaoDoCorpo(t *testing.T) {
 	emitir := &duploEmitirFactura{}
 	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, emitir,
-		sessaoLabDe("tes-1", identidade.PapelTesoureiro))
+		sessaoFinDe("tes-1", identidade.PapelTesoureiro))
 
 	corpo, _ := json.Marshal(map[string]string{"actor": "outro-utilizador"})
 	w := httptest.NewRecorder()
@@ -341,7 +400,7 @@ func TestFinanceiro_Emitir_ActorVemDaSessaoNaoDoCorpo(t *testing.T) {
 
 func TestFinanceiro_VerificarCadeia_Auditor_200(t *testing.T) {
 	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil,
-		sessaoLabDe("aud-1", identidade.PapelAuditor))
+		sessaoFinDe("aud-1", identidade.PapelAuditor))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/financeiro/facturas/cadeia/verificacao?serie=2026", nil)
@@ -357,7 +416,7 @@ func TestFinanceiro_VerificarCadeia_Auditor_200(t *testing.T) {
 // conseguir distinguir "cadeia partida" de "serviço em baixo".
 func TestFinanceiro_VerificarCadeia_Quebrada_200ComVeredicto(t *testing.T) {
 	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil,
-		sessaoLabDe("aud-1", identidade.PapelAuditor), &duploVerificarCadeia{quebrada: true})
+		sessaoFinDe("aud-1", identidade.PapelAuditor), &duploVerificarCadeia{quebrada: true})
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/financeiro/facturas/cadeia/verificacao?serie=2026", nil)
@@ -385,7 +444,7 @@ func TestFinanceiro_VerificarCadeia_Quebrada_200ComVeredicto(t *testing.T) {
 // passar) — este teste cobre só o comportamento observável da rota.
 func TestFinanceiro_CadeiaVerificacao_RotaLiteralAlcancavel_200(t *testing.T) {
 	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil,
-		sessaoLabDe("aud-1", identidade.PapelAuditor))
+		sessaoFinDe("aud-1", identidade.PapelAuditor))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/financeiro/facturas/cadeia/verificacao", nil)
