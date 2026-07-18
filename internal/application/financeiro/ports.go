@@ -64,4 +64,20 @@ type DetalheFactura struct {
 	TotalCentimos    int64          `json:"total_centimos"`
 	Total            string         `json:"total"`
 	CriadoEm         time.Time      `json:"criado_em"`
+	Numero           string         `json:"numero,omitempty"`
+	Serie            string         `json:"serie,omitempty"`
+	Sequencial       int            `json:"sequencial,omitempty"`
+	// DataEmissao é nil enquanto a factura está em RASCUNHO: time.Time não tem
+	// valor-zero omitível por omitempty, e "0001-01-01T00:00:00Z" não é uma data
+	// válida para expor numa resposta de API.
+	DataEmissao *time.Time `json:"data_emissao,omitempty"`
+	Hash        string     `json:"hash,omitempty"`
+}
+
+// ResultadoVerificacao é o diagnóstico da cadeia hash de uma série.
+type ResultadoVerificacao struct {
+	Serie         string `json:"serie"`
+	TotalFacturas int    `json:"total_facturas"`
+	Integra       bool   `json:"integra"`
+	Detalhe       string `json:"detalhe,omitempty"`
 }

@@ -76,16 +76,31 @@ seeds/  tests/  docs/  adrs/  docker/
 
 ## 6. Marco Actual
 
-**M4 — Financeiro** (em curso; Sprint 14; ver `SPRINT.md`). Arranque do último dos 5
-bounded contexts, precedido da fundação RBAC do 12.º papel **Tesoureiro** (ERRATA-002,
-`docs/ERRATA-002-papel-tesoureiro.md`; não-sensível nesta fatia, sem MFA). Entrega o
-agregado `Factura` em estado **RASCUNHO** (ADR-039, Opção A): `ItemFactura` com
-snapshot de linha (descrição/preço fornecidos no pedido) e id lógico da operação de
-origem (sem FK cross-context), IVA por item (ISENTO/STANDARD 14%, arredondamento
-meia-acima por linha) com total autoritário no domínio, persistência por upsert
-transaccional e RBAC (escrita Tesoureiro; leitura Tesoureiro/Director/Auditor). A
-emissão — cadeia hash SHA-256, numeração sequencial por série, imutabilidade — fica
-deliberadamente fora desta fatia, para o ADR-040.
+**M4 — Financeiro** (em curso; Sprints 14–15; ver `SPRINT.md`). Arranque do último dos
+5 bounded contexts, precedido da fundação RBAC do 12.º papel **Tesoureiro**
+(ERRATA-002, `docs/ERRATA-002-papel-tesoureiro.md`; não-sensível na fatia do ADR-039 e
+**sensível, com MFA obrigatória**, desde a emissão — ver a revisão de 2026-07-18 na
+ERRATA). A Sprint 14 entregou o agregado `Factura` em estado **RASCUNHO** (ADR-039,
+Opção A): `ItemFactura` com snapshot de linha (descrição/preço fornecidos no pedido) e
+id lógico da operação de origem (sem FK cross-context), IVA por item (ISENTO/STANDARD
+14%, arredondamento meia-acima por linha) com total autoritário no domínio,
+persistência por upsert transaccional e RBAC (escrita Tesoureiro; leitura
+Tesoureiro/Director/Auditor).
+
+A Sprint 15 entregou a **emissão** (ADR-040): VO `NumeroFactura` (`FAC <série>/<8
+dígitos>`, série = ano civil UTC), `Factura.Emitir` com o **hash SHA-256 canónico como
+invariante do agregado** (formato normativo e três regras de canonicalização fixados na
+ADR-040 e travados por vector dourado), `VerificarCadeia` como função pura (detecta
+buraco, elo errado e adulteração), **numeração sequencial por série sem buracos**
+serializada por `SELECT ... FOR UPDATE` na tabela `financeiro.series`,
+**imutabilidade** por triggers em `facturas`/`itens_factura` e **bloqueio optimista**
+(coluna `versao`), que fecha a dívida técnica assumida no ADR-039. O papel
+**Tesoureiro passa a sensível** (12 papéis, 5 sensíveis) e a `MFAObrigatoria()` passa a
+ser imposta nas rotas do Financeiro. Ficam fora desta fatia — e **não estão feitas** —
+a **anulação** de facturas (ADR-041), a submissão **AGT/SAF-T-AO** (ADR-042) e o
+agendamento do cron diário de verificação da cadeia (REG-001 §3.4). A ADR-040 regista
+ainda uma **dívida sistémica de segurança**: 10 grupos de rotas fora do Financeiro
+expõem papéis sensíveis sem `MFAObrigatoria()` (R3), a resolver em fatia própria.
 
 **M3 — Laboratório** (entregue; Sprints 12–13; ver `SPRINT.md`). Entrega o BC
 Laboratório completo: catálogo de análises, requisição (via ACL sobre o Clínico),
@@ -155,8 +170,9 @@ confirmação humana**. Nunca improvisar decisão arquitectural ou de conformida
 `adrs/ADR-036-integracao-inicio-consulta.md`,
 `adrs/ADR-037-ehr-triagem.md`,
 `adrs/ADR-038-outbox.md`,
-`adrs/ADR-039-bc-financeiro-factura.md`.
-Próximo ADR: **ADR-040**.
+`adrs/ADR-039-bc-financeiro-factura.md`,
+`adrs/ADR-040-emissao-factura.md`.
+Próximo ADR: **ADR-041**.
 
 ## graphify
 

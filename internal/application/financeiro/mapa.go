@@ -1,6 +1,10 @@
 package financeiro
 
-import dominio "github.com/ivandrosilva12/sgcfinal/internal/domain/financeiro"
+import (
+	"time"
+
+	dominio "github.com/ivandrosilva12/sgcfinal/internal/domain/financeiro"
+)
 
 // paraDetalheFactura projecta o agregado para o DTO de resposta. Os totais vêm do
 // domínio (fonte autoritária do cálculo de IVA).
@@ -18,11 +22,18 @@ func paraDetalheFactura(f *dominio.Factura) DetalheFactura {
 			TotalCentimos:    it.Total().Centimos(),
 		})
 	}
+	var dataEmissao *time.Time
+	if !f.DataEmissao().IsZero() {
+		d := f.DataEmissao()
+		dataEmissao = &d
+	}
 	return DetalheFactura{
 		ID: f.ID(), Estado: string(f.Estado()), ClienteNome: c.Nome, ClienteNIF: c.NIF,
 		ClienteMorada: c.Morada, EpisodioID: f.EpisodioID(), Itens: itens,
 		SubtotalCentimos: tot.Subtotal.Centimos(), TotalIVACentimos: tot.TotalIVA.Centimos(),
 		TotalCentimos: tot.Total.Centimos(), Total: tot.Total.String(),
 		CriadoEm: f.CriadoEm(),
+		Numero:   f.Numero().String(), Serie: f.Serie(), Sequencial: f.Sequencial(),
+		DataEmissao: dataEmissao, Hash: f.Hash(),
 	}
 }

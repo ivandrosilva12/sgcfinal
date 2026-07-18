@@ -2,6 +2,7 @@ package financeiro
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	dominio "github.com/ivandrosilva12/sgcfinal/internal/domain/financeiro"
@@ -159,4 +160,69 @@ func NovoCasoListarFacturasPorEpisodio(f dominio.RepositorioFacturas) *CasoLista
 // Executar devolve os resumos das facturas do episódio.
 func (uc *CasoListarFacturasPorEpisodio) Executar(ctx context.Context, episodioID string) ([]ResumoFactura, error) {
 	return uc.facturas.ListarPorEpisodio(ctx, episodioID)
+}
+
+// CasoEmitirFactura transita uma factura de rascunho para emitida, fixando-a na
+// cadeia de integridade. Acto irreversível com efeito fiscal — sempre auditado.
+type CasoEmitirFactura struct {
+	facturas dominio.RepositorioFacturas
+	auditor  Auditor
+	agora    func() time.Time
+}
+
+// NovoCasoEmitirFactura constrói o caso de uso.
+func NovoCasoEmitirFactura(f dominio.RepositorioFacturas, aud Auditor) *CasoEmitirFactura {
+	return &CasoEmitirFactura{facturas: f, auditor: aud, agora: time.Now}
+}
+
+// Executar emite a factura e audita o acto com o número legal e o hash.
+//
+// A alocação do sequencial e do elo da cadeia acontece dentro do repositório, sob
+// serialização; o cálculo do hash acontece dentro do agregado. Este caso de uso
+// não conhece nenhum dos dois mecanismos.
+func (uc *CasoEmitirFactura) Executar(ctx context.Context, actor, facturaID string) (DetalheFactura, error) {
+	f, err := uc.facturas.Emitir(ctx, facturaID, uc.agora())
+	if err != nil {
+		return DetalheFactura{}, err
+	}
+	detalhe, err := json.Marshal(map[string]string{
+		"numero": f.Numero().String(), "hash": f.Hash(),
+	})
+	if err != nil {
+		return DetalheFactura{}, err
+	}
+	if err := uc.auditor.Registar(ctx, auditoria.Registo{
+		Actor: actor, Accao: "financeiro.factura.emitida",
+		Entidade: "factura", EntidadeID: facturaID, OcorridoEm: uc.agora(),
+		Detalhe: string(detalhe),
+	}); err != nil {
+		return DetalheFactura{}, err
+	}
+	return paraDetalheFactura(f), nil
+}
+
+// CasoVerificarCadeia verifica a integridade da cadeia hash de uma série.
+type CasoVerificarCadeia struct {
+	facturas dominio.RepositorioFacturas
+}
+
+// NovoCasoVerificarCadeia constrói o caso de uso.
+func NovoCasoVerificarCadeia(f dominio.RepositorioFacturas) *CasoVerificarCadeia {
+	return &CasoVerificarCadeia{facturas: f}
+}
+
+// Executar verifica a série. Uma cadeia quebrada é um RESULTADO (Integra=false),
+// não um erro de execução: o endpoint tem de responder 200 com o diagnóstico,
+// senão um auditor não distingue "cadeia partida" de "serviço em baixo".
+func (uc *CasoVerificarCadeia) Executar(ctx context.Context, serie string) (ResultadoVerificacao, error) {
+	snaps, err := uc.facturas.ListarSnapshotsPorSerie(ctx, serie)
+	if err != nil {
+		return ResultadoVerificacao{}, err
+	}
+	res := ResultadoVerificacao{Serie: serie, TotalFacturas: len(snaps), Integra: true}
+	if err := dominio.VerificarCadeia(snaps); err != nil {
+		res.Integra = false
+		res.Detalhe = err.Error()
+	}
+	return res, nil
 }

@@ -4,11 +4,13 @@ package http
 import (
 	"context"
 	nethttp "net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
 	appfinanceiro "github.com/ivandrosilva12/sgcfinal/internal/application/financeiro"
+	dominiofin "github.com/ivandrosilva12/sgcfinal/internal/domain/financeiro"
 	dominio "github.com/ivandrosilva12/sgcfinal/internal/domain/identidade"
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/erros"
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/i18n"
@@ -36,6 +38,14 @@ type (
 	ServicoListarFacturas interface {
 		Executar(ctx context.Context, episodioID string) ([]appfinanceiro.ResumoFactura, error)
 	}
+	// ServicoEmitirFactura emite uma factura em rascunho.
+	ServicoEmitirFactura interface {
+		Executar(ctx context.Context, actor, facturaID string) (appfinanceiro.DetalheFactura, error)
+	}
+	// ServicoVerificarCadeia verifica a integridade da cadeia de uma série.
+	ServicoVerificarCadeia interface {
+		Executar(ctx context.Context, serie string) (appfinanceiro.ResultadoVerificacao, error)
+	}
 )
 
 // FinanceiroHandler expõe os endpoints HTTP do BC Financeiro.
@@ -45,16 +55,23 @@ type FinanceiroHandler struct {
 	remover   ServicoRemoverItem
 	obter     ServicoObterFactura
 	listar    ServicoListarFacturas
+	emitir    ServicoEmitirFactura
+	verificar ServicoVerificarCadeia
 }
 
 // NovoFinanceiroHandler constrói o handler.
 func NovoFinanceiroHandler(criar ServicoCriarFactura, adicionar ServicoAdicionarItem,
-	remover ServicoRemoverItem, obter ServicoObterFactura, listar ServicoListarFacturas) *FinanceiroHandler {
-	return &FinanceiroHandler{criar: criar, adicionar: adicionar, remover: remover, obter: obter, listar: listar}
+	remover ServicoRemoverItem, obter ServicoObterFactura, listar ServicoListarFacturas,
+	emitir ServicoEmitirFactura, verificar ServicoVerificarCadeia) *FinanceiroHandler {
+	return &FinanceiroHandler{criar: criar, adicionar: adicionar, remover: remover, obter: obter,
+		listar: listar, emitir: emitir, verificar: verificar}
 }
 
-// RegistarFinanceiro regista as rotas, aplicando `protecao` e o RBAC por rota. A
-// escrita (facturação) é do Tesoureiro; a leitura abre também ao Director e Auditor.
+// RegistarFinanceiro regista as rotas, aplicando `protecao` (rate limit + Auth +
+// MFAObrigatoria) e o RBAC por rota. A escrita (facturação) é do Tesoureiro; a
+// leitura abre também ao Director e Auditor. Desde o ADR-040 os três papéis são
+// sensíveis (ERRATA-002, revisão de 2026-07-18), pelo que a MFAObrigatoria no
+// grupo é o que torna efectiva a exigência de segundo factor no Financeiro.
 func RegistarFinanceiro(r gin.IRouter, h *FinanceiroHandler, protecao ...gin.HandlerFunc) {
 	escrita := RBAC(dominio.PapelTesoureiro)
 	leitura := RBAC(dominio.PapelTesoureiro, dominio.PapelDirector, dominio.PapelAuditor)
@@ -63,9 +80,15 @@ func RegistarFinanceiro(r gin.IRouter, h *FinanceiroHandler, protecao ...gin.Han
 	g.Use(protecao...)
 	g.POST("", escrita, h.criarFacturaHTTP)
 	g.GET("", leitura, h.listarFacturasHTTP)
+	// A rota literal /cadeia/verificacao regista-se antes de /:fid por clareza
+	// documental: a árvore radix do Gin já dá prioridade a segmentos estáticos
+	// sobre parâmetros, independentemente da ordem de registo, pelo que esta
+	// ordem não é uma protecção — é só a leitura mais natural do ficheiro.
+	g.GET("/cadeia/verificacao", leitura, h.verificarCadeiaHTTP)
 	g.GET("/:fid", leitura, h.obterFacturaHTTP)
 	g.POST("/:fid/itens", escrita, h.adicionarItemHTTP)
 	g.DELETE("/:fid/itens/:itemID", escrita, h.removerItemHTTP)
+	g.POST("/:fid/emitir", escrita, h.emitirFacturaHTTP)
 }
 
 type corpoNovaFactura struct {
@@ -158,6 +181,29 @@ func (h *FinanceiroHandler) adicionarItemHTTP(c *gin.Context) {
 func (h *FinanceiroHandler) removerItemHTTP(c *gin.Context) {
 	actor, _ := SessaoDe(c)
 	out, err := h.remover.Executar(c.Request.Context(), actor.Sujeito, c.Param("fid"), c.Param("itemID"))
+	if err != nil {
+		responderErro(c, err)
+		return
+	}
+	c.JSON(nethttp.StatusOK, out)
+}
+
+func (h *FinanceiroHandler) emitirFacturaHTTP(c *gin.Context) {
+	actor, _ := SessaoDe(c)
+	out, err := h.emitir.Executar(c.Request.Context(), actor.Sujeito, c.Param("fid"))
+	if err != nil {
+		responderErro(c, err)
+		return
+	}
+	c.JSON(nethttp.StatusOK, out)
+}
+
+func (h *FinanceiroHandler) verificarCadeiaHTTP(c *gin.Context) {
+	serie := c.Query("serie")
+	if serie == "" {
+		serie = dominiofin.SerieDe(time.Now())
+	}
+	out, err := h.verificar.Executar(c.Request.Context(), serie)
 	if err != nil {
 		responderErro(c, err)
 		return

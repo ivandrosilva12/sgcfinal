@@ -106,6 +106,18 @@ func TestSeed_DozePapeis(t *testing.T) {
 	if n != 12 {
 		t.Fatalf("esperava 12 papéis (DDM-001 + Tesoureiro/ERRATA-002), obtive %d", n)
 	}
+
+	// O Tesoureiro passou a sensível com a emissão (ADR-040, revisão da
+	// ERRATA-002). O seed e a migração forward-only 0006 têm de concordar com
+	// o enum do domínio (identidade.EhSensivel).
+	var sensivel bool
+	if err := pool.QueryRow(ctx,
+		`SELECT sensivel FROM identidade.papeis WHERE codigo = 'Tesoureiro'`).Scan(&sensivel); err != nil {
+		t.Fatalf("ler sensibilidade do Tesoureiro: %v", err)
+	}
+	if !sensivel {
+		t.Fatal("Tesoureiro devia estar marcado como sensível (ADR-040)")
+	}
 }
 
 func TestOutbox_TemColunasDeReentrega(t *testing.T) {

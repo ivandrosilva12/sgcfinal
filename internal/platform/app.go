@@ -212,6 +212,8 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		appfinanceiro.NovoCasoRemoverItem(repoFacturas, repoAuditoria),
 		appfinanceiro.NovoCasoObterFactura(repoFacturas),
 		appfinanceiro.NovoCasoListarFacturasPorEpisodio(repoFacturas),
+		appfinanceiro.NovoCasoEmitirFactura(repoFacturas, repoAuditoria),
+		appfinanceiro.NovoCasoVerificarCadeia(repoFacturas),
 	)
 
 	// BC Recepção (marco Percurso Ambulatório): marcação e agenda por disponibilidade.
@@ -279,7 +281,7 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		adhttp.RegistarFarmacia(r, handlerFarmacia, limiteMW, authMW)
 		adhttp.RegistarFarmaciaStock(r, handlerFarmaciaStock, limiteMW, authMW)
 		adhttp.RegistarLaboratorio(r, handlerLaboratorio, limiteMW, authMW)
-		adhttp.RegistarFinanceiro(r, handlerFinanceiro, limiteMW, authMW)
+		adhttp.RegistarFinanceiro(r, handlerFinanceiro, limiteMW, authMW, mfaMW)
 		adhttp.RegistarRecepcao(r, handlerRecepcao, limiteMW, authMW)
 		adhttp.RegistarRecepcaoChegadas(r, handlerRecepcaoChegadas, limiteMW, authMW)
 		adhttp.RegistarRecepcaoTriagem(r, handlerRecepcaoTriagem, limiteMW, authMW)

@@ -146,12 +146,14 @@ func TestAutorizar(t *testing.T) {
 	}
 }
 
-func TestPapelTesoureiroNaoSensivel(t *testing.T) {
+func TestPapelTesoureiroSensivel(t *testing.T) {
 	if !ident.PapelValido(string(ident.PapelTesoureiro)) {
 		t.Fatal("PapelTesoureiro devia ser um papel válido")
 	}
-	if ident.EhSensivel(ident.PapelTesoureiro) {
-		t.Error("PapelTesoureiro não é sensível nesta fatia (sem MFA)")
+	// ADR-040: com a emissão, o Tesoureiro pratica um acto irreversível com
+	// efeito fiscal. A ERRATA-002 marcou esta reavaliação como pendente.
+	if !ident.EhSensivel(ident.PapelTesoureiro) {
+		t.Error("PapelTesoureiro passou a sensível com a emissão de facturas (ADR-040)")
 	}
 }
 

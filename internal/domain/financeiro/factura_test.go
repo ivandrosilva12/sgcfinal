@@ -235,3 +235,211 @@ func TestResumoFacturaCampos(t *testing.T) {
 		t.Error("ResumoFactura deve expor o total em cêntimos")
 	}
 }
+
+func TestEmitir_FixaNumeroDataEHash(t *testing.T) {
+	f := novaFacturaValida(t)
+	if err := f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1,
+		moeda.DeCentimos(50000), fin.RegimeIsento); err != nil {
+		t.Fatalf("AdicionarItem: %v", err)
+	}
+	m := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	if err := f.Emitir("2026", 1, "", m); err != nil {
+		t.Fatalf("Emitir: %v", err)
+	}
+	if f.Estado() != fin.FactEmitida {
+		t.Errorf("estado = %q, queria EMITIDA", f.Estado())
+	}
+	if got := f.Numero().String(); got != "FAC 2026/00000001" {
+		t.Errorf("número = %q", got)
+	}
+	if f.Hash() == "" {
+		t.Error("hash não podia ficar vazio")
+	}
+	if len(f.Hash()) != 64 {
+		t.Errorf("hash tem %d caracteres, queria 64 (SHA-256 hex)", len(f.Hash()))
+	}
+}
+
+func TestEmitir_SoDeRascunho(t *testing.T) {
+	f := novaFacturaValida(t)
+	_ = f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1, moeda.DeCentimos(1000), fin.RegimeIsento)
+	m := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	if err := f.Emitir("2026", 1, "", m); err != nil {
+		t.Fatalf("primeira emissão: %v", err)
+	}
+	err := f.Emitir("2026", 2, f.Hash(), m)
+	if err == nil || erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Errorf("segunda emissão devia dar Conflito, deu %v", err)
+	}
+}
+
+func TestEmitir_RecusaFacturaSemLinhas(t *testing.T) {
+	f := novaFacturaValida(t)
+	m := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	err := f.Emitir("2026", 1, "", m)
+	if err == nil || erros.CategoriaDe(err) != erros.CategoriaRegraNegocio {
+		t.Errorf("factura sem linhas devia dar RegraNegocio, deu %v", err)
+	}
+}
+
+func TestHash_DeterministicoEEstavel(t *testing.T) {
+	cria := func() *fin.Factura {
+		f := novaFacturaValida(t)
+		_ = f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1, moeda.DeCentimos(50000), fin.RegimeIsento)
+		return f
+	}
+	m := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	a, b := cria(), cria()
+	_ = a.Emitir("2026", 1, "", m)
+	_ = b.Emitir("2026", 1, "", m)
+	if a.Hash() != b.Hash() {
+		t.Error("mesma entrada devia dar o mesmo hash")
+	}
+}
+
+func TestHash_IgnoraSubSegundo(t *testing.T) {
+	cria := func() *fin.Factura {
+		f := novaFacturaValida(t)
+		_ = f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1, moeda.DeCentimos(50000), fin.RegimeIsento)
+		return f
+	}
+	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	a, b := cria(), cria()
+	_ = a.Emitir("2026", 1, "", base)
+	_ = b.Emitir("2026", 1, "", base.Add(999*time.Millisecond))
+	if a.Hash() != b.Hash() {
+		t.Error("sub-segundo não podia entrar no hash: o valor relido da BD tem outra precisão")
+	}
+}
+
+func TestHash_SelaConteudoDaLinha(t *testing.T) {
+	m := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	comDescricao := func(d string) string {
+		f := novaFacturaValida(t)
+		_ = f.AdicionarItem(d, fin.LinhaConsulta, "", 1, moeda.DeCentimos(50000), fin.RegimeIsento)
+		_ = f.Emitir("2026", 1, "", m)
+		return f.Hash()
+	}
+	if comDescricao("Consulta") == comDescricao("Cirurgia") {
+		t.Error("alterar a descrição da linha tinha de mudar o hash (total igual não chega)")
+	}
+}
+
+func TestHash_EncadeiaComAnterior(t *testing.T) {
+	m := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	comAnterior := func(ha string) string {
+		f := novaFacturaValida(t)
+		_ = f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1, moeda.DeCentimos(50000), fin.RegimeIsento)
+		_ = f.Emitir("2026", 2, ha, m)
+		return f.Hash()
+	}
+	if comAnterior("") == comAnterior("aaaa") {
+		t.Error("o hash anterior tinha de entrar no cálculo")
+	}
+}
+
+// TestEmitir_DataEmissaoTruncadaSemNanosegundosEUTC fixa que Emitir trunca ao
+// segundo e normaliza para UTC o campo persistido — não só o hash. Se algum dia
+// a truncatura dentro de Emitir for removida e ficar só a de HashDe, o valor
+// gravado em DataEmissao passa a divergir do que o hash sela, e nenhum outro
+// teste desta suite apanharia essa deriva (todos comparam hashes entre si).
+func TestEmitir_DataEmissaoTruncadaSemNanosegundosEUTC(t *testing.T) {
+	f := novaFacturaValida(t)
+	if err := f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1,
+		moeda.DeCentimos(50000), fin.RegimeIsento); err != nil {
+		t.Fatalf("AdicionarItem: %v", err)
+	}
+	// Fuso não-UTC (WAT, Angola) e nanosegundos não-nulos: o momento tal como
+	// chegaria de time.Now() num servidor real, antes de ser persistido.
+	wat := time.FixedZone("WAT", 3600)
+	m := time.Date(2026, 7, 18, 11, 0, 0, 123456789, wat)
+	if err := f.Emitir("2026", 1, "", m); err != nil {
+		t.Fatalf("Emitir: %v", err)
+	}
+	if got := f.DataEmissao().Nanosecond(); got != 0 {
+		t.Errorf("DataEmissao().Nanosecond() = %d; esperava 0 (truncado ao segundo)", got)
+	}
+	if loc := f.DataEmissao().Location(); loc != time.UTC {
+		t.Errorf("DataEmissao().Location() = %v; esperava UTC", loc)
+	}
+}
+
+// TestReconstruirFactura_PreservaFacturaEmitida cobre ReconstruirFactura sobre
+// uma factura EMITIDA — os testes existentes só a exercitam sobre RASCUNHO. Os
+// 7 campos de emissão (Numero, Serie, Sequencial, DataEmissao, Hash,
+// HashAnterior, Estado) são o tipo de literal que se perde numa edição futura
+// de Snapshot()/ReconstruirFactura sem que nenhum teste dê pelo erro — e a
+// consequência é a cadeia deixar de fechar depois de um restart do sistema.
+func TestReconstruirFactura_PreservaFacturaEmitida(t *testing.T) {
+	f := novaFacturaValida(t)
+	if err := f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1,
+		moeda.DeCentimos(50000), fin.RegimeIsento); err != nil {
+		t.Fatalf("AdicionarItem: %v", err)
+	}
+	m := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	if err := f.Emitir("2026", 9, "elo-anterior-xyz", m); err != nil {
+		t.Fatalf("Emitir: %v", err)
+	}
+
+	recon := fin.ReconstruirFactura(f.Snapshot())
+
+	if recon.Estado() != fin.FactEmitida {
+		t.Errorf("Estado() = %q; esperava EMITIDA", recon.Estado())
+	}
+	if recon.Numero() != f.Numero() {
+		t.Errorf("Numero() = %q; esperava %q", recon.Numero(), f.Numero())
+	}
+	if recon.Serie() != f.Serie() {
+		t.Errorf("Serie() = %q; esperava %q", recon.Serie(), f.Serie())
+	}
+	if recon.Sequencial() != f.Sequencial() {
+		t.Errorf("Sequencial() = %d; esperava %d", recon.Sequencial(), f.Sequencial())
+	}
+	if !recon.DataEmissao().Equal(f.DataEmissao()) {
+		t.Errorf("DataEmissao() = %v; esperava %v", recon.DataEmissao(), f.DataEmissao())
+	}
+	if recon.HashAnterior() != f.HashAnterior() {
+		t.Errorf("HashAnterior() = %q; esperava %q", recon.HashAnterior(), f.HashAnterior())
+	}
+	if recon.Hash() != f.Hash() {
+		t.Errorf("Hash() = %q; esperava %q", recon.Hash(), f.Hash())
+	}
+	// O elo tem de fechar: recalcular o hash sobre o snapshot reconstruído
+	// devolve o mesmo valor gravado — não só o campo Hash é copiado às cegas.
+	if got := fin.HashDe(recon.Snapshot()); got != f.Hash() {
+		t.Errorf("HashDe(recon.Snapshot()) = %q; esperava o mesmo elo %q", got, f.Hash())
+	}
+}
+
+// Vector dourado: fixa o hash canónico de uma factura conhecida. Se a
+// canonicalização mudar (ordem dos campos, separadores, formato da data), este
+// teste falha — é a única salvaguarda contra tornar irreproduzível a cadeia das
+// facturas já emitidas (retenção AGT/SAF-T-AO, 10 anos).
+const hashDourado = "8caeeee0017219380ffbca9560b2d24894b07a45ba1fdb63a6cc4710293cc169"
+
+func TestHash_VectorDourado(t *testing.T) {
+	c, err := fin.NovoClienteSnapshot("Sol", "", "")
+	if err != nil {
+		t.Fatalf("cliente: %v", err)
+	}
+	f, err := fin.NovaFactura(c, "11111111-1111-1111-1111-111111111111")
+	if err != nil {
+		t.Fatalf("factura: %v", err)
+	}
+	if err := f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1,
+		moeda.DeCentimos(50000), fin.RegimeIsento); err != nil {
+		t.Fatalf("item1: %v", err)
+	}
+	if err := f.AdicionarItem("Paracetamol", fin.LinhaDispensa,
+		"22222222-2222-2222-2222-222222222222", 2,
+		moeda.DeCentimos(1000), fin.RegimeStandard); err != nil {
+		t.Fatalf("item2: %v", err)
+	}
+	m := time.Date(2026, 7, 18, 10, 0, 0, 123456789, time.UTC)
+	if err := f.Emitir("2026", 7, "abc", m); err != nil {
+		t.Fatalf("Emitir: %v", err)
+	}
+	if f.Hash() != hashDourado {
+		t.Errorf("hash = %q, queria %q", f.Hash(), hashDourado)
+	}
+}

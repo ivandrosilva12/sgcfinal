@@ -16,7 +16,7 @@ INSERT INTO identidade.papeis (codigo, descricao, sensivel) VALUES
     ('Admin',              'Administrador de Sistema',     true),
     ('DPO',                'Encarregado de Protecção de Dados (DPO)', true),
     ('Auditor',            'Auditor',                      true),
-    ('Tesoureiro',         'Tesoureiro (facturação)',      false)
+    ('Tesoureiro',         'Tesoureiro (facturação)',      true)
 ON CONFLICT (codigo) DO UPDATE
     SET descricao = EXCLUDED.descricao,
         sensivel  = EXCLUDED.sensivel;

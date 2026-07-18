@@ -3,8 +3,11 @@ package financeiro_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	app "github.com/ivandrosilva12/sgcfinal/internal/application/financeiro"
+	dominio "github.com/ivandrosilva12/sgcfinal/internal/domain/financeiro"
+	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/erros"
 )
 
 func TestCriarFacturaAuditada(t *testing.T) {
@@ -150,5 +153,114 @@ func TestRemoverItem_NaoEncontradoNaoAudita(t *testing.T) {
 	}
 	if aud.tem("financeiro.factura.item.removido") {
 		t.Error("falha de validação não devia ser auditada")
+	}
+}
+
+func TestEmitirFactura_AuditaComNumeroEHash(t *testing.T) {
+	repo := novoFakeFacturas()
+	aud := &fakeAuditor{}
+	id := rascunhoComLinha(t, repo)
+
+	uc := app.NovoCasoEmitirFactura(repo, aud)
+	out, err := uc.Executar(context.Background(), "tesoureiro-1", id)
+	if err != nil {
+		t.Fatalf("Executar: %v", err)
+	}
+	if out.Estado != "EMITIDA" {
+		t.Errorf("estado = %q, queria EMITIDA", out.Estado)
+	}
+	if out.Numero == "" || out.Hash == "" {
+		t.Errorf("número e hash tinham de vir preenchidos: %+v", out)
+	}
+	if !aud.tem("financeiro.factura.emitida") {
+		t.Error("a emissão tinha de ser auditada")
+	}
+}
+
+func TestEmitirFactura_PropagaErroDoDominio(t *testing.T) {
+	repo := novoFakeFacturas()
+	aud := &fakeAuditor{}
+	id := rascunhoSemLinhas(t, repo)
+
+	uc := app.NovoCasoEmitirFactura(repo, aud)
+	_, err := uc.Executar(context.Background(), "tesoureiro-1", id)
+	if err == nil || erros.CategoriaDe(err) != erros.CategoriaRegraNegocio {
+		t.Errorf("factura sem linhas devia dar RegraNegocio, deu %v", err)
+	}
+	if len(aud.registos) != 0 {
+		t.Error("emissão falhada não podia ser auditada como sucesso")
+	}
+}
+
+func TestEmitirFactura_FacturaInexistente(t *testing.T) {
+	repo := novoFakeFacturas()
+	aud := &fakeAuditor{}
+
+	uc := app.NovoCasoEmitirFactura(repo, aud)
+	_, err := uc.Executar(context.Background(), "tesoureiro-1", "inexistente")
+	if err == nil || erros.CategoriaDe(err) != erros.CategoriaNaoEncontrado {
+		t.Errorf("factura inexistente devia dar NaoEncontrado, deu %v", err)
+	}
+	if len(aud.registos) != 0 {
+		t.Error("emissão falhada não podia ser auditada como sucesso")
+	}
+}
+
+func TestEmitirFactura_JaEmitidaNaoPodeSerReemitida(t *testing.T) {
+	repo := novoFakeFacturas()
+	aud := &fakeAuditor{}
+	id := rascunhoComLinha(t, repo)
+
+	uc := app.NovoCasoEmitirFactura(repo, aud)
+	if _, err := uc.Executar(context.Background(), "tesoureiro-1", id); err != nil {
+		t.Fatalf("primeira emissão: %v", err)
+	}
+
+	_, err := uc.Executar(context.Background(), "tesoureiro-1", id)
+	if err == nil || erros.CategoriaDe(err) != erros.CategoriaConflito {
+		t.Errorf("reemissão devia dar Conflito, deu %v", err)
+	}
+}
+
+func TestVerificarCadeia_DevolveIntegra(t *testing.T) {
+	repo := novoFakeFacturas()
+	aud := &fakeAuditor{}
+	emissor := app.NovoCasoEmitirFactura(repo, aud)
+	for i := 0; i < 3; i++ {
+		if _, err := emissor.Executar(context.Background(), "tes-1", rascunhoComLinha(t, repo)); err != nil {
+			t.Fatalf("emitir %d: %v", i, err)
+		}
+	}
+	serie := dominio.SerieDe(time.Now())
+
+	uc := app.NovoCasoVerificarCadeia(repo)
+	out, err := uc.Executar(context.Background(), serie)
+	if err != nil {
+		t.Fatalf("Executar: %v", err)
+	}
+	if !out.Integra || out.TotalFacturas != 3 {
+		t.Errorf("esperava íntegra com 3 facturas, deu %+v", out)
+	}
+}
+
+func TestVerificarCadeia_QuebraEhResultadoNaoErro(t *testing.T) {
+	repo := novoFakeFacturas()
+	aud := &fakeAuditor{}
+	emissor := app.NovoCasoEmitirFactura(repo, aud)
+	for i := 0; i < 3; i++ {
+		if _, err := emissor.Executar(context.Background(), "tes-1", rascunhoComLinha(t, repo)); err != nil {
+			t.Fatalf("emitir %d: %v", i, err)
+		}
+	}
+	serie := dominio.SerieDe(time.Now())
+	repo.adulterarPrimeiraLinha(serie, 2, "Adulterada")
+
+	uc := app.NovoCasoVerificarCadeia(repo)
+	out, err := uc.Executar(context.Background(), serie)
+	if err != nil {
+		t.Fatalf("uma cadeia quebrada é um resultado, não um erro de execução: %v", err)
+	}
+	if out.Integra || out.Detalhe == "" {
+		t.Errorf("esperava quebra reportada com detalhe, deu %+v", out)
 	}
 }
