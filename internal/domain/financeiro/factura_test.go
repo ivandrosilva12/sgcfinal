@@ -337,3 +337,76 @@ func TestHash_EncadeiaComAnterior(t *testing.T) {
 		t.Error("o hash anterior tinha de entrar no cálculo")
 	}
 }
+
+// TestEmitir_DataEmissaoTruncadaSemNanosegundosEUTC fixa que Emitir trunca ao
+// segundo e normaliza para UTC o campo persistido — não só o hash. Se algum dia
+// a truncatura dentro de Emitir for removida e ficar só a de HashDe, o valor
+// gravado em DataEmissao passa a divergir do que o hash sela, e nenhum outro
+// teste desta suite apanharia essa deriva (todos comparam hashes entre si).
+func TestEmitir_DataEmissaoTruncadaSemNanosegundosEUTC(t *testing.T) {
+	f := novaFacturaValida(t)
+	if err := f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1,
+		moeda.DeCentimos(50000), fin.RegimeIsento); err != nil {
+		t.Fatalf("AdicionarItem: %v", err)
+	}
+	// Fuso não-UTC (WAT, Angola) e nanosegundos não-nulos: o momento tal como
+	// chegaria de time.Now() num servidor real, antes de ser persistido.
+	wat := time.FixedZone("WAT", 3600)
+	m := time.Date(2026, 7, 18, 11, 0, 0, 123456789, wat)
+	if err := f.Emitir("2026", 1, "", m); err != nil {
+		t.Fatalf("Emitir: %v", err)
+	}
+	if got := f.DataEmissao().Nanosecond(); got != 0 {
+		t.Errorf("DataEmissao().Nanosecond() = %d; esperava 0 (truncado ao segundo)", got)
+	}
+	if loc := f.DataEmissao().Location(); loc != time.UTC {
+		t.Errorf("DataEmissao().Location() = %v; esperava UTC", loc)
+	}
+}
+
+// TestReconstruirFactura_PreservaFacturaEmitida cobre ReconstruirFactura sobre
+// uma factura EMITIDA — os testes existentes só a exercitam sobre RASCUNHO. Os
+// 7 campos de emissão (Numero, Serie, Sequencial, DataEmissao, Hash,
+// HashAnterior, Estado) são o tipo de literal que se perde numa edição futura
+// de Snapshot()/ReconstruirFactura sem que nenhum teste dê pelo erro — e a
+// consequência é a cadeia deixar de fechar depois de um restart do sistema.
+func TestReconstruirFactura_PreservaFacturaEmitida(t *testing.T) {
+	f := novaFacturaValida(t)
+	if err := f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1,
+		moeda.DeCentimos(50000), fin.RegimeIsento); err != nil {
+		t.Fatalf("AdicionarItem: %v", err)
+	}
+	m := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	if err := f.Emitir("2026", 9, "elo-anterior-xyz", m); err != nil {
+		t.Fatalf("Emitir: %v", err)
+	}
+
+	recon := fin.ReconstruirFactura(f.Snapshot())
+
+	if recon.Estado() != fin.FactEmitida {
+		t.Errorf("Estado() = %q; esperava EMITIDA", recon.Estado())
+	}
+	if recon.Numero() != f.Numero() {
+		t.Errorf("Numero() = %q; esperava %q", recon.Numero(), f.Numero())
+	}
+	if recon.Serie() != f.Serie() {
+		t.Errorf("Serie() = %q; esperava %q", recon.Serie(), f.Serie())
+	}
+	if recon.Sequencial() != f.Sequencial() {
+		t.Errorf("Sequencial() = %d; esperava %d", recon.Sequencial(), f.Sequencial())
+	}
+	if !recon.DataEmissao().Equal(f.DataEmissao()) {
+		t.Errorf("DataEmissao() = %v; esperava %v", recon.DataEmissao(), f.DataEmissao())
+	}
+	if recon.HashAnterior() != f.HashAnterior() {
+		t.Errorf("HashAnterior() = %q; esperava %q", recon.HashAnterior(), f.HashAnterior())
+	}
+	if recon.Hash() != f.Hash() {
+		t.Errorf("Hash() = %q; esperava %q", recon.Hash(), f.Hash())
+	}
+	// O elo tem de fechar: recalcular o hash sobre o snapshot reconstruído
+	// devolve o mesmo valor gravado — não só o campo Hash é copiado às cegas.
+	if got := fin.HashDe(recon.Snapshot()); got != f.Hash() {
+		t.Errorf("HashDe(recon.Snapshot()) = %q; esperava o mesmo elo %q", got, f.Hash())
+	}
+}
