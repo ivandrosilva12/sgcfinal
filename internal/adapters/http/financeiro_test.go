@@ -83,7 +83,7 @@ func TestFinanceiro_CriarFactura_Tesoureiro_201_UsaOSujeitoAutenticado(t *testin
 	r := routerFin(t, criar, &duploAdicionarItemFin{}, sessaoLabDe("tes-1", identidade.PapelTesoureiro))
 
 	corpo, _ := json.Marshal(map[string]string{
-		"episodio_id": "ep-1", "cliente_nome": "Maria João", "cliente_nif": "", "cliente_morada": "Luanda",
+		"episodio_id": "11111111-1111-1111-1111-111111111111", "cliente_nome": "Maria João", "cliente_nif": "", "cliente_morada": "Luanda",
 	})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/financeiro/facturas", bytes.NewReader(corpo))
@@ -159,5 +159,50 @@ func TestFinanceiro_CriarFactura_CorpoMalformado_400(t *testing.T) {
 
 	if w.Code != 400 {
 		t.Fatalf("corpo malformado devia dar 400, veio %d", w.Code)
+	}
+}
+
+// episodio_id não é path param: o middleware ValidarUUIDs (que só cobre
+// c.Params) não o alcança. Sem a validação em episodioIDValido, um episodio_id
+// ausente ou malformado batia no cast ::uuid do Postgres e voltava 500 em vez
+// de 400.
+
+func TestFinanceiro_ListarFacturas_SemEpisodioID_400(t *testing.T) {
+	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, sessaoLabDe("tes-1", identidade.PapelTesoureiro))
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/financeiro/facturas", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != 400 {
+		t.Fatalf("esperava 400 sem episodio_id, veio %d (%s)", w.Code, w.Body.String())
+	}
+}
+
+func TestFinanceiro_ListarFacturas_EpisodioValido_200(t *testing.T) {
+	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, sessaoLabDe("tes-1", identidade.PapelTesoureiro))
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/financeiro/facturas?episodio_id=11111111-1111-1111-1111-111111111111", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("esperava 200 com episodio_id válido, veio %d (%s)", w.Code, w.Body.String())
+	}
+}
+
+func TestFinanceiro_CriarFactura_EpisodioInvalido_400(t *testing.T) {
+	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, sessaoLabDe("tes-1", identidade.PapelTesoureiro))
+
+	corpo, _ := json.Marshal(map[string]string{
+		"episodio_id": "nao-uuid", "cliente_nome": "Maria João", "cliente_nif": "", "cliente_morada": "Luanda",
+	})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/financeiro/facturas", bytes.NewReader(corpo))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	if w.Code != 400 {
+		t.Fatalf("esperava 400 com episodio_id inválido, veio %d (%s)", w.Code, w.Body.String())
 	}
 }

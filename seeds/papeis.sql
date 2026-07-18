@@ -1,5 +1,6 @@
 -- Seed dos 12 papéis RBAC do SGC Angola (fonte: DDM-001 v2.0).
 -- Ver docs/ERRATA-001-papeis.md (divergência 8 vs 11, resolvida a favor do DDM-001).
+-- O 12.º papel (Tesoureiro) provém da ERRATA-002 (ver docs/ERRATA-002-papel-tesoureiro.md).
 -- Idempotente: reexecutar não duplica nem altera atribuições existentes.
 -- Papéis sensíveis (sensivel=true) exigirão MFA em M1/Sprint 3.
 

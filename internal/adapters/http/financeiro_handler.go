@@ -6,6 +6,7 @@ import (
 	nethttp "net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	appfinanceiro "github.com/ivandrosilva12/sgcfinal/internal/application/financeiro"
 	dominio "github.com/ivandrosilva12/sgcfinal/internal/domain/identidade"
@@ -83,10 +84,21 @@ type corpoNovoItem struct {
 	RegimeIVA             string `json:"regime_iva"`
 }
 
+// episodioIDValido valida que o episodio_id (vindo do corpo ou da query, fora do
+// alcance do middleware ValidarUUIDs que só cobre path params) é um uuid canónico.
+func episodioIDValido(s string) bool {
+	_, err := uuid.Parse(s)
+	return err == nil && len(s) == 36
+}
+
 func (h *FinanceiroHandler) criarFacturaHTTP(c *gin.Context) {
 	var corpo corpoNovaFactura
 	if err := c.ShouldBindJSON(&corpo); err != nil {
 		responderErro(c, erros.Novo(erros.CategoriaValidacao, i18n.T(i18n.MsgPedidoInvalido)))
+		return
+	}
+	if !episodioIDValido(corpo.EpisodioID) {
+		responderErro(c, erros.Novo(erros.CategoriaValidacao, "episódio da factura inválido"))
 		return
 	}
 	actor, _ := SessaoDe(c)
@@ -102,7 +114,12 @@ func (h *FinanceiroHandler) criarFacturaHTTP(c *gin.Context) {
 }
 
 func (h *FinanceiroHandler) listarFacturasHTTP(c *gin.Context) {
-	out, err := h.listar.Executar(c.Request.Context(), c.Query("episodio_id"))
+	episodioID := c.Query("episodio_id")
+	if !episodioIDValido(episodioID) {
+		responderErro(c, erros.Novo(erros.CategoriaValidacao, "episódio inválido ou em falta"))
+		return
+	}
+	out, err := h.listar.Executar(c.Request.Context(), episodioID)
 	if err != nil {
 		responderErro(c, err)
 		return

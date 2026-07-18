@@ -118,3 +118,9 @@ UAT"). É preciso fundação RBAC antes de expor qualquer rota financeira.
 - Auto-população de linhas via ACL sobre o Clínico/Farmácia/Laboratório; validação
   de `episodio_id` via ACL (nesta fatia é um uuid lógico sem verificação
   cross-BC).
+- **Bloqueio optimista (coluna `versao`)** para editar linhas de rascunho em
+  concorrência: a edição actual (adicionar/remover item) é read-modify-write sem
+  guarda de versão — duas escritas concorrentes sobre o mesmo rascunho perdem uma
+  actualização (lost-update). Aceite nesta fatia porque o rascunho não tem valor
+  legal; a resolver no **ADR-040**, antes de a factura ganhar valor legal na
+  emissão.
