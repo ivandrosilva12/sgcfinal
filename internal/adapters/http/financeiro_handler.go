@@ -77,8 +77,10 @@ func RegistarFinanceiro(r gin.IRouter, h *FinanceiroHandler, protecao ...gin.Han
 	g.Use(protecao...)
 	g.POST("", escrita, h.criarFacturaHTTP)
 	g.GET("", leitura, h.listarFacturasHTTP)
-	// A rota literal /cadeia/verificacao regista-se antes de /:fid: se a ordem
-	// se inverter, "cadeia" passa a ser capturado como id de factura.
+	// A rota literal /cadeia/verificacao regista-se antes de /:fid por clareza
+	// documental: a árvore radix do Gin já dá prioridade a segmentos estáticos
+	// sobre parâmetros, independentemente da ordem de registo, pelo que esta
+	// ordem não é uma protecção — é só a leitura mais natural do ficheiro.
 	g.GET("/cadeia/verificacao", leitura, h.verificarCadeiaHTTP)
 	g.GET("/:fid", leitura, h.obterFacturaHTTP)
 	g.POST("/:fid/itens", escrita, h.adicionarItemHTTP)

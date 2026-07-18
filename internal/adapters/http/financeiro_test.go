@@ -68,10 +68,15 @@ func (duploListarFacturas) Executar(_ context.Context, episodioID string) ([]app
 	return []appfinanceiro.ResumoFactura{{ID: "fac-1", EpisodioID: episodioID}}, nil
 }
 
-// duploEmitirFactura devolve uma factura emitida; err força um erro de domínio.
-type duploEmitirFactura struct{ err error }
+// duploEmitirFactura devolve uma factura emitida, guardando o actor recebido;
+// err força um erro de domínio.
+type duploEmitirFactura struct {
+	err           error
+	actorRecebido string
+}
 
-func (d *duploEmitirFactura) Executar(_ context.Context, _, facturaID string) (appfinanceiro.DetalheFactura, error) {
+func (d *duploEmitirFactura) Executar(_ context.Context, actor, facturaID string) (appfinanceiro.DetalheFactura, error) {
+	d.actorRecebido = actor
 	if d.err != nil {
 		return appfinanceiro.DetalheFactura{}, d.err
 	}
@@ -82,25 +87,40 @@ func (d *duploEmitirFactura) Executar(_ context.Context, _, facturaID string) (a
 	}, nil
 }
 
-type duploVerificarCadeia struct{}
+// duploVerificarCadeia devolve, por omissão, uma cadeia íntegra; com
+// `quebrada`, devolve Integra:false e um Detalhe de diagnóstico — ambos os
+// veredictos vêm no corpo com 200, nunca como erro HTTP.
+type duploVerificarCadeia struct{ quebrada bool }
 
-func (duploVerificarCadeia) Executar(_ context.Context, serie string) (appfinanceiro.ResultadoVerificacao, error) {
+func (d duploVerificarCadeia) Executar(_ context.Context, serie string) (appfinanceiro.ResultadoVerificacao, error) {
+	if d.quebrada {
+		return appfinanceiro.ResultadoVerificacao{
+			Serie: serie, TotalFacturas: 3, Integra: false,
+			Detalhe: "quebra de cadeia detectada entre duas facturas consecutivas da série",
+		}, nil
+	}
 	return appfinanceiro.ResultadoVerificacao{Serie: serie, TotalFacturas: 3, Integra: true}, nil
 }
 
 // routerFin monta o router com os duplos e uma sessão fixa. Usa o `fakeAuth` já
 // existente no pacote de testes (ver `identidade_test.go`) e a `sessaoLabDe`
-// genérica (ver `laboratorio_test.go`) — não redefine nenhum dos dois.
+// genérica (ver `laboratorio_test.go`) — não redefine nenhum dos dois. O
+// `verificar` é variádico e opcional (por omissão, cadeia íntegra) para não
+// obrigar os chamadores já existentes a mudar.
 func routerFin(t *testing.T, criar *duploCriarFactura, adicionar *duploAdicionarItemFin,
-	emitir *duploEmitirFactura, sessao identidade.Sessao) *gin.Engine {
+	emitir *duploEmitirFactura, sessao identidade.Sessao, verificar ...*duploVerificarCadeia) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	if emitir == nil {
 		emitir = &duploEmitirFactura{}
 	}
+	v := &duploVerificarCadeia{}
+	if len(verificar) > 0 && verificar[0] != nil {
+		v = verificar[0]
+	}
 	h := adhttp.NovoFinanceiroHandler(criar, adicionar, duploRemoverItemFin{},
-		duploObterFactura{}, duploListarFacturas{}, emitir, duploVerificarCadeia{})
+		duploObterFactura{}, duploListarFacturas{}, emitir, v)
 	adhttp.RegistarFinanceiro(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
 	return r
 }
@@ -297,6 +317,28 @@ func TestFinanceiro_Emitir_JaEmitida_409(t *testing.T) {
 	}
 }
 
+// A emissão é o acto fiscalmente relevante e auditado: o actor gravado no
+// audit log tem de vir sempre da sessão autenticada, nunca de um valor que o
+// chamador tente injectar no corpo do pedido.
+func TestFinanceiro_Emitir_ActorVemDaSessaoNaoDoCorpo(t *testing.T) {
+	emitir := &duploEmitirFactura{}
+	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, emitir,
+		sessaoLabDe("tes-1", identidade.PapelTesoureiro))
+
+	corpo, _ := json.Marshal(map[string]string{"actor": "outro-utilizador"})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/financeiro/facturas/"+facturaIDTeste+"/emitir", bytes.NewReader(corpo))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("esperava 200, veio %d (%s)", w.Code, w.Body.String())
+	}
+	if emitir.actorRecebido != "tes-1" {
+		t.Fatalf("esperava o actor da sessão (tes-1), veio %q", emitir.actorRecebido)
+	}
+}
+
 func TestFinanceiro_VerificarCadeia_Auditor_200(t *testing.T) {
 	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil,
 		sessaoLabDe("aud-1", identidade.PapelAuditor))
@@ -310,9 +352,38 @@ func TestFinanceiro_VerificarCadeia_Auditor_200(t *testing.T) {
 	}
 }
 
-// A rota /cadeia/verificacao é registada antes de /:fid; este teste falha se
-// alguém trocar a ordem e "cadeia" passar a ser capturado como id de factura.
-func TestFinanceiro_CadeiaNaoEhCapturadaComoID(t *testing.T) {
+// O comportamento mais importante desta rota: uma cadeia quebrada devolve
+// 200 com o veredicto no corpo, e não um erro HTTP — um auditor tem de
+// conseguir distinguir "cadeia partida" de "serviço em baixo".
+func TestFinanceiro_VerificarCadeia_Quebrada_200ComVeredicto(t *testing.T) {
+	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil,
+		sessaoLabDe("aud-1", identidade.PapelAuditor), &duploVerificarCadeia{quebrada: true})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/financeiro/facturas/cadeia/verificacao?serie=2026", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("uma cadeia quebrada devia responder 200 com o veredicto, veio %d (%s)", w.Code, w.Body.String())
+	}
+	var resp appfinanceiro.ResultadoVerificacao
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("resposta não é JSON válido: %v", err)
+	}
+	if resp.Integra {
+		t.Fatalf("esperava integra=false para uma cadeia quebrada, veio true")
+	}
+	if resp.Detalhe == "" {
+		t.Fatalf("esperava o detalhe do diagnóstico da quebra no corpo, veio vazio")
+	}
+}
+
+// A rota literal /cadeia/verificacao tem de continuar alcançável mesmo sem
+// query params. Nota: isto não depende da ordem de registo em
+// RegistarFinanceiro — a árvore radix do Gin já prioriza segmentos estáticos
+// sobre parâmetros (confirmado invertendo a ordem: o teste continua a
+// passar) — este teste cobre só o comportamento observável da rota.
+func TestFinanceiro_CadeiaVerificacao_RotaLiteralAlcancavel_200(t *testing.T) {
 	r := routerFin(t, &duploCriarFactura{}, &duploAdicionarItemFin{}, nil,
 		sessaoLabDe("aud-1", identidade.PapelAuditor))
 
