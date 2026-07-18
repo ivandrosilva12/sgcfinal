@@ -2,17 +2,29 @@ package financeiro_test
 
 import (
 	"context"
+	"sort"
 	"strconv"
+	"sync"
+	"time"
 
 	dominio "github.com/ivandrosilva12/sgcfinal/internal/domain/financeiro"
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/auditoria"
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/erros"
 )
 
+// cabecaSerie é a cabeça da numeração e da cadeia de uma série (o equivalente
+// em memória da tabela financeiro.series).
+type cabecaSerie struct {
+	ultimoSequencial int
+	ultimoHash       string
+}
+
 // fakeFacturas é um RepositorioFacturas em memória.
 type fakeFacturas struct {
-	porID map[string]dominio.SnapshotFactura
-	seq   int
+	mu     sync.Mutex
+	porID  map[string]dominio.SnapshotFactura
+	series map[string]cabecaSerie
+	seq    int
 }
 
 func novoFakeFacturas() *fakeFacturas {
@@ -57,6 +69,45 @@ func (f *fakeFacturas) ListarPorEpisodio(_ context.Context, episodioID string) (
 			TotalCentimos: fa.Totais().Total.Centimos(), CriadoEm: s.CriadoEm,
 		})
 	}
+	return out, nil
+}
+
+// Emitir replica em memória a alocação serializada do pgrepo: sequencial
+// seguinte da série e elo da cadeia, com o hash calculado pelo agregado.
+func (f *fakeFacturas) Emitir(_ context.Context, facturaID string, momento time.Time) (*dominio.Factura, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s, ok := f.porID[facturaID]
+	if !ok {
+		return nil, erros.Novo(erros.CategoriaNaoEncontrado, "factura não encontrada")
+	}
+	serie := dominio.SerieDe(momento)
+	if f.series == nil {
+		f.series = map[string]cabecaSerie{}
+	}
+	cabeca := f.series[serie]
+	fa := dominio.ReconstruirFactura(s)
+	if err := fa.Emitir(serie, cabeca.ultimoSequencial+1, cabeca.ultimoHash, momento); err != nil {
+		return nil, err
+	}
+	nova := fa.Snapshot()
+	nova.Versao = s.Versao + 1
+	f.porID[facturaID] = nova
+	f.series[serie] = cabecaSerie{ultimoSequencial: nova.Sequencial, ultimoHash: nova.Hash}
+	return dominio.ReconstruirFactura(nova), nil
+}
+
+// ListarSnapshotsPorSerie devolve as facturas emitidas da série, por sequencial.
+func (f *fakeFacturas) ListarSnapshotsPorSerie(_ context.Context, serie string) ([]dominio.SnapshotFactura, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []dominio.SnapshotFactura
+	for _, s := range f.porID {
+		if s.Serie == serie && s.Estado != dominio.FactRascunho {
+			out = append(out, s)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Sequencial < out[j].Sequencial })
 	return out, nil
 }
 

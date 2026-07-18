@@ -392,11 +392,21 @@ type ResumoFactura struct {
 
 // RepositorioFacturas é a porta de saída de persistência de facturas.
 //
-// Guardar é um upsert transaccional: INSERT da factura (id gerado) quando nova, ou
-// UPDATE guardado por estado=RASCUNHO quando existente, reescrevendo as linhas numa
-// única transacção. Devolve o id da factura.
+// Guardar é um upsert transaccional guardado por estado e versão (bloqueio
+// optimista): INSERT da factura (id gerado) quando nova, ou UPDATE guardado por
+// estado=RASCUNHO quando existente, reescrevendo as linhas numa única transacção.
+// Devolve o id da factura.
+//
+// Emitir aloca o sequencial e o elo da cadeia sob serialização e transita a
+// factura para EMITIDA numa única transacção. O domínio não sabe como — só que
+// a alocação é atómica e sem buracos (AGT/SAF-T-AO).
+//
+// ListarSnapshotsPorSerie devolve, ordenados por sequencial, os snapshots das
+// facturas emitidas de uma série: a entrada de VerificarCadeia.
 type RepositorioFacturas interface {
 	Guardar(ctx context.Context, f *Factura) (string, error)
 	ObterPorID(ctx context.Context, id string) (*Factura, error)
 	ListarPorEpisodio(ctx context.Context, episodioID string) ([]ResumoFactura, error)
+	Emitir(ctx context.Context, facturaID string, momento time.Time) (*Factura, error)
+	ListarSnapshotsPorSerie(ctx context.Context, serie string) ([]SnapshotFactura, error)
 }

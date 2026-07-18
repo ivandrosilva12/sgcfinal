@@ -9,9 +9,12 @@ package integration_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -560,5 +563,121 @@ RETURNING id::text, versao`, numero).Scan(&id, &versao)
 	}
 	if erros.CategoriaDe(err) != erros.CategoriaConflito {
 		t.Errorf("esperava CategoriaConflito (409), deu %v (categoria %v)", err, erros.CategoriaDe(err))
+	}
+}
+
+// TestEmitirFacturas_NumeracaoSemBuracosSobConcorrencia é a prova central da
+// ADR-040: a lei angolana (AGT/SAF-T-AO) exige numeração sequencial sem buracos
+// por série. N emissões verdadeiramente simultâneas na mesma série têm de
+// produzir sequenciais distintos e contíguos, e uma cadeia de hashes bem
+// encadeada. Um teste sequencial não provaria serialização nenhuma — daí a
+// barreira de arranque, que solta as goroutines todas no mesmo instante.
+//
+// O teste não apaga a linha da série nem as facturas emitidas: o trigger de
+// imutabilidade impede-o, por desenho. Em vez disso mede-se em relação ao estado
+// inicial da série, o que o torna correcto tanto numa BD limpa (CI, base 0) como
+// em execuções repetidas na BD de desenvolvimento.
+func TestEmitirFacturas_NumeracaoSemBuracosSobConcorrencia(t *testing.T) {
+	pool, ctx := ligar(t)
+	migrarFinanceiro(t, pool, ctx)
+	repo := pgrepo.NovoRepositorioFacturas(pool)
+
+	// Série própria deste teste (o ano de emissão), para não colidir com outros.
+	const serie = "2999"
+	momento := time.Date(2999, 1, 15, 9, 0, 0, 0, time.UTC)
+
+	var base int
+	if err := pool.QueryRow(ctx,
+		`SELECT COALESCE(max(ultimo_sequencial),0) FROM financeiro.series WHERE serie=$1`,
+		serie).Scan(&base); err != nil {
+		t.Fatalf("ler o estado inicial da série: %v", err)
+	}
+
+	const n = 12
+	ids := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		cliente, err := fin.NovoClienteSnapshot("Cliente Concorrente", "", "")
+		if err != nil {
+			t.Fatalf("NovoClienteSnapshot: %v", err)
+		}
+		f, err := fin.NovaFactura(cliente, uuid.NewString())
+		if err != nil {
+			t.Fatalf("NovaFactura: %v", err)
+		}
+		if err := f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1,
+			moeda.DeCentimos(int64(1000+i)), fin.RegimeIsento); err != nil {
+			t.Fatalf("AdicionarItem: %v", err)
+		}
+		id, err := repo.Guardar(ctx, f)
+		if err != nil {
+			t.Fatalf("Guardar: %v", err)
+		}
+		// Enquanto está em rascunho ainda é removível; depois de emitida não.
+		limparFactura(t, pool, ctx, id)
+		ids = append(ids, id)
+	}
+
+	// Emitir todas em simultâneo, soltas por uma barreira comum.
+	arranque := make(chan struct{})
+	var wg sync.WaitGroup
+	erradas := make([]error, n)
+	emitidas := make([]*fin.Factura, n)
+	for i, id := range ids {
+		wg.Add(1)
+		go func(i int, id string) {
+			defer wg.Done()
+			<-arranque
+			emitidas[i], erradas[i] = repo.Emitir(ctx, id, momento)
+		}(i, id)
+	}
+	close(arranque)
+	wg.Wait()
+	for i, err := range erradas {
+		if err != nil {
+			t.Fatalf("emissão %d falhou: %v", i, err)
+		}
+	}
+
+	// Cada emissão devolve o agregado já emitido, com número e elo próprios.
+	seqDevolvidos := map[int]bool{}
+	for i, f := range emitidas {
+		if f.Estado() != fin.FactEmitida {
+			t.Errorf("emissão %d: estado %q, queria EMITIDA", i, f.Estado())
+		}
+		if f.Hash() == "" {
+			t.Errorf("emissão %d: ficou sem hash", i)
+		}
+		if querido := fmt.Sprintf("FAC %s/%08d", serie, f.Sequencial()); f.Numero().String() != querido {
+			t.Errorf("emissão %d: número %q, queria %q", i, f.Numero(), querido)
+		}
+		if seqDevolvidos[f.Sequencial()] {
+			t.Errorf("sequencial %d devolvido a duas emissões", f.Sequencial())
+		}
+		seqDevolvidos[f.Sequencial()] = true
+	}
+
+	snaps, err := repo.ListarSnapshotsPorSerie(ctx, serie)
+	if err != nil {
+		t.Fatalf("ListarSnapshotsPorSerie: %v", err)
+	}
+	if len(snaps) != base+n {
+		t.Fatalf("esperava %d facturas na série, tem %d", base+n, len(snaps))
+	}
+	vistos := map[int]bool{}
+	for _, s := range snaps {
+		if vistos[s.Sequencial] {
+			t.Errorf("sequencial %d repetido", s.Sequencial)
+		}
+		vistos[s.Sequencial] = true
+	}
+	for i := 1; i <= base+n; i++ {
+		if !vistos[i] {
+			t.Errorf("buraco na série: falta o sequencial %d", i)
+		}
+	}
+	// Cada elo tem de apontar ao hash da factura anterior, e o conteúdo tem de
+	// bater certo com o hash gravado.
+	if err := fin.VerificarCadeia(snaps); err != nil {
+		t.Errorf("cadeia devia estar íntegra após emissões concorrentes: %v", err)
 	}
 }
