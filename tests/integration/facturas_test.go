@@ -39,10 +39,17 @@ func migrarFinanceiro(t *testing.T, pool *pgxpool.Pool, ctx context.Context) {
 }
 
 // limparFactura remove a factura e as suas linhas (ON DELETE CASCADE trata as linhas).
+// O erro da limpeza é registado (t.Logf), nunca silenciado: foi exactamente o
+// _, _ = original que mascarou a regressão do ON DELETE CASCADE na Task 4,
+// deixando lixo acumular-se em silêncio numa BD partilhada enquanto os testes
+// reportavam PASS. Não é t.Fatal — uma limpeza falhada não pode reprovar um
+// teste que já passou, só deixar o sinal visível no log.
 func limparFactura(t *testing.T, pool *pgxpool.Pool, ctx context.Context, id string) {
 	t.Helper()
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM financeiro.facturas WHERE id=$1`, id)
+		if _, err := pool.Exec(ctx, `DELETE FROM financeiro.facturas WHERE id=$1`, id); err != nil {
+			t.Logf("limparFactura: falhou a apagar a factura %s: %v", id, err)
+		}
 	})
 }
 
@@ -200,7 +207,11 @@ RETURNING id::text`, numero).Scan(&id)
 	if err != nil {
 		// Uma corrida anterior deste teste já deixou esta factura na BD — o
 		// trigger torna-a permanentemente irremovível, de propósito. Reutiliza-a:
-		// o alvo do teste é o trigger, não a inserção.
+		// o alvo do teste é o trigger, não a inserção. O erro do INSERT é
+		// registado (não descartado): foi a sua opacidade que, no defeito real do
+		// ON CONFLICT sobre índice parcial, escondeu o SQLSTATE 42P10 por detrás
+		// de um "no rows in result set" no fallback.
+		t.Logf("inserir factura emitida (a reutilizar via fallback): %v", err)
 		if err := pool.QueryRow(ctx,
 			`SELECT id::text FROM financeiro.facturas WHERE numero=$1`, numero).Scan(&id); err != nil {
 			t.Fatalf("inserir/obter factura emitida: %v", err)
@@ -381,6 +392,19 @@ UPDATE financeiro.facturas
 // uma linha a uma factura EMITIDA por SQL directo. Reutiliza a factura
 // permanente FAC 2026/09999999 (a mesma de TestFacturaEmitida_ImutavelNaBD):
 // o alvo é o trigger, não uma factura nova.
+//
+// Robustez (achado das revisões ao ADR-040): numa BD onde a 0003 ainda não
+// tenha chegado (por exemplo, só a 0002 aplicada), o trigger ainda não cobre
+// o INSERT — a inserção abaixo passa em vez de falhar. Sem cuidado adicional
+// isto envenenaria a BD para sempre, porque o DELETE de linhas de uma factura
+// EMITIDA já está bloqueado desde a 0002: a "Linha intrusa" ficaria presa
+// mal entrasse, e um t.Fatal (linha "tinha de falhar" abaixo) saltaria
+// qualquer limpeza registada depois dele. Já aconteceu nesta sprint e teve de
+// ser corrigido à mão com DISABLE TRIGGER/DELETE/ENABLE TRIGGER — a limpeza
+// abaixo automatiza exactamente esse procedimento, registada em t.Cleanup
+// ANTES da tentativa de INSERT (para correr mesmo que o teste dê t.Fatal a
+// seguir) e só actua se sobrar mesmo uma linha residual: no caminho normal
+// (trigger da 0003 presente), o INSERT já falha e não há nada a limpar.
 func TestInserirItemEmFacturaEmitida_RejeitadoNaBD(t *testing.T) {
 	pool, ctx := ligar(t)
 	migrarFinanceiro(t, pool, ctx)
@@ -398,13 +422,55 @@ RETURNING id::text`, numero).Scan(&facturaID)
 	if err != nil {
 		// Corrida anterior (ou TestFacturaEmitida_ImutavelNaBD) já deixou esta
 		// factura na BD — permanentemente irremovível, de propósito. Reutiliza-a.
+		// O erro do INSERT é registado (não descartado): a sua opacidade foi o
+		// que escondeu o SQLSTATE 42P10 real do defeito do ON CONFLICT sobre
+		// índice parcial por detrás de um "no rows in result set" no fallback.
+		t.Logf("inserir factura emitida (a reutilizar via fallback): %v", err)
 		if err := pool.QueryRow(ctx,
 			`SELECT id::text FROM financeiro.facturas WHERE numero=$1`, numero).Scan(&facturaID); err != nil {
 			t.Fatalf("inserir/obter factura emitida: %v", err)
 		}
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM financeiro.facturas WHERE id=$1 AND estado='RASCUNHO'`, facturaID)
+		if _, err := pool.Exec(ctx,
+			`DELETE FROM financeiro.facturas WHERE id=$1 AND estado='RASCUNHO'`, facturaID); err != nil {
+			t.Logf("limpar factura (RASCUNHO): %v", err)
+		}
+	})
+
+	// Regista a limpeza da linha intrusa ANTES de tentar o INSERT (ver
+	// comentário da função): t.Cleanup corre sempre, mesmo com t.Fatal a
+	// meio da função, mas só se JÁ estiver registado nesse momento.
+	t.Cleanup(func() {
+		var n int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM financeiro.itens_factura WHERE factura_id=$1 AND descricao='Linha intrusa'`,
+			facturaID).Scan(&n); err != nil {
+			t.Logf("limpeza da linha intrusa: verificar resíduo: %v", err)
+			return
+		}
+		if n == 0 {
+			return // caminho normal: o trigger já bloqueou o INSERT, nada a limpar
+		}
+		// A linha entrou porque o trigger da BD-alvo ainda não cobre o INSERT.
+		// O DELETE já está bloqueado pelo mesmo trigger desde a 0002 — a única
+		// forma de a remover é desactivá-lo pontualmente para esta limpeza.
+		if _, err := pool.Exec(ctx,
+			`ALTER TABLE financeiro.itens_factura DISABLE TRIGGER trg_itens_factura_imutaveis`); err != nil {
+			t.Logf("limpeza da linha intrusa: desactivar trigger: %v", err)
+			return
+		}
+		defer func() {
+			if _, err := pool.Exec(ctx,
+				`ALTER TABLE financeiro.itens_factura ENABLE TRIGGER trg_itens_factura_imutaveis`); err != nil {
+				t.Logf("limpeza da linha intrusa: reactivar trigger: %v", err)
+			}
+		}()
+		if _, err := pool.Exec(ctx,
+			`DELETE FROM financeiro.itens_factura WHERE factura_id=$1 AND descricao='Linha intrusa'`,
+			facturaID); err != nil {
+			t.Logf("limpeza da linha intrusa: apagar resíduo: %v", err)
+		}
 	})
 
 	_, err = pool.Exec(ctx, `
@@ -643,7 +709,11 @@ ON CONFLICT (numero) WHERE numero IS NOT NULL DO NOTHING
 RETURNING id::text, versao`, numero).Scan(&id, &versao)
 	if err != nil {
 		// Uma corrida anterior já deixou esta factura na BD — o trigger torna-a
-		// permanentemente irremovível, de propósito. Reutiliza-a.
+		// permanentemente irremovível, de propósito. Reutiliza-a. O erro do
+		// INSERT é registado (não descartado): a sua opacidade foi o que
+		// escondeu o SQLSTATE 42P10 real do defeito do ON CONFLICT sobre índice
+		// parcial por detrás de um "no rows in result set" no fallback.
+		t.Logf("inserir factura emitida (a reutilizar via fallback): %v", err)
 		if err := pool.QueryRow(ctx,
 			`SELECT id::text, versao FROM financeiro.facturas WHERE numero=$1`, numero).Scan(&id, &versao); err != nil {
 			t.Fatalf("inserir/obter factura emitida: %v", err)
