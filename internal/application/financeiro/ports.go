@@ -64,4 +64,17 @@ type DetalheFactura struct {
 	TotalCentimos    int64          `json:"total_centimos"`
 	Total            string         `json:"total"`
 	CriadoEm         time.Time      `json:"criado_em"`
+	Numero           string         `json:"numero,omitempty"`
+	Serie            string         `json:"serie,omitempty"`
+	Sequencial       int            `json:"sequencial,omitempty"`
+	DataEmissao      time.Time      `json:"data_emissao,omitempty"`
+	Hash             string         `json:"hash,omitempty"`
+}
+
+// ResultadoVerificacao é o diagnóstico da cadeia hash de uma série.
+type ResultadoVerificacao struct {
+	Serie         string `json:"serie"`
+	TotalFacturas int    `json:"total_facturas"`
+	Integra       bool   `json:"integra"`
+	Detalhe       string `json:"detalhe,omitempty"`
 }

@@ -5,11 +5,13 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"testing"
 	"time"
 
 	dominio "github.com/ivandrosilva12/sgcfinal/internal/domain/financeiro"
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/auditoria"
 	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/erros"
+	"github.com/ivandrosilva12/sgcfinal/internal/domain/shared/moeda"
 )
 
 // cabecaSerie é a cabeça da numeração e da cadeia de uma série (o equivalente
@@ -109,6 +111,56 @@ func (f *fakeFacturas) ListarSnapshotsPorSerie(_ context.Context, serie string) 
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Sequencial < out[j].Sequencial })
 	return out, nil
+}
+
+// adulterarPrimeiraLinha simula uma adulteração directa na BD: reescreve a
+// descrição da primeira linha da factura no par série/sequencial dado, sem
+// recalcular o hash. Como o agregado não expõe mutação de linhas depois de
+// emitido, mexe directamente no snapshot guardado.
+func (f *fakeFacturas) adulterarPrimeiraLinha(serie string, sequencial int, descricao string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id, s := range f.porID {
+		if s.Serie == serie && s.Sequencial == sequencial && len(s.Itens) > 0 {
+			s.Itens[0].Descricao = descricao
+			f.porID[id] = s
+			return
+		}
+	}
+}
+
+// rascunhoComLinha semeia um rascunho com uma linha e devolve o seu id.
+func rascunhoComLinha(t *testing.T, f *fakeFacturas) string {
+	t.Helper()
+	cliente, err := dominio.NovoClienteSnapshot("Cliente", "", "")
+	if err != nil {
+		t.Fatalf("NovoClienteSnapshot: %v", err)
+	}
+	fa, err := dominio.NovaFactura(cliente, "11111111-1111-1111-1111-111111111111")
+	if err != nil {
+		t.Fatalf("NovaFactura: %v", err)
+	}
+	if err := fa.AdicionarItem("Consulta", dominio.LinhaConsulta, "", 1,
+		moeda.DeCentimos(50000), dominio.RegimeIsento); err != nil {
+		t.Fatalf("AdicionarItem: %v", err)
+	}
+	id, err := f.Guardar(context.Background(), fa)
+	if err != nil {
+		t.Fatalf("Guardar: %v", err)
+	}
+	return id
+}
+
+// rascunhoSemLinhas semeia um rascunho vazio e devolve o seu id.
+func rascunhoSemLinhas(t *testing.T, f *fakeFacturas) string {
+	t.Helper()
+	cliente, _ := dominio.NovoClienteSnapshot("Cliente", "", "")
+	fa, _ := dominio.NovaFactura(cliente, "11111111-1111-1111-1111-111111111111")
+	id, err := f.Guardar(context.Background(), fa)
+	if err != nil {
+		t.Fatalf("Guardar: %v", err)
+	}
+	return id
 }
 
 // fakeAuditor recolhe os registos de auditoria.

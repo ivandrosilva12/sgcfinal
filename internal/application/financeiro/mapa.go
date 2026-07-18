@@ -24,5 +24,7 @@ func paraDetalheFactura(f *dominio.Factura) DetalheFactura {
 		SubtotalCentimos: tot.Subtotal.Centimos(), TotalIVACentimos: tot.TotalIVA.Centimos(),
 		TotalCentimos: tot.Total.Centimos(), Total: tot.Total.String(),
 		CriadoEm: f.CriadoEm(),
+		Numero:   f.Numero().String(), Serie: f.Serie(), Sequencial: f.Sequencial(),
+		DataEmissao: f.DataEmissao(), Hash: f.Hash(),
 	}
 }
