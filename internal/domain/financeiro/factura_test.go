@@ -416,8 +416,9 @@ func TestReconstruirFactura_PreservaFacturaEmitida(t *testing.T) {
 // formato da data), este teste falha — é a única salvaguarda contra tornar
 // irreproduzível a cadeia das facturas já emitidas (retenção AGT/SAF-T-AO,
 // 10 anos). Valor recalculado no ADR-041, que tornou o canónico injectivo e
-// acrescentou nome, morada e operacaoID ao selo.
-const hashDourado = "6f5a535c960536cc759cd10d589599d916b58f23087c5faa2cc5c80ff5f59ff9"
+// acrescentou nome, morada e operacaoID ao selo; recalculado de novo na
+// extensão que acrescentou o episodioID (proveniência da factura) ao selo.
+const hashDourado = "7c99e3dbc895f04e3e40d4114dea8f5129e10297de33a25222d9dcc401c796da"
 
 func TestHash_VectorDourado(t *testing.T) {
 	c, err := fin.NovoClienteSnapshot("Sol", "", "")
@@ -547,5 +548,38 @@ func TestHash_SelaOperacaoIDDaLinha(t *testing.T) {
 	b := facturaDe(t, "Sol", "", "", comOp("33333333-3333-3333-3333-333333333333"))
 	if fin.HashDe(a) == fin.HashDe(b) {
 		t.Error("mudar o operacaoID da linha tinha de mudar o hash")
+	}
+}
+
+// O episodioID passa a ser selado (ADR-041): é a proveniência cross-context da
+// factura inteira (o episódio clínico que a originou), à imagem do que o
+// operacaoID já é para cada linha — sem selo, podia ser reapontado sem
+// invalidar a factura. Não usa facturaDe porque o episodioID é parâmetro de
+// NovaFactura, não de AdicionarItem.
+func TestHash_SelaEpisodioIDDaFactura(t *testing.T) {
+	comEpisodio := func(episodioID string) fin.SnapshotFactura {
+		t.Helper()
+		c, err := fin.NovoClienteSnapshot("Sol", "", "")
+		if err != nil {
+			t.Fatalf("cliente: %v", err)
+		}
+		f, err := fin.NovaFactura(c, episodioID)
+		if err != nil {
+			t.Fatalf("factura: %v", err)
+		}
+		if err := f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1,
+			moeda.DeCentimos(50000), fin.RegimeIsento); err != nil {
+			t.Fatalf("item: %v", err)
+		}
+		m := time.Date(2026, 7, 18, 10, 0, 0, 123456789, time.UTC)
+		if err := f.Emitir("2026", 7, "abc", m); err != nil {
+			t.Fatalf("Emitir: %v", err)
+		}
+		return f.Snapshot()
+	}
+	a := comEpisodio("11111111-1111-1111-1111-111111111111")
+	b := comEpisodio("44444444-4444-4444-4444-444444444444")
+	if fin.HashDe(a) == fin.HashDe(b) {
+		t.Error("mudar o episodioID da factura tinha de mudar o hash")
 	}
 }

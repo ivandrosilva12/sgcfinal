@@ -4,7 +4,8 @@
 // SHA-256 canónico — invariante do agregado, calculado aqui, nunca num serviço.
 // A composição canónica é injectiva por enquadramento (ADR-041): todo o campo de
 // texto leva prefixo de comprimento, e o selo cobre a identidade completa do
-// cliente e a proveniência de cada linha.
+// cliente, a proveniência da factura (episodioID) e a proveniência de cada
+// linha (operacaoID).
 package financeiro
 
 import (
@@ -313,9 +314,12 @@ func digestLinhas(itens []ItemFactura) string {
 // O formato está documentado na ADR-041 e é fixo: não deriva do esquema da BD,
 // para continuar reproduzível ao longo dos 10 anos de retenção legal. Todo o
 // campo de texto vai enquadrado (comprimento em bytes + ':'); os inteiros vão
-// nus. Campos ausentes canonicalizam-se como "0:" — nunca null.
+// nus. Campos ausentes canonicalizam-se como "0:" — nunca null. O episodioID
+// entra a seguir à morada: é a proveniência cross-context da factura inteira,
+// tal como o operacaoID (dentro de digestLinhas) é a proveniência de cada
+// linha — mesma razão de selar, mesmo bloco de identidade/proveniência.
 //
-//	serie|sequencial|dataEmissaoRFC3339UTC|clienteNome|clienteNIF|clienteMorada|subtotal|iva|total|digestLinhas|hashAnterior
+//	serie|sequencial|dataEmissaoRFC3339UTC|clienteNome|clienteNIF|clienteMorada|episodioID|subtotal|iva|total|digestLinhas|hashAnterior
 func HashDe(s SnapshotFactura) string {
 	t := TotaisDe(s.Itens)
 	canonico := strings.Join([]string{
@@ -325,6 +329,7 @@ func HashDe(s SnapshotFactura) string {
 		enquadrar(s.Cliente.Nome),
 		enquadrar(s.Cliente.NIF),
 		enquadrar(s.Cliente.Morada),
+		enquadrar(s.EpisodioID),
 		strconv.FormatInt(t.Subtotal.Centimos(), 10),
 		strconv.FormatInt(t.TotalIVA.Centimos(), 10),
 		strconv.FormatInt(t.Total.Centimos(), 10),
