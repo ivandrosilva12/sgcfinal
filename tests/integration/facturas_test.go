@@ -12,7 +12,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	mathrand "math/rand"
 	"os"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -777,9 +779,20 @@ func TestEmitirFacturas_NumeracaoSemBuracosSobConcorrencia(t *testing.T) {
 	migrarFinanceiro(t, pool, ctx)
 	repo := pgrepo.NovoRepositorioFacturas(pool)
 
-	// Série própria deste teste (o ano de emissão), para não colidir com outros.
-	const serie = "2999"
-	momento := time.Date(2999, 1, 15, 9, 0, 0, 0, time.UTC)
+	// Série própria desta corrida. A série é derivada do ANO do momento por
+	// fin.SerieDe, logo escolhe-se um ano ao acaso numa banda reservada.
+	//
+	// Porquê ao acaso, e não um ano fixo: as facturas EMITIDA são imortais (o
+	// trigger de imutabilidade impede apagá-las), pelo que uma série fixa acumula
+	// os elos de todas as corridas anteriores. Basta a canonicalização do hash
+	// mudar uma vez para que os elos antigos deixem de fechar, e o teste passa a
+	// acusar uma quebra que não é da cadeia mas da história. Uma série por corrida
+	// torna o teste auto-contido e imune a futuras mudanças de formato.
+	//
+	// A banda evita o 2999, que já tem elos em formato anterior ao ADR-041.
+	ano := 2100 + mathrand.Intn(800)
+	serie := strconv.Itoa(ano)
+	momento := time.Date(ano, 1, 15, 9, 0, 0, 0, time.UTC)
 
 	var base int
 	if err := pool.QueryRow(ctx,

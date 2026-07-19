@@ -1,13 +1,48 @@
 # SPRINT ACTUAL
 
 - **Marco**: M4 — Financeiro — **em curso**
-- **Sprint**: 15 (Financeiro — emissão: numeração por série, cadeia hash,
-  imutabilidade) — **entregue**
-- **Objectivo**: dar valor legal à factura — fixar número, data e elo de integridade na
-  emissão, com numeração sequencial sem buracos, cadeia hash SHA-256 verificável e
-  imutabilidade do documento emitido (REG-001 §3.2), pagando de caminho a dívida do
-  bloqueio optimista assumida no ADR-039. A anulação (ADR-041) e o SAF-T-AO (ADR-042)
-  ficam fora.
+- **Sprint**: 16 (Financeiro — selagem canónica: enquadramento injectivo e âmbito do
+  selo) — **entregue**
+- **Objectivo**: tornar o canónico do hash da `Factura` **injectivo** e alargar o
+  âmbito do selo, pagando as dívidas R1 e R2 da ADR-040 dentro do prazo que ela
+  própria fixou — revisíveis apenas **antes da primeira emissão em produção**. A
+  anulação, o SAF-T-AO e a certificação AGT ficam fora e **não estão feitas**.
+
+## Sprint 16 — entregue
+
+- [x] **Enquadramento injectivo** (`enquadrar` em
+      `internal/domain/financeiro/factura.go`): `{len em bytes}:{s}` em **todo** o
+      campo de texto do canónico e do digest das linhas, sem excepções, inteiros nus.
+      A regra é deliberadamente cega — o defeito nasceu de se ter julgado quais os
+      campos eram seguros e de esse juízo estar errado.
+- [x] **Colisão do R1 confirmada contra o código real** e convertida em teste de
+      regressão permanente (`TestHash_DescricaoNaoImitaFronteiraDeLinha`): antes da
+      fatia, uma factura de 2 linhas e outra de 1 linha partilhavam hash
+      (`cac4fec4…`) e total. Os totais não bastavam porque a CHECK
+      `preco_unitario_centimos >= 0` admite linhas a preço zero.
+- [x] **Selo alargado**: `clienteNome`, `clienteMorada` (identidade do destinatário —
+      numa factura a consumidor final sem NIF, era a string vazia que ia selada),
+      `operacaoID` (proveniência da linha) e `episodioID` (proveniência da factura).
+      Um teste por campo recém-selado, cada um a falhar antes e a passar depois.
+- [x] **`ItemFactura.ID` deliberadamente fora do selo** — chave substituta sem
+      significado fiscal; selá-la ataria o documento fiscal a um detalhe de
+      implementação da BD. Registado como decisão, não como omissão.
+- [x] **Canónico com 12 campos** e **vector dourado novo**
+      (`7c99e3dbc895f04e3e40d4114dea8f5129e10297de33a25222d9dcc401c796da`), calculado
+      contra a implementação real e conferido por **reimplementação independente em
+      Python derivada da regra normativa escrita**, não do código Go.
+- [x] **Injectividade confirmada por enumeração**: força bruta sobre os 4 campos de
+      texto adjacentes (12⁴ = 20 736 facturas logicamente distintas) → 20 736
+      canónicos distintos, **zero colisões**.
+- [x] **Série por corrida** no teste de integração da cadeia
+      (`tests/integration/facturas_test.go`): deixa de listar a série `2999`, que
+      acumula facturas EMITIDA irremovíveis com elos em formato antigo. Sem isto a
+      mudança de formato deixaria a suite vermelha.
+- [x] **Fatia puramente de domínio: zero migrações** — `cliente_nome`,
+      `cliente_morada`, `operacao_id` e `episodio_id` já eram colunas persistidas.
+- [x] ADR-041, e R1/R2 da ADR-040 marcados como resolvidos **aditivamente** (o texto
+      original fica: a avaliação de risco lá escrita ter estado errada é matéria de
+      auditoria).
 
 ## Sprint 15 — entregue
 

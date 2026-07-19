@@ -2,6 +2,10 @@
 // O agregado Factura nasce em RASCUNHO (ADR-039): linhas com tipo e snapshot,
 // cálculo de IVA e totais. A emissão (ADR-040) fixa número, data e o hash
 // SHA-256 canónico — invariante do agregado, calculado aqui, nunca num serviço.
+// A composição canónica é injectiva por enquadramento (ADR-041): todo o campo de
+// texto leva prefixo de comprimento, e o selo cobre a identidade completa do
+// cliente, a proveniência da factura (episodioID) e a proveniência de cada
+// linha (operacaoID).
 package financeiro
 
 import (
@@ -279,38 +283,58 @@ func (f *Factura) Emitir(serie string, sequencial int, hashAnterior string, mome
 	return nil
 }
 
+// enquadrar prefixa um campo de texto com o seu comprimento em bytes, tornando a
+// composição canónica injectiva: nenhum conteúdo consegue imitar um separador,
+// porque quem lê consome exactamente os bytes anunciados.
+//
+// A regra é cega de propósito — aplica-se a todo o campo de texto, sem excepções.
+// O defeito que a ADR-041 corrige nasceu precisamente de se ter julgado quais os
+// campos eram seguros ("as descrições vêm de catálogo") e de esse juízo estar
+// errado. Uma regra sem excepções não pode ser mal julgada por quem vier a seguir.
+func enquadrar(s string) string { return strconv.Itoa(len(s)) + ":" + s }
+
 // digestLinhas resume as linhas por ordem, selando descrição, tipo, quantidade,
-// preço e regime — não só o total. Sem isto, trocar "Consulta" por "Cirurgia"
-// mantendo o valor passaria despercebido.
+// preço, regime e proveniência — não só o total. Sem isto, trocar "Consulta" por
+// "Cirurgia" mantendo o valor passaria despercebido.
 func digestLinhas(itens []ItemFactura) string {
 	h := sha256.New()
 	for ordem, it := range itens {
 		// hash.Hash.Write nunca devolve erro (contrato do pacote hash), pelo que o
 		// retorno se descarta explicitamente — errcheck exige-o e um panic aqui
 		// seria pior: partiria a emissão por uma condição que não pode ocorrer.
-		_, _ = fmt.Fprintf(h, "%d|%s|%s|%d|%d|%s\n", ordem, it.Descricao, it.Tipo,
-			it.Quantidade, it.PrecoUnitario.Centimos(), it.RegimeIVA)
+		_, _ = fmt.Fprintf(h, "%d|%s|%s|%d|%d|%s|%s\n", ordem,
+			enquadrar(it.Descricao), enquadrar(string(it.Tipo)),
+			it.Quantidade, it.PrecoUnitario.Centimos(),
+			enquadrar(string(it.RegimeIVA)), enquadrar(it.OperacaoID))
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 
 // HashDe calcula o SHA-256 canónico de uma factura a partir do seu snapshot.
-// O formato está documentado na ADR-040 e é fixo: não deriva do esquema da BD,
-// para continuar reproduzível ao longo dos 10 anos de retenção legal.
+// O formato está documentado na ADR-041 e é fixo: não deriva do esquema da BD,
+// para continuar reproduzível ao longo dos 10 anos de retenção legal. Todo o
+// campo de texto vai enquadrado (comprimento em bytes + ':'); os inteiros vão
+// nus. Campos ausentes canonicalizam-se como "0:" — nunca null. O episodioID
+// entra a seguir à morada: é a proveniência cross-context da factura inteira,
+// tal como o operacaoID (dentro de digestLinhas) é a proveniência de cada
+// linha — mesma razão de selar, mesmo bloco de identidade/proveniência.
 //
-//	serie|sequencial|dataEmissaoRFC3339UTC|clienteNIF|subtotal|iva|total|digestLinhas|hashAnterior
+//	serie|sequencial|dataEmissaoRFC3339UTC|clienteNome|clienteNIF|clienteMorada|episodioID|subtotal|iva|total|digestLinhas|hashAnterior
 func HashDe(s SnapshotFactura) string {
 	t := TotaisDe(s.Itens)
 	canonico := strings.Join([]string{
-		s.Serie,
+		enquadrar(s.Serie),
 		strconv.Itoa(s.Sequencial),
-		s.DataEmissao.UTC().Truncate(time.Second).Format(time.RFC3339),
-		s.Cliente.NIF,
+		enquadrar(s.DataEmissao.UTC().Truncate(time.Second).Format(time.RFC3339)),
+		enquadrar(s.Cliente.Nome),
+		enquadrar(s.Cliente.NIF),
+		enquadrar(s.Cliente.Morada),
+		enquadrar(s.EpisodioID),
 		strconv.FormatInt(t.Subtotal.Centimos(), 10),
 		strconv.FormatInt(t.TotalIVA.Centimos(), 10),
 		strconv.FormatInt(t.Total.Centimos(), 10),
-		digestLinhas(s.Itens),
-		s.HashAnterior,
+		enquadrar(digestLinhas(s.Itens)),
+		enquadrar(s.HashAnterior),
 	}, "|")
 	soma := sha256.Sum256([]byte(canonico))
 	return hex.EncodeToString(soma[:])

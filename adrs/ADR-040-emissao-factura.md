@@ -299,6 +299,18 @@ produção**. Alterar a canonicalização depois disso quebra retroactivamente o
 todas as facturas já emitidas, que é precisamente o cenário que a alternativa 4
 rejeitou.
 
+> **Resolvido pela ADR-041 (2026-07-19).** O enquadramento por prefixo de
+> comprimento em bytes — `{len}:{s}` em todo o campo de texto, sem excepções —
+> tornou o canónico injectivo, dentro do prazo acima (não houve emissão em
+> produção). Registe-se que **a avaliação de risco escrita acima estava errada**:
+> as descrições **não** vêm de catálogo — chegam no corpo do pedido HTTP,
+> validadas apenas por `TrimSpace` e não-vazio — e a colisão foi **produzida
+> contra o código real**, não deduzida: duas facturas materialmente diferentes
+> partilhavam o hash `cac4fec4b7e103a6f232cb2eacb7dd15c82700b4e1205f93eb20377664bf1bd4`
+> e o mesmo total. O texto original fica intacto por ser registo histórico do que
+> se sabia na altura; o facto de a avaliação ter estado errada é ele próprio
+> matéria de auditoria. Ver ADR-041 §Contexto.
+
 ### R2 — `OperacaoID` e `ItemFactura.ID` ficam fora do digest (decisão consciente)
 
 O digest sela `ordem`, `descrição`, `tipo`, `quantidade`, `preço unitário` e `regime
@@ -315,6 +327,19 @@ da primeira emissão em produção.
 
 Nota de âmbito, pela mesma lógica: do cliente, o hash sela apenas o **NIF** — o
 elemento fiscalmente relevante — e não o nome nem a morada.
+
+> **Resolvido pela ADR-041 (2026-07-19).** O `operacaoID` **passou** a ser selado,
+> dentro do digest de cada linha; e o `episodioID` — a proveniência da factura
+> inteira, que nem o R1 nem o R2 previram — **também**, no canónico, a seguir à
+> morada. O `ItemFactura.ID` ficou **deliberadamente fora**: é chave substituta sem
+> significado fiscal, e selá-la ataria o documento fiscal a um detalhe de
+> implementação da base de dados.
+>
+> A "nota de âmbito" acima ficou igualmente ultrapassada, e estava errada num ponto
+> material: **`clienteNome` e `clienteMorada` passaram a ser selados**. Numa factura
+> a consumidor final sem NIF — o caso comum numa clínica — a identidade selada era
+> a string vazia e o destinatário do documento era livremente alterável com o selo
+> intacto. Ver ADR-041 §3.
 
 ### R3 — Dívida sistémica: o mesmo bypass de MFA persiste em 11 dos 14 grupos de rotas
 
@@ -374,6 +399,14 @@ Consequência vinculativa para o ADR-041: **a anulação não pode apagar nem re
 Tem de ser uma transição de estado que preserve número, sequencial, hash e
 `hashAnterior` intactos — a anulação faz-se por nova factura, e a factura anulada
 permanece na cadeia.
+
+> **Nota (2026-07-19).** A numeração acima ficou desactualizada: o número ADR-041 foi
+> tomado pela selagem canónica, e a **anulação passou para uma fatia posterior**. A
+> restrição mantém-se exactamente como está escrita — apenas muda o ADR que a há-de
+> cumprir. A `adrs/ADR-041-selagem-canonica.md` assume-a e transfere-a explicitamente.
+> O mesmo desfasamento afecta a lista de **Diferido** no fim deste documento
+> (ADR-041/042/043); o `CLAUDE.md` é a fonte autoritativa da numeração em vigor.
+> O texto original fica intacto, como registo do que se planeava na altura.
 
 ### R6 — `trg_facturas_imutaveis` não cobre `INSERT`: uma factura pode nascer `EMITIDA`
 
