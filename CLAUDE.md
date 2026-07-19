@@ -97,10 +97,26 @@ serializada por `SELECT ... FOR UPDATE` na tabela `financeiro.series`,
 (coluna `versao`), que fecha a dívida técnica assumida no ADR-039. O papel
 **Tesoureiro passa a sensível** (12 papéis, 5 sensíveis) e a `MFAObrigatoria()` passa a
 ser imposta nas rotas do Financeiro. Ficam fora desta fatia — e **não estão feitas** —
-a **anulação** de facturas (ADR-041), a submissão **AGT/SAF-T-AO** (ADR-042) e o
-agendamento do cron diário de verificação da cadeia (REG-001 §3.4). A ADR-040 regista
-ainda uma **dívida sistémica de segurança**: 10 grupos de rotas fora do Financeiro
-expõem papéis sensíveis sem `MFAObrigatoria()` (R3), a resolver em fatia própria.
+a **anulação** de facturas, a submissão **AGT/SAF-T-AO** e o agendamento do cron diário
+de verificação da cadeia (REG-001 §3.4). A ADR-040 regista ainda uma **dívida sistémica
+de segurança**: 10 grupos de rotas fora do Financeiro expõem papéis sensíveis sem
+`MFAObrigatoria()` (R3), a resolver em fatia própria.
+
+A Sprint 16 entregou a **selagem canónica** (ADR-041), pagando as duas dívidas que a
+ADR-040 deixou com prazo — R1 e R2, revisíveis apenas **antes da primeira emissão em
+produção**. A colisão do R1 revelou-se **real e não teórica**: reproduzida contra o
+código, duas facturas materialmente diferentes partilhavam hash e total (a `Descricao`
+chega no corpo do pedido HTTP, validada só por `TrimSpace` e não-vazio, e a CHECK
+`preco_unitario_centimos >= 0` admite linhas a preço zero, que dão a folga para os
+totais coincidirem). Correcção: **enquadramento injectivo** — `{len em bytes}:{s}` em
+todo o campo de texto, sem excepções — e **alargamento do selo** a `clienteNome`,
+`clienteMorada`, `operacaoID` e `episodioID`; o `ItemFactura.ID` fica deliberadamente
+fora (chave substituta sem significado fiscal). O canónico passa a ter **12 campos** e
+o vector dourado a
+`7c99e3dbc895f04e3e40d4114dea8f5129e10297de33a25222d9dcc401c796da`. Fatia **puramente
+de domínio: zero migrações**. Continuam por fazer a **anulação** (que herda a restrição
+vinculativa da ADR-040 §R5: não apagar nem renumerar), o **SAF-T-AO** e a
+**certificação AGT**.
 
 **M3 — Laboratório** (entregue; Sprints 12–13; ver `SPRINT.md`). Entrega o BC
 Laboratório completo: catálogo de análises, requisição (via ACL sobre o Clínico),
@@ -171,8 +187,9 @@ confirmação humana**. Nunca improvisar decisão arquitectural ou de conformida
 `adrs/ADR-037-ehr-triagem.md`,
 `adrs/ADR-038-outbox.md`,
 `adrs/ADR-039-bc-financeiro-factura.md`,
-`adrs/ADR-040-emissao-factura.md`.
-Próximo ADR: **ADR-041**.
+`adrs/ADR-040-emissao-factura.md`,
+`adrs/ADR-041-selagem-canonica.md`.
+Próximo ADR: **ADR-042**.
 
 ## graphify
 
