@@ -123,7 +123,7 @@ ADR-040: prometer no documento uma garantia que o código não dá.
 |---|---|
 | `internal/platform/app.go` | pacote `protecao` nos 14 grupos |
 | `internal/adapters/http/identidade_handler.go` | `middlewares` → `protecao` |
-| `internal/adapters/http/*_test.go` (~12) | sessões de papel sensível ganham `AutenticacaoForte: true` |
+| `internal/adapters/http/*_test.go` | routers de teste passam a espelhar a produção (`MFAObrigatoria()`); sessões de papel sensível ganham `AutenticacaoForte: true` |
 | `docker/keycloak/realm-sgc.json` | OTP no `admin.teste`; `dpo.teste` e `auditor.teste` novos |
 | `migrations/financeiro/0004_facturas_nascem_rascunho.sql` (criar) | trigger de INSERT |
 | `tests/integration/facturas_test.go` | 3 fixturas passam a INSERT RASCUNHO → UPDATE |
@@ -153,6 +153,41 @@ um teste que passa a verde pela razão errada — por exemplo, um grupo que fico
 `AutenticacaoForte: true` sem que o teste exercite o caminho. Os testes negativos por
 família são a defesa; a mutação (retirar o `mfaMW` do pacote e confirmar que falham) é a
 prova.
+
+### 4.1 A lacuna que só apareceu ao medir: os testes não verificam o `app.go`
+
+Ao levantar o raio de impacto descobriu-se que **os routers de teste constroem as suas
+próprias cadeias de middlewares**. `routerDoentes` passa apenas `adhttp.Auth(...)`;
+`routerFin` passa `Auth` **e** `MFAObrigatoria()`, porque a ADR-041 o alterou.
+
+Duas consequências, e a segunda é a que importa:
+
+1. Alterar o `app.go` sozinho **não parte teste nenhum**. Uma versão anterior deste
+   desenho afirmava que ~12 ficheiros passariam a receber 403; **era falso**, e fica
+   registado por ser exactamente a classe de erro que estas ADR têm vindo a apanhar —
+   uma afirmação plausível que ninguém tinha medido.
+2. **Nada, hoje, verifica a ligação em `app.go`.** Cada router de teste redeclara a
+   protecção por sua conta, pelo que retirar o `mfaMW` da produção não faria falhar
+   nenhum teste. A exposição do R3 existiu por isso: não houve como a detectar.
+
+Portanto a fatia tem de fazer as duas coisas:
+
+- **Os routers de teste passam a espelhar a produção**, aplicando `MFAObrigatoria()` como
+  o `routerFin` já faz. Só então as sessões de papel sensível precisam de
+  `AutenticacaoForte: true`, e só então os testes exercitam a cadeia real.
+- **Uma guarda sobre o próprio `app.go`.** Com um pacote `protecao` único, a divergência
+  exige desvio deliberado — mas "exige desvio deliberado" não é o mesmo que "é detectado".
+  A guarda proposta é um teste que lê o código-fonte de `app.go` e exige que toda a
+  chamada `adhttp.Registar*` dentro de `registarRotas` termine em `protecao...`, com
+  `RegistarHealth` explicitamente isento.
+
+  É um teste invulgar — inspecciona código-fonte em vez de comportamento — e regista-se
+  aqui a razão de se preferir mesmo assim: a alternativa comportamental exigiria montar
+  os catorze handlers com todos os seus fakes só para provar uma propriedade de ligação,
+  e o que falhou aqui foi precisamente a ligação, não o comportamento. Se a revisão o
+  julgar frágil (por exemplo por depender de formatação), a alternativa aceitável é
+  extrair `registarRotas` para uma função testável que receba os handlers e devolva a
+  lista de registos.
 
 ## 5. Fora do âmbito
 
