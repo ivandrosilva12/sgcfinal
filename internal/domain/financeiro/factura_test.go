@@ -412,10 +412,12 @@ func TestReconstruirFactura_PreservaFacturaEmitida(t *testing.T) {
 }
 
 // Vector dourado: fixa o hash canónico de uma factura conhecida. Se a
-// canonicalização mudar (ordem dos campos, separadores, formato da data), este
-// teste falha — é a única salvaguarda contra tornar irreproduzível a cadeia das
-// facturas já emitidas (retenção AGT/SAF-T-AO, 10 anos).
-const hashDourado = "8caeeee0017219380ffbca9560b2d24894b07a45ba1fdb63a6cc4710293cc169"
+// canonicalização mudar (ordem dos campos, enquadramento, âmbito do selo,
+// formato da data), este teste falha — é a única salvaguarda contra tornar
+// irreproduzível a cadeia das facturas já emitidas (retenção AGT/SAF-T-AO,
+// 10 anos). Valor recalculado no ADR-041, que tornou o canónico injectivo e
+// acrescentou nome, morada e operacaoID ao selo.
+const hashDourado = "6f5a535c960536cc759cd10d589599d916b58f23087c5faa2cc5c80ff5f59ff9"
 
 func TestHash_VectorDourado(t *testing.T) {
 	c, err := fin.NovoClienteSnapshot("Sol", "", "")
@@ -441,5 +443,109 @@ func TestHash_VectorDourado(t *testing.T) {
 	}
 	if f.Hash() != hashDourado {
 		t.Errorf("hash = %q, queria %q", f.Hash(), hashDourado)
+	}
+}
+
+// facturaDe constrói e emite uma factura com os parâmetros dados, para os testes
+// de canonicalização poderem variar um campo de cada vez.
+func facturaDe(t *testing.T, nome, nif, morada string, itens func(*fin.Factura) error) fin.SnapshotFactura {
+	t.Helper()
+	c, err := fin.NovoClienteSnapshot(nome, nif, morada)
+	if err != nil {
+		t.Fatalf("cliente: %v", err)
+	}
+	f, err := fin.NovaFactura(c, "11111111-1111-1111-1111-111111111111")
+	if err != nil {
+		t.Fatalf("factura: %v", err)
+	}
+	if err := itens(f); err != nil {
+		t.Fatalf("itens: %v", err)
+	}
+	m := time.Date(2026, 7, 18, 10, 0, 0, 123456789, time.UTC)
+	if err := f.Emitir("2026", 7, "abc", m); err != nil {
+		t.Fatalf("Emitir: %v", err)
+	}
+	return f.Snapshot()
+}
+
+// Regressão do defeito que motivou a ADR-041. Antes do enquadramento, uma
+// descrição com '|' e '\n' conseguia imitar a fronteira entre linhas: a factura
+// A (duas linhas, a primeira a preço zero) e a factura B (uma linha cuja
+// descrição embebe os separadores) produziam o MESMO hash e o MESMO total.
+// Verificado contra o código real antes desta fatia:
+//
+//	A: 2 linhas, total 5000 | hash cac4fec4b7e103a6f232cb2eacb7dd15c8...
+//	B: 1 linha,  total 5000 | hash cac4fec4b7e103a6f232cb2eacb7dd15c8...
+//
+// Os totais no canónico não bastavam: a CHECK admite preço zero, que fornece
+// exactamente a folga necessária para os totais coincidirem.
+func TestHash_DescricaoNaoImitaFronteiraDeLinha(t *testing.T) {
+	a := facturaDe(t, "Sol", "", "", func(f *fin.Factura) error {
+		if err := f.AdicionarItem("Z", fin.LinhaConsulta, "", 1,
+			moeda.DeCentimos(0), fin.RegimeIsento); err != nil {
+			return err
+		}
+		return f.AdicionarItem("W", fin.LinhaConsulta, "", 1,
+			moeda.DeCentimos(5000), fin.RegimeIsento)
+	})
+	b := facturaDe(t, "Sol", "", "", func(f *fin.Factura) error {
+		return f.AdicionarItem("Z|CONSULTA|1|0|ISENTO\n1|W", fin.LinhaConsulta, "", 1,
+			moeda.DeCentimos(5000), fin.RegimeIsento)
+	})
+
+	// Pré-condição do teste: os totais TÊM de coincidir, senão a colisão seria
+	// impedida pelos totais e o teste não estaria a exercitar o digest.
+	if ta, tb := fin.TotaisDe(a.Itens), fin.TotaisDe(b.Itens); ta.Total != tb.Total {
+		t.Fatalf("fixtura inválida: totais diferem (%d vs %d) — o teste deixaria de exercitar o digest",
+			ta.Total.Centimos(), tb.Total.Centimos())
+	}
+	if fin.HashDe(a) == fin.HashDe(b) {
+		t.Errorf("colisão: %d linhas e %d linhas partilham o hash %s",
+			len(a.Itens), len(b.Itens), fin.HashDe(a))
+	}
+}
+
+// O nome do cliente passa a ser selado (ADR-041). Antes não era: numa factura a
+// consumidor final (sem NIF), o nome é a única identificação do documento, e
+// era alterável com o selo intacto.
+func TestHash_SelaNomeDoCliente(t *testing.T) {
+	comItem := func(f *fin.Factura) error {
+		return f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1,
+			moeda.DeCentimos(50000), fin.RegimeIsento)
+	}
+	sol := facturaDe(t, "Sol", "", "", comItem)
+	lua := facturaDe(t, "Lua", "", "", comItem)
+	if fin.HashDe(sol) == fin.HashDe(lua) {
+		t.Error("mudar o nome do cliente tinha de mudar o hash")
+	}
+}
+
+// A morada do cliente passa a ser selada (ADR-041).
+func TestHash_SelaMoradaDoCliente(t *testing.T) {
+	comItem := func(f *fin.Factura) error {
+		return f.AdicionarItem("Consulta", fin.LinhaConsulta, "", 1,
+			moeda.DeCentimos(50000), fin.RegimeIsento)
+	}
+	sem := facturaDe(t, "Sol", "", "", comItem)
+	com := facturaDe(t, "Sol", "", "Rua Amílcar Cabral, Luanda", comItem)
+	if fin.HashDe(sem) == fin.HashDe(com) {
+		t.Error("mudar a morada do cliente tinha de mudar o hash")
+	}
+}
+
+// O operacaoID passa a ser selado (ADR-041): é a proveniência cross-context da
+// linha (que dispensa ou requisição a originou). Sem selo, podia ser reapontado
+// sem invalidar a factura.
+func TestHash_SelaOperacaoIDDaLinha(t *testing.T) {
+	comOp := func(op string) func(*fin.Factura) error {
+		return func(f *fin.Factura) error {
+			return f.AdicionarItem("Paracetamol", fin.LinhaDispensa, op, 2,
+				moeda.DeCentimos(1000), fin.RegimeStandard)
+		}
+	}
+	a := facturaDe(t, "Sol", "", "", comOp("22222222-2222-2222-2222-222222222222"))
+	b := facturaDe(t, "Sol", "", "", comOp("33333333-3333-3333-3333-333333333333"))
+	if fin.HashDe(a) == fin.HashDe(b) {
+		t.Error("mudar o operacaoID da linha tinha de mudar o hash")
 	}
 }
