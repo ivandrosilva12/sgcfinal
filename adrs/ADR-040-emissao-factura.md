@@ -400,6 +400,14 @@ Tem de ser uma transição de estado que preserve número, sequencial, hash e
 `hashAnterior` intactos — a anulação faz-se por nova factura, e a factura anulada
 permanece na cadeia.
 
+> **Nota (2026-07-19).** A numeração acima ficou desactualizada: o número ADR-041 foi
+> tomado pela selagem canónica, e a **anulação passou para uma fatia posterior**. A
+> restrição mantém-se exactamente como está escrita — apenas muda o ADR que a há-de
+> cumprir. A `adrs/ADR-041-selagem-canonica.md` assume-a e transfere-a explicitamente.
+> O mesmo desfasamento afecta a lista de **Diferido** no fim deste documento
+> (ADR-041/042/043); o `CLAUDE.md` é a fonte autoritativa da numeração em vigor.
+> O texto original fica intacto, como registo do que se planeava na altura.
+
 ### R6 — `trg_facturas_imutaveis` não cobre `INSERT`: uma factura pode nascer `EMITIDA`
 
 Apanhado na revisão final do ramo. O trigger da tabela `facturas` é `BEFORE UPDATE OR
