@@ -271,21 +271,31 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 		{Nome: "keycloak", Verificar: verificador.VerificarSaude},
 	}
 
+	// Pacote único de protecção aplicado a TODOS os grupos de negócio (ADR-042).
+	// Antes, cada local de chamada escolhia os seus middlewares: o mfaMW chegava a
+	// três grupos e faltava a onze, entre eles Doentes, Consentimentos, Laboratório
+	// e Recepção — onde Admin e Director alcançavam dados clínicos sem segundo
+	// factor. Um pacote único torna a omissão um desvio deliberado e visível.
+	//
+	// Custo zero onde não há papéis sensíveis: MFAObrigatoria delega em
+	// VerificarAutenticacaoForte, que só rejeita sessões de papel sensível.
+	protecao := []gin.HandlerFunc{limiteMW, authMW, mfaMW}
+
 	registarRotas := func(r gin.IRouter) {
-		adhttp.RegistarIdentidade(r, handlerIdentidade, limiteMW, authMW, mfaMW)
-		adhttp.RegistarAdministracao(r, handlerAdmin, limiteMW, authMW, mfaMW)
-		adhttp.RegistarDoentes(r, handlerDoentes, limiteMW, authMW)
-		adhttp.RegistarEpisodios(r, handlerEpisodios, limiteMW, authMW)
-		adhttp.RegistarConsentimentos(r, handlerConsentimentos, limiteMW, authMW)
-		adhttp.RegistarCirurgia(r, handlerCirurgia, limiteMW, authMW)
-		adhttp.RegistarFarmacia(r, handlerFarmacia, limiteMW, authMW)
-		adhttp.RegistarFarmaciaStock(r, handlerFarmaciaStock, limiteMW, authMW)
-		adhttp.RegistarLaboratorio(r, handlerLaboratorio, limiteMW, authMW)
-		adhttp.RegistarFinanceiro(r, handlerFinanceiro, limiteMW, authMW, mfaMW)
-		adhttp.RegistarRecepcao(r, handlerRecepcao, limiteMW, authMW)
-		adhttp.RegistarRecepcaoChegadas(r, handlerRecepcaoChegadas, limiteMW, authMW)
-		adhttp.RegistarRecepcaoTriagem(r, handlerRecepcaoTriagem, limiteMW, authMW)
-		adhttp.RegistarClinicoConsulta(r, handlerClinicoConsulta, limiteMW, authMW)
+		adhttp.RegistarIdentidade(r, handlerIdentidade, protecao...)
+		adhttp.RegistarAdministracao(r, handlerAdmin, protecao...)
+		adhttp.RegistarDoentes(r, handlerDoentes, protecao...)
+		adhttp.RegistarEpisodios(r, handlerEpisodios, protecao...)
+		adhttp.RegistarConsentimentos(r, handlerConsentimentos, protecao...)
+		adhttp.RegistarCirurgia(r, handlerCirurgia, protecao...)
+		adhttp.RegistarFarmacia(r, handlerFarmacia, protecao...)
+		adhttp.RegistarFarmaciaStock(r, handlerFarmaciaStock, protecao...)
+		adhttp.RegistarLaboratorio(r, handlerLaboratorio, protecao...)
+		adhttp.RegistarFinanceiro(r, handlerFinanceiro, protecao...)
+		adhttp.RegistarRecepcao(r, handlerRecepcao, protecao...)
+		adhttp.RegistarRecepcaoChegadas(r, handlerRecepcaoChegadas, protecao...)
+		adhttp.RegistarRecepcaoTriagem(r, handlerRecepcaoTriagem, protecao...)
+		adhttp.RegistarClinicoConsulta(r, handlerClinicoConsulta, protecao...)
 	}
 
 	logger.Info("dependências estabelecidas", "ambiente", cfg.Ambiente)
