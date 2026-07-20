@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,12 +73,17 @@ func routerRecepcao(t *testing.T, marcar *duploMarcar, sessao identidade.Sessao)
 		marcar, duploRemarcar{}, duploCancelar{}, duploRegistarFalta{},
 		duploListarAgenda{}, duploListarMarcacoesDoente{},
 	)
-	adhttp.RegistarRecepcao(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+	adhttp.RegistarRecepcao(r, h, adhttp.Auth(fakeAuth{sessao: sessao}), adhttp.MFAObrigatoria())
 	return r
 }
 
+// sessaoRecepcaoDe constrói uma sessão de teste com um papel.
 func sessaoRecepcaoDe(sujeito string, papel identidade.Papel) identidade.Sessao {
-	return identidade.Sessao{Sujeito: sujeito, Papeis: []identidade.Papel{papel}}
+	// Segundo factor sempre presente: o router de teste espelha a cadeia da
+	// produção (Auth + MFAObrigatoria), pelo que as sessões de papel sensível
+	// (Director, Admin) têm de comprovar autenticação forte. Para os papéis
+	// não-sensíveis o campo é inócuo — o middleware é um no-op.
+	return identidade.Sessao{Sujeito: sujeito, Papeis: []identidade.Papel{papel}, AutenticacaoForte: true}
 }
 
 func TestMarcar_UsaOSujeitoAutenticado(t *testing.T) {
@@ -309,5 +315,41 @@ func TestListarMarcacoesDoente_Medico_OK(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != 200 {
 		t.Fatalf("esperava 200, veio %d (%s)", w.Code, w.Body.String())
+	}
+}
+
+// ADR-042: antes desta fatia, os grupos da Recepção não recebiam a
+// MFAObrigatoria, pelo que um papel sensível alcançava a agenda sem segundo
+// factor. A sessão é construída à mão (e não pela `sessaoRecepcaoDe`) porque esta
+// fixa sempre o segundo factor — é justamente a sua ausência que se prova.
+func TestRecepcao_PapelSensivelSemSegundoFactor_403(t *testing.T) {
+	r := routerRecepcao(t, &duploMarcar{}, identidade.Sessao{
+		Sujeito: "dir-1",
+		Papeis:  []identidade.Papel{identidade.PapelDirector},
+		// sem AutenticacaoForte: é este o ponto do teste
+	})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/recepcao/agenda?medico=med-1&de=2026-08-01T00:00:00Z&ate=2026-08-01T23:00:00Z", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != 403 {
+		t.Fatalf("código = %d, queria 403", w.Code)
+	}
+	// Asserir o tipo do problema, e não só o 403: sem isto, o teste não distingue
+	// o 403 do MFA do 403 do RBAC, e passaria a verde pela razão errada se o RBAC
+	// mudasse.
+	if corpo := w.Body.String(); !strings.Contains(corpo, "mfa-obrigatorio") {
+		t.Errorf("corpo = %s, queria type mfa-obrigatorio", corpo)
+	}
+}
+
+func TestRecepcao_PapelSensivelComSegundoFactor_Prossegue(t *testing.T) {
+	r := routerRecepcao(t, &duploMarcar{}, sessaoRecepcaoDe("dir-1", identidade.PapelDirector))
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/recepcao/agenda?medico=med-1&de=2026-08-01T00:00:00Z&ate=2026-08-01T23:00:00Z", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code == 403 {
+		t.Errorf("com segundo factor não devia dar 403; corpo = %s", w.Body.String())
 	}
 }

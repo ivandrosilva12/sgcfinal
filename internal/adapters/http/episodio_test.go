@@ -3,6 +3,7 @@ package http_test
 import (
 	"context"
 	nethttp "net/http"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -103,7 +104,7 @@ func routerEpisodiosComFakes(sessao dominio.Sessao, obter *fakeObterEpisodio) *g
 		fakeCancelarEpisodio{out: appclinico.DetalheEpisodio{ID: "ep-1", Estado: "CANCELADO"}},
 		&fakeObterEHR{out: appclinico.EHR{}},
 	)
-	adhttp.RegistarEpisodios(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+	adhttp.RegistarEpisodios(r, h, adhttp.Auth(fakeAuth{sessao: sessao}), adhttp.MFAObrigatoria())
 	return r
 }
 
@@ -122,7 +123,7 @@ func routerEpisodiosComFakesEHR(sessao dominio.Sessao, ehr *fakeObterEHR) *gin.E
 		fakeCancelarEpisodio{out: appclinico.DetalheEpisodio{ID: "ep-1", Estado: "CANCELADO"}},
 		ehr,
 	)
-	adhttp.RegistarEpisodios(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+	adhttp.RegistarEpisodios(r, h, adhttp.Auth(fakeAuth{sessao: sessao}), adhttp.MFAObrigatoria())
 	return r
 }
 
@@ -272,7 +273,7 @@ func TestEpisodios_EHR_MedicoPermitido(t *testing.T) {
 }
 
 func TestEpisodios_EHR_DirectorPermitido_200(t *testing.T) {
-	r := routerEpisodios(dominio.Sessao{Sujeito: "d1", Papeis: []dominio.Papel{dominio.PapelDirector}})
+	r := routerEpisodios(dominio.Sessao{Sujeito: "d1", Papeis: []dominio.Papel{dominio.PapelDirector}, AutenticacaoForte: true})
 	w := pedido(r, "GET", "/api/v1/doentes/d1/ehr?estado=ABERTO&limite=5", "Bearer xyz")
 	if w.Code != nethttp.StatusOK {
 		t.Fatalf("esperava 200, obtive %d (%s)", w.Code, w.Body.String())
@@ -280,7 +281,7 @@ func TestEpisodios_EHR_DirectorPermitido_200(t *testing.T) {
 }
 
 func TestEpisodios_Obter_LeituraClinica_200(t *testing.T) {
-	r := routerEpisodios(dominio.Sessao{Sujeito: "au1", Papeis: []dominio.Papel{dominio.PapelAuditor}})
+	r := routerEpisodios(dominio.Sessao{Sujeito: "au1", Papeis: []dominio.Papel{dominio.PapelAuditor}, AutenticacaoForte: true})
 	w := pedido(r, "GET", "/api/v1/episodios/ep-1", "Bearer xyz")
 	if w.Code != nethttp.StatusOK {
 		t.Fatalf("esperava 200, obtive %d (%s)", w.Code, w.Body.String())
@@ -326,7 +327,7 @@ func TestEpisodios_Obter_ErroMapeado_404(t *testing.T) {
 		fakeIniciarEpisodio{}, &fakeObterEpisodio{err: erros.Novo(erros.CategoriaNaoEncontrado, "episódio não encontrado")},
 		&fakeListarEpisodios{}, fakeActualizarEpisodio{}, fakeFecharEpisodio{}, fakeCancelarEpisodio{}, &fakeObterEHR{},
 	)
-	adhttp.RegistarEpisodios(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}))
+	adhttp.RegistarEpisodios(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}), adhttp.MFAObrigatoria())
 	if w := pedido(r, "GET", "/api/v1/episodios/inexistente", "Bearer xyz"); w.Code != nethttp.StatusNotFound {
 		t.Fatalf("esperava 404, obtive %d", w.Code)
 	}
@@ -340,7 +341,7 @@ func TestEpisodios_Listar_ErroAplicacaoMapeado_500(t *testing.T) {
 		&fakeListarEpisodios{err: erros.Novo(erros.CategoriaInterno, "falha na base de dados")},
 		fakeActualizarEpisodio{}, fakeFecharEpisodio{}, fakeCancelarEpisodio{}, &fakeObterEHR{},
 	)
-	adhttp.RegistarEpisodios(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}))
+	adhttp.RegistarEpisodios(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}), adhttp.MFAObrigatoria())
 	w := pedido(r, "GET", "/api/v1/doentes/d1/episodios", "Bearer xyz")
 	if w.Code != nethttp.StatusInternalServerError {
 		t.Fatalf("esperava 500, obtive %d", w.Code)
@@ -355,7 +356,7 @@ func TestEpisodios_Fechar_ErroAplicacaoMapeado(t *testing.T) {
 		fakeFecharEpisodio{err: erros.Novo(erros.CategoriaValidacao, "episódio já fechado")},
 		fakeCancelarEpisodio{}, &fakeObterEHR{},
 	)
-	adhttp.RegistarEpisodios(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}))
+	adhttp.RegistarEpisodios(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}), adhttp.MFAObrigatoria())
 	w := pedidoCorpo(r, "POST", "/api/v1/episodios/ep-1/fechar", ``)
 	if w.Code != nethttp.StatusBadRequest {
 		t.Fatalf("esperava 400, obtive %d (%s)", w.Code, w.Body.String())
@@ -371,10 +372,46 @@ func TestEpisodios_Cancelar_ErroAplicacaoMapeado(t *testing.T) {
 		fakeCancelarEpisodio{err: erros.Novo(erros.CategoriaValidacao, "motivo obrigatório")},
 		&fakeObterEHR{},
 	)
-	adhttp.RegistarEpisodios(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}))
+	adhttp.RegistarEpisodios(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}), adhttp.MFAObrigatoria())
 	w := pedidoCorpo(r, "POST", "/api/v1/episodios/ep-1/cancelar", `{}`)
 	if w.Code != nethttp.StatusBadRequest {
 		t.Fatalf("esperava 400, obtive %d (%s)", w.Code, w.Body.String())
+	}
+}
+
+// ADR-042: antes desta fatia, os grupos de Episódios não recebiam a
+// MFAObrigatoria, pelo que um papel sensível alcançava a leitura clínica sem
+// segundo factor. Usa-se o DPO (e não o Admin, que nem está no RBAC de leitura
+// clínica de episódios) porque é um papel sensível que o `leituraClinica` do
+// handler admite — com um papel fora do RBAC o par de testes provaria o RBAC, não
+// o MFA. A rota GET /api/v1/episodios/:eid é leitura pura (obterEpisodio).
+func TestEpisodios_PapelSensivelSemSegundoFactor_403(t *testing.T) {
+	r := routerEpisodios(dominio.Sessao{
+		Sujeito: "dpo-1",
+		Papeis:  []dominio.Papel{dominio.PapelDPO},
+		// sem AutenticacaoForte: é este o ponto do teste
+	})
+	w := pedido(r, "GET", "/api/v1/episodios/ep-1", "Bearer xyz")
+	if w.Code != nethttp.StatusForbidden {
+		t.Fatalf("código = %d, queria 403", w.Code)
+	}
+	// Asserir o tipo do problema, e não só o 403: sem isto, o teste não distingue
+	// o 403 do MFA do 403 do RBAC, e passaria a verde pela razão errada se o RBAC
+	// mudasse.
+	if corpo := w.Body.String(); !strings.Contains(corpo, "mfa-obrigatorio") {
+		t.Errorf("corpo = %s, queria type mfa-obrigatorio", corpo)
+	}
+}
+
+func TestEpisodios_PapelSensivelComSegundoFactor_Prossegue(t *testing.T) {
+	r := routerEpisodios(dominio.Sessao{
+		Sujeito:           "dpo-1",
+		Papeis:            []dominio.Papel{dominio.PapelDPO},
+		AutenticacaoForte: true,
+	})
+	w := pedido(r, "GET", "/api/v1/episodios/ep-1", "Bearer xyz")
+	if w.Code == nethttp.StatusForbidden {
+		t.Errorf("com segundo factor não devia dar 403; corpo = %s", w.Body.String())
 	}
 }
 
@@ -386,7 +423,7 @@ func TestEpisodios_EHR_ErroAplicacaoMapeado_404(t *testing.T) {
 		fakeFecharEpisodio{}, fakeCancelarEpisodio{},
 		&fakeObterEHR{err: erros.Novo(erros.CategoriaNaoEncontrado, "doente não encontrado")},
 	)
-	adhttp.RegistarEpisodios(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}))
+	adhttp.RegistarEpisodios(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}), adhttp.MFAObrigatoria())
 	w := pedido(r, "GET", "/api/v1/doentes/inexistente/ehr", "Bearer xyz")
 	if w.Code != nethttp.StatusNotFound {
 		t.Fatalf("esperava 404, obtive %d", w.Code)

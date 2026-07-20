@@ -1,12 +1,62 @@
 # SPRINT ACTUAL
 
 - **Marco**: M4 — Financeiro — **em curso**
-- **Sprint**: 16 (Financeiro — selagem canónica: enquadramento injectivo e âmbito do
-  selo) — **entregue**
-- **Objectivo**: tornar o canónico do hash da `Factura` **injectivo** e alargar o
-  âmbito do selo, pagando as dívidas R1 e R2 da ADR-040 dentro do prazo que ela
-  própria fixou — revisíveis apenas **antes da primeira emissão em produção**. A
-  anulação, o SAF-T-AO e a certificação AGT ficam fora e **não estão feitas**.
+- **Sprint**: 17 (Segurança — imposição uniforme de MFA e factura nascida em RASCUNHO)
+  — **entregue**
+- **Objectivo**: fechar dois riscos herdados da ADR-040 — o **R3** (segundo factor
+  imposto em três dos catorze grupos de rotas, faltando nos outros onze, dos quais dez
+  expõem papel sensível) e o **R6** (a factura podia nascer `EMITIDA`). O **R7** (o
+  papel da aplicação é dono das tabelas fiscais e pode desligar os triggers) fica fora,
+  em fatia própria, e **continua aberto**. A anulação, os pagamentos, o SAF-T-AO e a
+  certificação AGT ficam fora e **não estão feitos**.
+
+## Sprint 17 — entregue
+
+- [x] **Pacote único de protecção** (`internal/platform/app.go`): `protecao :=
+      []gin.HandlerFunc{limiteMW, authMW, mfaMW}` passado aos **14** grupos de negócio;
+      `RegistarIdentidade` uniformizado (`middlewares` → `protecao`). A causa do R3 não
+      foram onze esquecimentos: as `Registar*` já eram variádicas e já chamavam ao
+      parâmetro — falhou a aplicação uniforme nos locais de chamada (juízo caso a caso
+      que corre mal em silêncio, a mesma classe de defeito da ADR-041).
+- [x] **Exposição medida e corrigida**: **11 dos 14 grupos** sem `mfaMW`, **10 a expor
+      papel sensível** (`Director`/`DPO`/`Auditor` na leitura clínica de doentes,
+      episódios, cirurgia, farmácia e farmácia-stock; `Admin`/`Director` em laboratório
+      e recepção; `Director` na triagem; Recepção-chegadas só numa rota de escrita). A
+      medição da ADR-040 §R3 **estava certa**; uma contra-medição posterior (tabela de
+      4 famílias) estava errada por dois defeitos de instrumento a subestimar — o
+      prefixo de `PapelAdministrativo` contado como `PapelAdmin`, e as chamadas `RBAC`
+      multi-linha perdidas. Registado como matéria da ADR-042.
+- [x] **Guarda AST sobre o `app.go`** (`internal/platform/app_protecao_test.go`):
+      analisa `go/parser` + `go/ast` e exige (1) conjunto nomeado dos 14 grupos, cada um
+      a terminar em `protecao...`, e (2) uma só atribuição a `protecao`, com valor
+      `[]gin.HandlerFunc{limiteMW, authMW, mfaMW}` a terminar em `mfaMW`. Passou por
+      **quatro rondas de ataque**: comentário engolido por regex gulosa, chamada
+      multi-linha invisível, extracção para helper / alias de import, e reatribuir
+      `protecao` sem `mfaMW` (que compilava e passava). Lacuna conhecida: um subgrupo
+      dentro de um handler continua invisível — daí as provas comportamentais.
+- [x] **Routers de teste a espelhar a produção** e **prova comportamental** nas 10
+      famílias expostas: papel sensível sem segundo factor → **403** com
+      `type: mfa-obrigatorio` asserido no corpo (distingue o 403 do MFA do 403 do RBAC);
+      sessões de papel sensível ganham `AutenticacaoForte: true`. Fecha a lacuna de
+      detecção que deixou a exposição sobreviver (nada verificava o `app.go`).
+- [x] **`RegistarHealth` isento por desenho** — healthchecks e scrape do Prometheus são
+      não-autenticados; registado em `server.go`, fora de `registarRotas`.
+- [x] **OTP completo no realm** (`docker/keycloak/realm-sgc.json`): OTP no `admin.teste`;
+      `dpo.teste` e `auditor.teste` novos, espelhando `director.teste`. Os 5 papéis
+      sensíveis passam a ter utilizador com OTP, validado por import real num Keycloak 25.
+- [x] **Factura nasce RASCUNHO** (R6): migração forward-only
+      `financeiro/0004_facturas_nascem_rascunho.sql`, trigger `BEFORE INSERT ... WHEN
+      (NEW.estado <> 'RASCUNHO')`, idempotente, sem editar a `0001`/`0002`/`0003`.
+      `INSERT` de `EMITIDA` rejeitado (provado em integração); as 3 fixturas que semeavam
+      `EMITIDA` reescritas para o caminho de produção (INSERT RASCUNHO → UPDATE).
+- [x] **Âmbito registado com honestidade**: enquanto o **R7** estiver aberto, o trigger
+      é defesa contra erro e contra SQL de terceiros, **não** contra a aplicação
+      comprometida (dona da tabela). **R7 continua aberto**, em fatia própria (separar a
+      credencial de migração da de runtime). A ADR **não** afirma R7 resolvido,
+      imutabilidade absoluta, nem anulação/pagamentos/SAF-T-AO/certificação AGT.
+- [x] ADR-042, e R3/R6 da ADR-040 marcados como resolvidos **aditivamente** (o texto
+      original fica; para o R6, a nota condiciona a garantia ao R7). CLAUDE.md §6 e o
+      índice de ADRs actualizados; `Próximo ADR: ADR-043`.
 
 ## Sprint 16 — entregue
 

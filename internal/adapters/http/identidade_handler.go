@@ -34,10 +34,10 @@ func NovoIdentidadeHandler(p ServicoPerfil, atualizar ServicoAtualizarPerfil) *I
 }
 
 // RegistarIdentidade regista as rotas do BC Identidade sob /api/v1/identidade,
-// aplicando ao grupo os middlewares indicados (ex.: rate limit + autenticação).
-func RegistarIdentidade(r gin.IRouter, h *IdentidadeHandler, middlewares ...gin.HandlerFunc) {
+// aplicando ao grupo os middlewares indicados (ex.: rate limit + autenticação + MFA).
+func RegistarIdentidade(r gin.IRouter, h *IdentidadeHandler, protecao ...gin.HandlerFunc) {
 	grupo := r.Group("/api/v1/identidade")
-	grupo.Use(middlewares...)
+	grupo.Use(protecao...)
 	grupo.GET("/perfil", h.obterPerfil)
 	grupo.PATCH("/perfil", h.atualizarPerfil)
 }

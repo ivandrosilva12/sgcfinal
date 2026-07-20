@@ -3,6 +3,7 @@ package http_test
 import (
 	"context"
 	nethttp "net/http"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -113,7 +114,7 @@ func routerFarmacia(sessao dominio.Sessao, emitir fakeEmitirReceita) *gin.Engine
 		fakeObterReceita{out: appfarmacia.DetalheReceita{ID: "rec-1"}},
 		fakeListarReceitas{out: appfarmacia.PaginaReceitas{Total: 0}},
 	)
-	adhttp.RegistarFarmacia(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+	adhttp.RegistarFarmacia(r, h, adhttp.Auth(fakeAuth{sessao: sessao}), adhttp.MFAObrigatoria())
 	return r
 }
 
@@ -234,7 +235,7 @@ func TestFarmacia_AnularReceita_CorpoVazio(t *testing.T) {
 }
 
 func TestFarmacia_ObterReceita_LeituraAmpla(t *testing.T) {
-	r := routerFarmacia(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelDirector}}, fakeEmitirReceita{})
+	r := routerFarmacia(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelDirector}, AutenticacaoForte: true}, fakeEmitirReceita{})
 	if w := pedido(r, "GET", "/api/v1/farmacia/receitas/rec-1", "Bearer x"); w.Code != nethttp.StatusOK {
 		t.Fatalf("esperava 200, obtive %d (%s)", w.Code, w.Body.String())
 	}
@@ -266,7 +267,7 @@ func routerFarmaciaFalhas(sessao dominio.Sessao) *gin.Engine {
 		fakeObterReceita{err: erroServico},
 		fakeListarReceitas{err: erroServico},
 	)
-	adhttp.RegistarFarmacia(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+	adhttp.RegistarFarmacia(r, h, adhttp.Auth(fakeAuth{sessao: sessao}), adhttp.MFAObrigatoria())
 	return r
 }
 
@@ -327,7 +328,7 @@ func TestFarmacia_AnularReceita_ErroServico(t *testing.T) {
 }
 
 func TestFarmacia_ObterReceita_ErroServico(t *testing.T) {
-	r := routerFarmaciaFalhas(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelDirector}})
+	r := routerFarmaciaFalhas(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelDirector}, AutenticacaoForte: true})
 	w := pedido(r, "GET", "/api/v1/farmacia/receitas/rec-1", "Bearer x")
 	if w.Code != nethttp.StatusInternalServerError {
 		t.Fatalf("esperava 500, obtive %d (%s)", w.Code, w.Body.String())
@@ -339,5 +340,40 @@ func TestFarmacia_ListarReceitas_ErroServico(t *testing.T) {
 	w := pedido(r, "GET", "/api/v1/farmacia/receitas?doente_id=d-1", "Bearer x")
 	if w.Code != nethttp.StatusInternalServerError {
 		t.Fatalf("esperava 500, obtive %d (%s)", w.Code, w.Body.String())
+	}
+}
+
+// ADR-042: antes desta fatia, o grupo de Farmácia não recebia a MFAObrigatoria,
+// pelo que um papel sensível alcançava o catálogo clínico sem segundo factor.
+// Usa-se o Auditor porque é um papel sensível que o `leitura` do handler admite —
+// com um papel fora do RBAC o par de testes provaria o RBAC, não o MFA. A rota
+// GET /api/v1/farmacia/medicamentos/:id é leitura pura (obterMedicamento).
+func TestFarmacia_PapelSensivelSemSegundoFactor_403(t *testing.T) {
+	r := routerFarmacia(dominio.Sessao{
+		Sujeito: "aud-1",
+		Papeis:  []dominio.Papel{dominio.PapelAuditor},
+		// sem AutenticacaoForte: é este o ponto do teste
+	}, fakeEmitirReceita{})
+	w := pedido(r, "GET", "/api/v1/farmacia/medicamentos/med-1", "Bearer x")
+	if w.Code != nethttp.StatusForbidden {
+		t.Fatalf("código = %d, queria 403", w.Code)
+	}
+	// Asserir o tipo do problema, e não só o 403: sem isto, o teste não distingue
+	// o 403 do MFA do 403 do RBAC, e passaria a verde pela razão errada se o RBAC
+	// mudasse.
+	if corpo := w.Body.String(); !strings.Contains(corpo, "mfa-obrigatorio") {
+		t.Errorf("corpo = %s, queria type mfa-obrigatorio", corpo)
+	}
+}
+
+func TestFarmacia_PapelSensivelComSegundoFactor_Prossegue(t *testing.T) {
+	r := routerFarmacia(dominio.Sessao{
+		Sujeito:           "aud-1",
+		Papeis:            []dominio.Papel{dominio.PapelAuditor},
+		AutenticacaoForte: true,
+	}, fakeEmitirReceita{})
+	w := pedido(r, "GET", "/api/v1/farmacia/medicamentos/med-1", "Bearer x")
+	if w.Code == nethttp.StatusForbidden {
+		t.Errorf("com segundo factor não devia dar 403; corpo = %s", w.Body.String())
 	}
 }

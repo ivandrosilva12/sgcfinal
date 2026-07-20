@@ -15,6 +15,7 @@ import (
 	mathrand "math/rand"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -209,41 +210,46 @@ func TestRepositorioFacturas_PreservaIdsEOrdemNaReescrita(t *testing.T) {
 // TestFacturaEmitida_ImutavelNaBD prova o trg_facturas_imutaveis (ADR-040): uma
 // factura EMITIDA não pode ser alterada nem apagada por SQL directo — a
 // imutabilidade é defesa em profundidade, para além da guarda no domínio. A
-// factura é inserida com um sequencial fora do alcance da aplicação (9999999)
+// factura é semeada com um sequencial fora do alcance da aplicação (9999999)
 // porque o alvo é o trigger, não o repositório; o Cleanup não a consegue apagar
 // e essa impossibilidade é precisamente a propriedade em teste.
+//
+// A fixture nasce RASCUNHO e só depois é promovida a EMITIDA por UPDATE
+// (ADR-042, R6): desde que trg_facturas_nascem_rascunho passou a cobrir o
+// INSERT, um INSERT directo já em EMITIDA é rejeitado — é exactamente esse o
+// comportamento que TestFacturaNaoPodeNascerEmitida prova. A rota nova é a
+// real: nenhum caminho do sistema produz uma factura nascida EMITIDA, pelo que
+// a fixture antiga (INSERT directo em EMITIDA) era artificial.
 func TestFacturaEmitida_ImutavelNaBD(t *testing.T) {
 	pool, ctx := ligar(t)
 	migrarFinanceiro(t, pool, ctx)
 
 	const numero = "FAC 2026/09999999"
 	var id string
-	err := pool.QueryRow(ctx, `
-INSERT INTO financeiro.facturas
-    (estado, cliente_nome, episodio_id, numero, serie, sequencial,
-     data_emissao, hash, hash_anterior)
-VALUES ('EMITIDA','Cliente',gen_random_uuid(),$1,'2026',9999999,
-        now(),'abc','')
-ON CONFLICT (numero) WHERE numero IS NOT NULL DO NOTHING
-RETURNING id::text`, numero).Scan(&id)
-	if err != nil {
-		// Uma corrida anterior deste teste já deixou esta factura na BD — o
-		// trigger torna-a permanentemente irremovível, de propósito. Reutiliza-a:
-		// o alvo do teste é o trigger, não a inserção. O erro do INSERT é
-		// registado (não descartado): foi a sua opacidade que, no defeito real do
-		// ON CONFLICT sobre índice parcial, escondeu o SQLSTATE 42P10 por detrás
-		// de um "no rows in result set" no fallback.
-		t.Logf("inserir factura emitida (a reutilizar via fallback): %v", err)
-		if err := pool.QueryRow(ctx,
-			`SELECT id::text FROM financeiro.facturas WHERE numero=$1`, numero).Scan(&id); err != nil {
-			t.Fatalf("inserir/obter factura emitida: %v", err)
+	if err := pool.QueryRow(ctx,
+		`SELECT id::text FROM financeiro.facturas WHERE numero=$1`, numero).Scan(&id); err != nil {
+		// Ainda não existe: cria como RASCUNHO e só então promove a EMITIDA — a
+		// emissão parte sempre de um RASCUNHO e o UPDATE passa
+		// (OLD.estado='RASCUNHO').
+		if err := pool.QueryRow(ctx, `
+INSERT INTO financeiro.facturas (estado, cliente_nome, episodio_id)
+VALUES ('RASCUNHO','Cliente',gen_random_uuid())
+RETURNING id::text`).Scan(&id); err != nil {
+			t.Fatalf("inserir factura rascunho: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `
+UPDATE financeiro.facturas
+   SET estado='EMITIDA', numero=$2, serie='2026', sequencial=9999999,
+       data_emissao=now(), hash='abc', hash_anterior=''
+ WHERE id=$1`, id, numero); err != nil {
+			t.Fatalf("promover factura a emitida: %v", err)
 		}
 	}
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM financeiro.facturas WHERE id=$1 AND estado='RASCUNHO'`, id)
 	})
 
-	_, err = pool.Exec(ctx, `UPDATE financeiro.facturas SET cliente_nome='Outro' WHERE id=$1`, id)
+	_, err := pool.Exec(ctx, `UPDATE financeiro.facturas SET cliente_nome='Outro' WHERE id=$1`, id)
 	if err == nil {
 		t.Fatal("UPDATE numa factura emitida tinha de falhar")
 	}
@@ -415,6 +421,12 @@ UPDATE financeiro.facturas
 // permanente FAC 2026/09999999 (a mesma de TestFacturaEmitida_ImutavelNaBD):
 // o alvo é o trigger, não uma factura nova.
 //
+// A fixture nasce RASCUNHO e só depois é promovida a EMITIDA por UPDATE
+// (ADR-042, R6): desde trg_facturas_nascem_rascunho, um INSERT directo já em
+// EMITIDA é rejeitado pelo trigger da própria tabela facturas, o que mascarava
+// o alvo real deste teste (o trigger de itens_factura). A rota nova é a real:
+// nenhum caminho do sistema produz uma factura nascida EMITIDA.
+//
 // Robustez (achado das revisões ao ADR-040): numa BD onde a 0003 ainda não
 // tenha chegado (por exemplo, só a 0002 aplicada), o trigger ainda não cobre
 // o INSERT — a inserção abaixo passa em vez de falhar. Sem cuidado adicional
@@ -433,24 +445,23 @@ func TestInserirItemEmFacturaEmitida_RejeitadoNaBD(t *testing.T) {
 
 	const numero = "FAC 2026/09999999"
 	var facturaID string
-	err := pool.QueryRow(ctx, `
-INSERT INTO financeiro.facturas
-    (estado, cliente_nome, episodio_id, numero, serie, sequencial,
-     data_emissao, hash, hash_anterior)
-VALUES ('EMITIDA','Cliente',gen_random_uuid(),$1,'2026',9999999,
-        now(),'abc','')
-ON CONFLICT (numero) WHERE numero IS NOT NULL DO NOTHING
-RETURNING id::text`, numero).Scan(&facturaID)
-	if err != nil {
-		// Corrida anterior (ou TestFacturaEmitida_ImutavelNaBD) já deixou esta
-		// factura na BD — permanentemente irremovível, de propósito. Reutiliza-a.
-		// O erro do INSERT é registado (não descartado): a sua opacidade foi o
-		// que escondeu o SQLSTATE 42P10 real do defeito do ON CONFLICT sobre
-		// índice parcial por detrás de um "no rows in result set" no fallback.
-		t.Logf("inserir factura emitida (a reutilizar via fallback): %v", err)
-		if err := pool.QueryRow(ctx,
-			`SELECT id::text FROM financeiro.facturas WHERE numero=$1`, numero).Scan(&facturaID); err != nil {
-			t.Fatalf("inserir/obter factura emitida: %v", err)
+	if err := pool.QueryRow(ctx,
+		`SELECT id::text FROM financeiro.facturas WHERE numero=$1`, numero).Scan(&facturaID); err != nil {
+		// Ainda não existe (ou TestFacturaEmitida_ImutavelNaBD ainda não
+		// correu): cria como RASCUNHO e só então promove a EMITIDA — a emissão
+		// parte sempre de um RASCUNHO e o UPDATE passa (OLD.estado='RASCUNHO').
+		if err := pool.QueryRow(ctx, `
+INSERT INTO financeiro.facturas (estado, cliente_nome, episodio_id)
+VALUES ('RASCUNHO','Cliente',gen_random_uuid())
+RETURNING id::text`).Scan(&facturaID); err != nil {
+			t.Fatalf("inserir factura rascunho: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `
+UPDATE financeiro.facturas
+   SET estado='EMITIDA', numero=$2, serie='2026', sequencial=9999999,
+       data_emissao=now(), hash='abc', hash_anterior=''
+ WHERE id=$1`, facturaID, numero); err != nil {
+			t.Fatalf("promover factura a emitida: %v", err)
 		}
 	}
 	t.Cleanup(func() {
@@ -495,7 +506,7 @@ RETURNING id::text`, numero).Scan(&facturaID)
 		}
 	})
 
-	_, err = pool.Exec(ctx, `
+	_, err := pool.Exec(ctx, `
 INSERT INTO financeiro.itens_factura
     (factura_id, descricao, tipo, quantidade, preco_unitario_centimos, regime_iva, ordem)
 VALUES ($1,'Linha intrusa','CONSULTA',1,999900,'ISENTO',99)`, facturaID)
@@ -711,8 +722,14 @@ func TestGuardarFactura_DuasEdicoesSequenciais(t *testing.T) {
 // Confirmar só err != nil não distingue os dois casos; esta é precisamente a
 // distinção em causa. Cria a sua própria factura EMITIDA (não depende das
 // residuais doutros testes) com o mesmo padrão de
-// TestFacturaEmitida_ImutavelNaBD: ON CONFLICT DO NOTHING + fallback SELECT,
-// para reutilizar entre corridas em vez de acumular linhas permanentes.
+// TestFacturaEmitida_ImutavelNaBD: nasce RASCUNHO e só depois é promovida a
+// EMITIDA por UPDATE, para reutilizar entre corridas em vez de acumular linhas
+// permanentes.
+//
+// A fixture nasce RASCUNHO e só depois é promovida a EMITIDA por UPDATE
+// (ADR-042, R6): a rota nova é a real — nenhum caminho do sistema produz uma
+// factura nascida EMITIDA. O versao lido fica no valor por omissão da coluna
+// (0), porque o UPDATE de promoção, de propósito, não lhe toca.
 func TestGuardarFactura_GuardaDeEstadoRejeitaFacturaEmitida(t *testing.T) {
 	pool, ctx := ligar(t)
 	migrarFinanceiro(t, pool, ctx)
@@ -721,24 +738,23 @@ func TestGuardarFactura_GuardaDeEstadoRejeitaFacturaEmitida(t *testing.T) {
 	const numero = "FAC 2026/09999997"
 	var id string
 	var versao int
-	err := pool.QueryRow(ctx, `
-INSERT INTO financeiro.facturas
-    (estado, cliente_nome, episodio_id, numero, serie, sequencial,
-     data_emissao, hash, hash_anterior)
-VALUES ('EMITIDA','Cliente Emitido',gen_random_uuid(),$1,'2026',9999997,
-        now(),'abc','')
-ON CONFLICT (numero) WHERE numero IS NOT NULL DO NOTHING
-RETURNING id::text, versao`, numero).Scan(&id, &versao)
-	if err != nil {
-		// Uma corrida anterior já deixou esta factura na BD — o trigger torna-a
-		// permanentemente irremovível, de propósito. Reutiliza-a. O erro do
-		// INSERT é registado (não descartado): a sua opacidade foi o que
-		// escondeu o SQLSTATE 42P10 real do defeito do ON CONFLICT sobre índice
-		// parcial por detrás de um "no rows in result set" no fallback.
-		t.Logf("inserir factura emitida (a reutilizar via fallback): %v", err)
-		if err := pool.QueryRow(ctx,
-			`SELECT id::text, versao FROM financeiro.facturas WHERE numero=$1`, numero).Scan(&id, &versao); err != nil {
-			t.Fatalf("inserir/obter factura emitida: %v", err)
+	if err := pool.QueryRow(ctx,
+		`SELECT id::text, versao FROM financeiro.facturas WHERE numero=$1`, numero).Scan(&id, &versao); err != nil {
+		// Ainda não existe: cria como RASCUNHO e só então promove a EMITIDA — a
+		// emissão parte sempre de um RASCUNHO e o UPDATE passa
+		// (OLD.estado='RASCUNHO').
+		if err := pool.QueryRow(ctx, `
+INSERT INTO financeiro.facturas (estado, cliente_nome, episodio_id)
+VALUES ('RASCUNHO','Cliente Emitido',gen_random_uuid())
+RETURNING id::text`).Scan(&id); err != nil {
+			t.Fatalf("inserir factura rascunho: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `
+UPDATE financeiro.facturas
+   SET estado='EMITIDA', numero=$2, serie='2026', sequencial=9999997,
+       data_emissao=now(), hash='abc', hash_anterior=''
+ WHERE id=$1`, id, numero); err != nil {
+			t.Fatalf("promover factura a emitida: %v", err)
 		}
 	}
 	t.Cleanup(func() {
@@ -888,4 +904,42 @@ func TestEmitirFacturas_NumeracaoSemBuracosSobConcorrencia(t *testing.T) {
 	if err := fin.VerificarCadeia(snaps); err != nil {
 		t.Errorf("cadeia devia estar íntegra após emissões concorrentes: %v", err)
 	}
+}
+
+// TestFacturaNaoPodeNascerEmitida prova o R6 da ADR-040 (ADR-042):
+// trg_facturas_imutaveis é BEFORE UPDATE OR DELETE e não cobre o INSERT, pelo
+// que toda a factura tem de nascer RASCUNHO. Um INSERT directo já em EMITIDA é
+// fabricação — não altera nada já selado, mas cria um documento que nunca
+// passou pelo caminho de emissão.
+func TestFacturaNaoPodeNascerEmitida(t *testing.T) {
+	pool, ctx := ligar(t)
+	migrarFinanceiro(t, pool, ctx)
+
+	_, err := pool.Exec(ctx, `
+INSERT INTO financeiro.facturas (estado, cliente_nome, episodio_id, numero, serie, sequencial,
+                                 data_emissao, hash, hash_anterior)
+VALUES ('EMITIDA','Cliente Fabricado',gen_random_uuid(),$1,'2026',9999996,now(),'hash-falso','')`,
+		"FAC 2026/09999996")
+	if err == nil {
+		t.Fatal("INSERT de uma factura nascida EMITIDA tinha de falhar")
+	}
+	if !strings.Contains(err.Error(), "23001") {
+		t.Errorf("erro = %v, queria SQLSTATE 23001 (restrict_violation)", err)
+	}
+}
+
+// TestFacturaNasceRascunhoContinuaAPassar prova, a par da correcção acima, que
+// o caminho normal continua aberto: a factura nasce RASCUNHO e só depois é
+// promovida. Fechar isto seria pior do que o buraco que o trigger fecha.
+func TestFacturaNasceRascunhoContinuaAPassar(t *testing.T) {
+	pool, ctx := ligar(t)
+	migrarFinanceiro(t, pool, ctx)
+
+	var id string
+	if err := pool.QueryRow(ctx, `
+INSERT INTO financeiro.facturas (estado, cliente_nome, episodio_id)
+VALUES ('RASCUNHO','Cliente Normal',gen_random_uuid()) RETURNING id::text`).Scan(&id); err != nil {
+		t.Fatalf("INSERT de rascunho tinha de passar: %v", err)
+	}
+	limparFactura(t, pool, ctx, id)
 }

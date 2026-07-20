@@ -87,7 +87,12 @@
       "firstName": "Admin",
       "lastName": "de Teste",
       "credentials": [
-        { "type": "password", "value": "teste", "temporary": false }
+        { "type": "password", "value": "teste", "temporary": false },
+        {
+          "type": "otp",
+          "secretData": "{\"value\":\"segredoteste-otp-32chars-abcdefgh\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
       ],
       "realmRoles": ["Admin"]
     },
@@ -107,6 +112,40 @@
         }
       ],
       "realmRoles": ["Director"]
+    },
+    {
+      "username": "dpo.teste",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "dpo.teste@sgc.ao",
+      "firstName": "DPO",
+      "lastName": "de Teste",
+      "credentials": [
+        { "type": "password", "value": "teste", "temporary": false },
+        {
+          "type": "otp",
+          "secretData": "{\"value\":\"segredoteste-otp-32chars-abcdefgh\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ],
+      "realmRoles": ["DPO"]
+    },
+    {
+      "username": "auditor.teste",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "auditor.teste@sgc.ao",
+      "firstName": "Auditor",
+      "lastName": "de Teste",
+      "credentials": [
+        { "type": "password", "value": "teste", "temporary": false },
+        {
+          "type": "otp",
+          "secretData": "{\"value\":\"segredoteste-otp-32chars-abcdefgh\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ],
+      "realmRoles": ["Auditor"]
     },
     {
       "username": "tesoureiro.teste",

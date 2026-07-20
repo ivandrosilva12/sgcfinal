@@ -29,7 +29,7 @@ func routerConsulta(sessao dominio.Sessao, f *fakeIniciarConsulta) *gin.Engine {
 	r := novoRouter()
 	r.Use(adhttp.RequestID())
 	h := adhttp.NovoClinicoConsultaHandler(f)
-	adhttp.RegistarClinicoConsulta(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+	adhttp.RegistarClinicoConsulta(r, h, adhttp.Auth(fakeAuth{sessao: sessao}), adhttp.MFAObrigatoria())
 	return r
 }
 

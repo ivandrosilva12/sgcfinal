@@ -95,7 +95,7 @@ func routerDoentes(sessao dominio.Sessao) *gin.Engine {
 		fakeRegistarAlergia{out: appclinico.DetalheDoente{ID: "id-1"}},
 		fakeRegistarAntecedente{out: appclinico.DetalheDoente{ID: "id-1"}},
 	)
-	adhttp.RegistarDoentes(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+	adhttp.RegistarDoentes(r, h, adhttp.Auth(fakeAuth{sessao: sessao}), adhttp.MFAObrigatoria())
 	return r
 }
 
@@ -143,7 +143,7 @@ func TestDoentes_Pesquisar_LeituraAmpla(t *testing.T) {
 }
 
 func TestDoentes_Pesquisar_ComPaginacao(t *testing.T) {
-	r := routerDoentes(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelDirector}})
+	r := routerDoentes(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelDirector}, AutenticacaoForte: true})
 	w := pedido(r, "GET", "/api/v1/doentes?termo=ana&estado=ACTIVO&limite=10&deslocamento=5", "Bearer xyz")
 	if w.Code != nethttp.StatusOK {
 		t.Fatalf("esperava 200, obtive %d (%s)", w.Code, w.Body.String())
@@ -159,7 +159,7 @@ func TestDoentes_Pesquisar_Proibido(t *testing.T) {
 }
 
 func TestDoentes_Obter_LeituraAmpla(t *testing.T) {
-	r := routerDoentes(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}})
+	r := routerDoentes(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}, AutenticacaoForte: true})
 	w := pedido(r, "GET", "/api/v1/doentes/id-1", "Bearer xyz")
 	if w.Code != nethttp.StatusOK {
 		t.Fatalf("esperava 200, obtive %d", w.Code)
@@ -185,10 +185,16 @@ func TestDoentes_Actualizar_DataInvalida_400(t *testing.T) {
 }
 
 func TestDoentes_Actualizar_Proibido(t *testing.T) {
-	r := routerDoentes(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}})
+	r := routerDoentes(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}, AutenticacaoForte: true})
 	w := pedidoCorpo(r, "PATCH", "/api/v1/doentes/id-1", `{}`)
 	if w.Code != nethttp.StatusForbidden {
 		t.Fatalf("esperava 403, obtive %d", w.Code)
+	}
+	// ADR-042: o Auditor é um papel sensível, pelo que este 403 tem de vir do RBAC
+	// e não da MFAObrigatoria. Sem esta asserção, perder o `AutenticacaoForte` da
+	// sessão deixava o teste verde a provar a coisa errada.
+	if corpo := w.Body.String(); strings.Contains(corpo, "mfa-obrigatorio") {
+		t.Errorf("o 403 devia vir do RBAC, não do MFA; corpo = %s", corpo)
 	}
 }
 
@@ -296,10 +302,16 @@ func TestDoentes_Estado_CorpoInvalido_400(t *testing.T) {
 }
 
 func TestDoentes_Estado_Proibido(t *testing.T) {
-	r := routerDoentes(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}})
+	r := routerDoentes(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}, AutenticacaoForte: true})
 	w := pedidoCorpo(r, "POST", "/api/v1/doentes/id-1/estado", `{"accao":"desactivar","motivo":"engano"}`)
 	if w.Code != nethttp.StatusForbidden {
 		t.Fatalf("esperava 403, obtive %d", w.Code)
+	}
+	// ADR-042: o Auditor é um papel sensível, pelo que este 403 tem de vir do RBAC
+	// e não da MFAObrigatoria. Sem esta asserção, perder o `AutenticacaoForte` da
+	// sessão deixava o teste verde a provar a coisa errada.
+	if corpo := w.Body.String(); strings.Contains(corpo, "mfa-obrigatorio") {
+		t.Errorf("o 403 devia vir do RBAC, não do MFA; corpo = %s", corpo)
 	}
 }
 
@@ -328,7 +340,7 @@ func TestDoentes_Antecedente_ErroAplicacaoMapeado(t *testing.T) {
 		fakeGerirEstado{}, fakeRegistarAlergia{},
 		fakeRegistarAntecedente{err: erros.Novo(erros.CategoriaValidacao, "tipo inválido")},
 	)
-	adhttp.RegistarDoentes(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}))
+	adhttp.RegistarDoentes(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}), adhttp.MFAObrigatoria())
 	w := pedidoCorpo(r, "POST", "/api/v1/doentes/id-1/antecedentes", `{"tipo":"X","descricao":"y"}`)
 	if w.Code != nethttp.StatusBadRequest {
 		t.Fatalf("esperava 400, obtive %d", w.Code)
@@ -343,10 +355,45 @@ func TestDoentes_Pesquisar_ErroAplicacaoMapeado_500(t *testing.T) {
 		fakePesquisarDoentes{err: erros.Novo(erros.CategoriaInterno, "falha na base de dados")},
 		fakeActualizarDoente{}, fakeGerirEstado{}, fakeRegistarAlergia{}, fakeRegistarAntecedente{},
 	)
-	adhttp.RegistarDoentes(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}))
+	adhttp.RegistarDoentes(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}), adhttp.MFAObrigatoria())
 	w := pedido(r, "GET", "/api/v1/doentes", "Bearer xyz")
 	if w.Code != nethttp.StatusInternalServerError {
 		t.Fatalf("esperava 500, obtive %d", w.Code)
+	}
+}
+
+// ADR-042: antes desta fatia, o grupo de Doentes não recebia a MFAObrigatoria,
+// pelo que um papel sensível alcançava dados clínicos sem segundo factor. Usa-se o
+// Director (e não o Admin) porque é um papel sensível que o RBAC de leitura de
+// doentes admite — com um papel fora do RBAC o par de testes provaria o RBAC, não
+// o MFA.
+func TestDoentes_PapelSensivelSemSegundoFactor_403(t *testing.T) {
+	r := routerDoentes(dominio.Sessao{
+		Sujeito: "dir-1",
+		Papeis:  []dominio.Papel{dominio.PapelDirector},
+		// sem AutenticacaoForte: é este o ponto do teste
+	})
+	w := pedido(r, "GET", "/api/v1/doentes/id-1", "Bearer xyz")
+	if w.Code != nethttp.StatusForbidden {
+		t.Fatalf("código = %d, queria 403", w.Code)
+	}
+	// Asserir o tipo do problema, e não só o 403: sem isto, o teste não distingue
+	// o 403 do MFA do 403 do RBAC, e passaria a verde pela razão errada se o RBAC
+	// mudasse.
+	if corpo := w.Body.String(); !strings.Contains(corpo, "mfa-obrigatorio") {
+		t.Errorf("corpo = %s, queria type mfa-obrigatorio", corpo)
+	}
+}
+
+func TestDoentes_PapelSensivelComSegundoFactor_Prossegue(t *testing.T) {
+	r := routerDoentes(dominio.Sessao{
+		Sujeito:           "dir-1",
+		Papeis:            []dominio.Papel{dominio.PapelDirector},
+		AutenticacaoForte: true,
+	})
+	w := pedido(r, "GET", "/api/v1/doentes/id-1", "Bearer xyz")
+	if w.Code == nethttp.StatusForbidden {
+		t.Errorf("com segundo factor não devia dar 403; corpo = %s", w.Body.String())
 	}
 }
 
@@ -357,7 +404,7 @@ func TestDoentes_Obter_ErroNaoEncontrado_404(t *testing.T) {
 		fakeRegistarDoente{}, fakeObterDoente{err: erros.Novo(erros.CategoriaNaoEncontrado, "doente não encontrado")},
 		fakePesquisarDoentes{}, fakeActualizarDoente{}, fakeGerirEstado{}, fakeRegistarAlergia{}, fakeRegistarAntecedente{},
 	)
-	adhttp.RegistarDoentes(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}))
+	adhttp.RegistarDoentes(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}), adhttp.MFAObrigatoria())
 	w := pedido(r, "GET", "/api/v1/doentes/id-inexistente", "Bearer xyz")
 	if w.Code != nethttp.StatusNotFound {
 		t.Fatalf("esperava 404, obtive %d", w.Code)

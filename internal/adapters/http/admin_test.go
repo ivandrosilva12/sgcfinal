@@ -168,7 +168,7 @@ func routerAdmin(sessao dominio.Sessao, atribuir *fakePapel) *gin.Engine {
 		&fakeSessaoRevogar{},
 		fakePerfilAdmin{out: appident.Perfil{KeycloakID: "u1", Nome: "Ana", Telefone: "+244923456789"}},
 	)
-	adhttp.RegistarAdministracao(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+	adhttp.RegistarAdministracao(r, h, adhttp.Auth(fakeAuth{sessao: sessao}), adhttp.MFAObrigatoria())
 	return r
 }
 
@@ -182,7 +182,7 @@ func pedidoCorpo(r nethttp.Handler, metodo, caminho, corpo string) *httptest.Res
 }
 
 func TestAdmin_Listar_AdminPermitido(t *testing.T) {
-	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAdmin}}, &fakePapel{})
+	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAdmin}, AutenticacaoForte: true}, &fakePapel{})
 	w := pedido(r, "GET", "/api/v1/identidade/utilizadores", "Bearer xyz")
 	if w.Code != nethttp.StatusOK {
 		t.Fatalf("esperava 200, obtive %d (%s)", w.Code, w.Body.String())
@@ -193,7 +193,7 @@ func TestAdmin_Listar_AdminPermitido(t *testing.T) {
 }
 
 func TestAdmin_Listar_AuditorPermitido(t *testing.T) {
-	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}}, &fakePapel{})
+	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}, AutenticacaoForte: true}, &fakePapel{})
 	if w := pedido(r, "GET", "/api/v1/identidade/utilizadores", "Bearer xyz"); w.Code != nethttp.StatusOK {
 		t.Fatalf("Auditor deve poder listar; obtive %d", w.Code)
 	}
@@ -208,7 +208,7 @@ func TestAdmin_Listar_MedicoProibido(t *testing.T) {
 
 func TestAdmin_AtribuirPapel_AdminOk(t *testing.T) {
 	atribuir := &fakePapel{}
-	r := routerAdmin(dominio.Sessao{Sujeito: "actor-1", Papeis: []dominio.Papel{dominio.PapelAdmin}}, atribuir)
+	r := routerAdmin(dominio.Sessao{Sujeito: "actor-1", Papeis: []dominio.Papel{dominio.PapelAdmin}, AutenticacaoForte: true}, atribuir)
 	w := pedidoCorpo(r, "POST", "/api/v1/identidade/utilizadores/u1/papeis", `{"papel":"Medico"}`)
 	if w.Code != nethttp.StatusNoContent {
 		t.Fatalf("esperava 204, obtive %d (%s)", w.Code, w.Body.String())
@@ -219,15 +219,21 @@ func TestAdmin_AtribuirPapel_AdminOk(t *testing.T) {
 }
 
 func TestAdmin_AtribuirPapel_AuditorProibido(t *testing.T) {
-	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}}, &fakePapel{})
+	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}, AutenticacaoForte: true}, &fakePapel{})
 	w := pedidoCorpo(r, "POST", "/api/v1/identidade/utilizadores/u1/papeis", `{"papel":"Medico"}`)
 	if w.Code != nethttp.StatusForbidden {
 		t.Fatalf("Auditor não deve escrever; obtive %d", w.Code)
 	}
+	// ADR-042: o Auditor é um papel sensível, pelo que este 403 tem de vir do RBAC
+	// e não da MFAObrigatoria. Sem esta asserção, perder o `AutenticacaoForte` da
+	// sessão deixava o teste verde a provar a coisa errada.
+	if corpo := w.Body.String(); strings.Contains(corpo, "mfa-obrigatorio") {
+		t.Errorf("o 403 devia vir do RBAC, não do MFA; corpo = %s", corpo)
+	}
 }
 
 func TestAdmin_AtribuirPapel_CorpoInvalido_400(t *testing.T) {
-	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAdmin}}, &fakePapel{})
+	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAdmin}, AutenticacaoForte: true}, &fakePapel{})
 	w := pedidoCorpo(r, "POST", "/api/v1/identidade/utilizadores/u1/papeis", `{}`)
 	if w.Code != nethttp.StatusBadRequest {
 		t.Fatalf("esperava 400 para papel em falta; obtive %d", w.Code)
@@ -235,7 +241,7 @@ func TestAdmin_AtribuirPapel_CorpoInvalido_400(t *testing.T) {
 }
 
 func TestAdmin_DesactivarUtilizador_204(t *testing.T) {
-	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAdmin}}, &fakePapel{})
+	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAdmin}, AutenticacaoForte: true}, &fakePapel{})
 	w := pedidoCorpo(r, "PATCH", "/api/v1/identidade/utilizadores/u1", `{"activo":false}`)
 	if w.Code != nethttp.StatusNoContent {
 		t.Fatalf("esperava 204, obtive %d (%s)", w.Code, w.Body.String())
@@ -243,7 +249,7 @@ func TestAdmin_DesactivarUtilizador_204(t *testing.T) {
 }
 
 func TestAdmin_CriarUtilizador_AdminOk_201(t *testing.T) {
-	r := routerAdmin(dominio.Sessao{Sujeito: "actor-1", Papeis: []dominio.Papel{dominio.PapelAdmin}}, &fakePapel{})
+	r := routerAdmin(dominio.Sessao{Sujeito: "actor-1", Papeis: []dominio.Papel{dominio.PapelAdmin}, AutenticacaoForte: true}, &fakePapel{})
 	w := pedidoCorpo(r, "POST", "/api/v1/identidade/utilizadores",
 		`{"username":"ana.silva","nome":"Ana Silva","email":"ana@sgc.ao","papeis":["Medico"]}`)
 	if w.Code != nethttp.StatusCreated {
@@ -264,7 +270,7 @@ func TestAdmin_CriarUtilizador_MedicoProibido_403(t *testing.T) {
 }
 
 func TestAdmin_CriarUtilizador_CorpoInvalido_400(t *testing.T) {
-	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAdmin}}, &fakePapel{})
+	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAdmin}, AutenticacaoForte: true}, &fakePapel{})
 	w := pedidoCorpo(r, "POST", "/api/v1/identidade/utilizadores", `{"nome":"sem username"}`)
 	if w.Code != nethttp.StatusBadRequest {
 		t.Fatalf("esperava 400 (username em falta); obtive %d", w.Code)
@@ -272,7 +278,7 @@ func TestAdmin_CriarUtilizador_CorpoInvalido_400(t *testing.T) {
 }
 
 func TestAdmin_ResetPassword_AdminOk_200(t *testing.T) {
-	r := routerAdmin(dominio.Sessao{Sujeito: "actor-1", Papeis: []dominio.Papel{dominio.PapelAdmin}}, &fakePapel{})
+	r := routerAdmin(dominio.Sessao{Sujeito: "actor-1", Papeis: []dominio.Papel{dominio.PapelAdmin}, AutenticacaoForte: true}, &fakePapel{})
 	w := pedido(r, "POST", "/api/v1/identidade/utilizadores/u1/reset-password", "Bearer xyz")
 	if w.Code != nethttp.StatusOK {
 		t.Fatalf("esperava 200, obtive %d (%s)", w.Code, w.Body.String())
@@ -290,14 +296,14 @@ func TestAdmin_ResetPassword_MedicoProibido_403(t *testing.T) {
 }
 
 func TestAdmin_ResetOtp_AdminOk_204(t *testing.T) {
-	r := routerAdmin(dominio.Sessao{Sujeito: "actor-1", Papeis: []dominio.Papel{dominio.PapelAdmin}}, &fakePapel{})
+	r := routerAdmin(dominio.Sessao{Sujeito: "actor-1", Papeis: []dominio.Papel{dominio.PapelAdmin}, AutenticacaoForte: true}, &fakePapel{})
 	if w := pedido(r, "POST", "/api/v1/identidade/utilizadores/u1/reset-otp", "Bearer xyz"); w.Code != nethttp.StatusNoContent {
 		t.Fatalf("esperava 204, obtive %d", w.Code)
 	}
 }
 
 func TestAdmin_ListarSessoes_AuditorPermitido(t *testing.T) {
-	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}}, &fakePapel{})
+	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}, AutenticacaoForte: true}, &fakePapel{})
 	w := pedido(r, "GET", "/api/v1/identidade/utilizadores/u1/sessoes", "Bearer xyz")
 	if w.Code != nethttp.StatusOK {
 		t.Fatalf("Auditor deve poder ver sessões; obtive %d (%s)", w.Code, w.Body.String())
@@ -315,21 +321,28 @@ func TestAdmin_ListarSessoes_MedicoProibido(t *testing.T) {
 }
 
 func TestAdmin_RevogarSessao_AdminOk_204(t *testing.T) {
-	r := routerAdmin(dominio.Sessao{Sujeito: "actor-1", Papeis: []dominio.Papel{dominio.PapelAdmin}}, &fakePapel{})
+	r := routerAdmin(dominio.Sessao{Sujeito: "actor-1", Papeis: []dominio.Papel{dominio.PapelAdmin}, AutenticacaoForte: true}, &fakePapel{})
 	if w := pedido(r, "DELETE", "/api/v1/identidade/sessoes/sess-1", "Bearer xyz"); w.Code != nethttp.StatusNoContent {
 		t.Fatalf("esperava 204, obtive %d (%s)", w.Code, w.Body.String())
 	}
 }
 
 func TestAdmin_RevogarSessao_AuditorProibido(t *testing.T) {
-	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}}, &fakePapel{})
-	if w := pedido(r, "DELETE", "/api/v1/identidade/sessoes/sess-1", "Bearer xyz"); w.Code != nethttp.StatusForbidden {
+	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}, AutenticacaoForte: true}, &fakePapel{})
+	w := pedido(r, "DELETE", "/api/v1/identidade/sessoes/sess-1", "Bearer xyz")
+	if w.Code != nethttp.StatusForbidden {
 		t.Fatalf("Auditor não deve revogar sessões; obtive %d", w.Code)
+	}
+	// ADR-042: o Auditor é um papel sensível, pelo que este 403 tem de vir do RBAC
+	// e não da MFAObrigatoria. Sem esta asserção, perder o `AutenticacaoForte` da
+	// sessão deixava o teste verde a provar a coisa errada.
+	if corpo := w.Body.String(); strings.Contains(corpo, "mfa-obrigatorio") {
+		t.Errorf("o 403 devia vir do RBAC, não do MFA; corpo = %s", corpo)
 	}
 }
 
 func TestAdmin_EditarPerfil_AdminOk_200(t *testing.T) {
-	r := routerAdmin(dominio.Sessao{Sujeito: "actor-1", Papeis: []dominio.Papel{dominio.PapelAdmin}}, &fakePapel{})
+	r := routerAdmin(dominio.Sessao{Sujeito: "actor-1", Papeis: []dominio.Papel{dominio.PapelAdmin}, AutenticacaoForte: true}, &fakePapel{})
 	w := pedidoCorpo(r, "PATCH", "/api/v1/identidade/utilizadores/u1/perfil", `{"telefone":"+244923456789"}`)
 	if w.Code != nethttp.StatusOK {
 		t.Fatalf("esperava 200, obtive %d (%s)", w.Code, w.Body.String())
@@ -348,7 +361,7 @@ func TestAdmin_EditarPerfil_MedicoProibido_403(t *testing.T) {
 }
 
 func TestAdmin_EditarPerfil_CorpoInvalido_400(t *testing.T) {
-	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAdmin}}, &fakePapel{})
+	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAdmin}, AutenticacaoForte: true}, &fakePapel{})
 	w := pedidoCorpo(r, "PATCH", "/api/v1/identidade/utilizadores/u1/perfil", `{`)
 	if w.Code != nethttp.StatusBadRequest {
 		t.Fatalf("esperava 400 para JSON inválido; obtive %d", w.Code)
