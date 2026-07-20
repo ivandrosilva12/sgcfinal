@@ -76,7 +76,7 @@ seeds/  tests/  docs/  adrs/  docker/
 
 ## 6. Marco Actual
 
-**M4 — Financeiro** (em curso; Sprints 14–15; ver `SPRINT.md`). Arranque do último dos
+**M4 — Financeiro** (em curso; Sprints 14–17; ver `SPRINT.md`). Arranque do último dos
 5 bounded contexts, precedido da fundação RBAC do 12.º papel **Tesoureiro**
 (ERRATA-002, `docs/ERRATA-002-papel-tesoureiro.md`; não-sensível na fatia do ADR-039 e
 **sensível, com MFA obrigatória**, desde a emissão — ver a revisão de 2026-07-18 na
@@ -117,6 +117,25 @@ o vector dourado a
 de domínio: zero migrações**. Continuam por fazer a **anulação** (que herda a restrição
 vinculativa da ADR-040 §R5: não apagar nem renumerar), o **SAF-T-AO** e a
 **certificação AGT**.
+
+A Sprint 17 entregou a **imposição uniforme de MFA** e a **factura nascida em RASCUNHO**
+(ADR-042), fechando dois riscos herdados da ADR-040. **R3:** o `mfaMW` chegava a três
+dos catorze grupos de rotas; a medição da ADR-040 §R3 (11 grupos sem `mfaMW`, 10 a
+expor papel sensível — `Director`/`DPO`/`Auditor` em toda a leitura clínica,
+`Admin`/`Director` em laboratório e recepção) **estava certa**, e uma contra-medição
+posterior que a dava por exagerada é que estava errada (dois defeitos de instrumento a
+subestimar). Correcção: pacote único `protecao := []gin.HandlerFunc{limiteMW, authMW,
+mfaMW}` nos 14 grupos + **guarda AST** sobre o `app.go` (analisa `go/ast`, exige
+conjunto nomeado e conteúdo de `protecao`; resistiu a 4 rondas de ataque). A lacuna que
+deixou a exposição passar — routers de teste com cadeias próprias, nada a verificar o
+`app.go` — ficou fechada dos dois lados: **prova comportamental** (`mfa-obrigatorio`)
+nas 10 famílias e routers de teste a espelhar a produção. OTP completo no realm
+(`admin.teste`, `dpo.teste`, `auditor.teste`). **R6:** a factura passa a **nascer
+RASCUNHO** (trigger `BEFORE INSERT ... WHEN (NEW.estado <> 'RASCUNHO')`, migração
+`financeiro/0004`) — **mas** a garantia continua condicionada pelo **R7**, que **continua
+aberto** (a aplicação é dona da tabela e pode desligar o trigger; fatia própria para
+separar a credencial de migração da de runtime). `RegistarHealth` fica isento por
+desenho. **Não existem** ainda anulação, pagamentos, SAF-T-AO nem certificação AGT.
 
 **M3 — Laboratório** (entregue; Sprints 12–13; ver `SPRINT.md`). Entrega o BC
 Laboratório completo: catálogo de análises, requisição (via ACL sobre o Clínico),
@@ -188,8 +207,9 @@ confirmação humana**. Nunca improvisar decisão arquitectural ou de conformida
 `adrs/ADR-038-outbox.md`,
 `adrs/ADR-039-bc-financeiro-factura.md`,
 `adrs/ADR-040-emissao-factura.md`,
-`adrs/ADR-041-selagem-canonica.md`.
-Próximo ADR: **ADR-042**.
+`adrs/ADR-041-selagem-canonica.md`,
+`adrs/ADR-042-mfa-uniforme.md`.
+Próximo ADR: **ADR-043**.
 
 ## graphify
 
