@@ -19,20 +19,43 @@ com o catálogo de papéis sensíveis (`Director`, `Admin`, `DPO`, `Auditor`, `T
 
 | Grupo sem `mfaMW` | Papéis sensíveis no RBAC |
 |---|---|
-| Doentes | `Admin` |
-| Consentimentos | `Admin` |
+| Doentes | `Director`, `DPO`, `Auditor` |
+| Consentimentos | `Director`, `DPO`, `Auditor` |
+| Episódios | `Director`, `DPO`, `Auditor` |
+| Cirurgia | `Director`, `DPO`, `Auditor` |
+| Farmácia | `Director`, `DPO`, `Auditor` |
+| Farmácia-Stock | `Director`, `DPO`, `Auditor` |
 | Laboratório | `Admin`, `Director` |
-| Recepção (marcação, chegadas, triagem) | `Admin`, `Director` |
-| Episódios, Cirurgia, Farmácia, Farmácia-Stock, Clínico | nenhum |
+| Recepção — marcação | `Admin`, `Director` |
+| Recepção — chegadas | `Admin`, `Director` |
+| Recepção — triagem | `Director` |
+| Clínico-Consulta | nenhum |
 
-Ou seja: **`Admin` e `Director` alcançam dados clínicos — incluindo consentimentos LPDP e
-triagem — sem segundo factor.** Não é apenas matéria fiscal.
+**Dez dos onze grupos desprotegidos expõem papéis sensíveis.** `Director`, `DPO` e
+`Auditor` figuram na leitura clínica de praticamente todo o sistema — doentes,
+episódios, cirurgia, farmácia, laboratório, consentimentos LPDP e triagem — e
+alcançavam-na **sem segundo factor**. Só `Clínico-Consulta` não expõe nenhum.
 
-Nota de rigor: a ADR-041 §R3 fala de "10 dos 14 grupos" com papéis sensíveis. A contagem
-por **grupo de rotas** e a contagem por **família de handlers** não coincidem (Recepção
-são três registos, uma família). A tabela acima é a medição por família, que é a que
-descreve a exposição real. A afirmação da ADR-041 não é falsa, mas é menos informativa do
-que parece.
+### Nota de rigor sobre esta medição — e uma correcção a retirar
+
+Uma versão anterior deste desenho apresentou uma tabela de **quatro** famílias e afirmou
+que a ADR-041 §R3, ao falar de "10 dos 14 grupos", era "menos informativa do que parece".
+**Essa afirmação estava errada e retira-se: a ADR-041 estava certa.**
+
+A medição errada teve duas causas, ambas de instrumento e não de leitura:
+
+1. O padrão `Papel(Director|Admin|DPO|Auditor|Tesoureiro)` casa o **prefixo** de
+   `PapelAdministrativo` — um papel **não sensível**, o do pessoal administrativo — e
+   contou-o como `PapelAdmin`. Daí "Doentes: Admin" e "Consentimentos: Admin", ambos falsos.
+2. Extrair primeiro `RBAC\([^)]*\)` perde as chamadas `RBAC(...)` que se estendem por
+   **várias linhas** — que são precisamente as listas de leitura clínica onde `Director`,
+   `DPO` e `Auditor` aparecem. Daí "Episódios, Cirurgia, Farmácia: nenhum", também falso.
+
+A medição correcta usa fronteira de palavra (`\b`) e varre o ficheiro inteiro, e foi
+confirmada lendo as chamadas `RBAC` completas. Fica registada aqui porque o erro é
+instrutivo: **as duas falhas apontaram no mesmo sentido — subestimar a exposição — e
+produziram uma tabela que parecia precisa.** Uma medição apresentada com aparência de
+rigor merece a mesma desconfiança que uma afirmação sem medição nenhuma.
 
 ### 1.2 A causa não são onze esquecimentos
 
