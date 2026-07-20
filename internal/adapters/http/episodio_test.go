@@ -3,6 +3,7 @@ package http_test
 import (
 	"context"
 	nethttp "net/http"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -375,6 +376,42 @@ func TestEpisodios_Cancelar_ErroAplicacaoMapeado(t *testing.T) {
 	w := pedidoCorpo(r, "POST", "/api/v1/episodios/ep-1/cancelar", `{}`)
 	if w.Code != nethttp.StatusBadRequest {
 		t.Fatalf("esperava 400, obtive %d (%s)", w.Code, w.Body.String())
+	}
+}
+
+// ADR-042: antes desta fatia, os grupos de Episódios não recebiam a
+// MFAObrigatoria, pelo que um papel sensível alcançava a leitura clínica sem
+// segundo factor. Usa-se o DPO (e não o Admin, que nem está no RBAC de leitura
+// clínica de episódios) porque é um papel sensível que o `leituraClinica` do
+// handler admite — com um papel fora do RBAC o par de testes provaria o RBAC, não
+// o MFA. A rota GET /api/v1/episodios/:eid é leitura pura (obterEpisodio).
+func TestEpisodios_PapelSensivelSemSegundoFactor_403(t *testing.T) {
+	r := routerEpisodios(dominio.Sessao{
+		Sujeito: "dpo-1",
+		Papeis:  []dominio.Papel{dominio.PapelDPO},
+		// sem AutenticacaoForte: é este o ponto do teste
+	})
+	w := pedido(r, "GET", "/api/v1/episodios/ep-1", "Bearer xyz")
+	if w.Code != nethttp.StatusForbidden {
+		t.Fatalf("código = %d, queria 403", w.Code)
+	}
+	// Asserir o tipo do problema, e não só o 403: sem isto, o teste não distingue
+	// o 403 do MFA do 403 do RBAC, e passaria a verde pela razão errada se o RBAC
+	// mudasse.
+	if corpo := w.Body.String(); !strings.Contains(corpo, "mfa-obrigatorio") {
+		t.Errorf("corpo = %s, queria type mfa-obrigatorio", corpo)
+	}
+}
+
+func TestEpisodios_PapelSensivelComSegundoFactor_Prossegue(t *testing.T) {
+	r := routerEpisodios(dominio.Sessao{
+		Sujeito:           "dpo-1",
+		Papeis:            []dominio.Papel{dominio.PapelDPO},
+		AutenticacaoForte: true,
+	})
+	w := pedido(r, "GET", "/api/v1/episodios/ep-1", "Bearer xyz")
+	if w.Code == nethttp.StatusForbidden {
+		t.Errorf("com segundo factor não devia dar 403; corpo = %s", w.Body.String())
 	}
 }
 

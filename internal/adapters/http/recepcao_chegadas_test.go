@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -198,5 +199,42 @@ func TestFila_ForaDoRBAC_Proibida(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != 403 {
 		t.Fatalf("esperava 403, veio %d", w.Code)
+	}
+}
+
+// ADR-042: antes desta fatia, os grupos de Chegadas não recebiam a MFAObrigatoria,
+// pelo que um papel sensível alcançava as rotas sem segundo factor. Ao contrário
+// das outras famílias, a fila de chegadas (filaLeitura) não admite nenhum papel
+// sensível: o único papel sensível exposto é o Director, no `soAdministrativo`, que
+// governa POST /api/v1/marcacoes/:mid/chegada (subgrupo gmar). É essa a rota onde o
+// Director passa o RBAC — logo é aí que se prova que a MFA guarda o subgrupo. Um
+// papel fora do RBAC provaria o RBAC, não o MFA.
+func TestChegadas_PapelSensivelSemSegundoFactor_403(t *testing.T) {
+	r := routerChegadas(t, &duploRegistarChegada{}, &duploRegistarWalkIn{}, identidade.Sessao{
+		Sujeito: "dir-1",
+		Papeis:  []identidade.Papel{identidade.PapelDirector},
+		// sem AutenticacaoForte: é este o ponto do teste
+	})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/marcacoes/marc-1/chegada", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != 403 {
+		t.Fatalf("código = %d, queria 403", w.Code)
+	}
+	// Asserir o tipo do problema, e não só o 403: sem isto, o teste não distingue
+	// o 403 do MFA do 403 do RBAC, e passaria a verde pela razão errada se o RBAC
+	// mudasse.
+	if corpo := w.Body.String(); !strings.Contains(corpo, "mfa-obrigatorio") {
+		t.Errorf("corpo = %s, queria type mfa-obrigatorio", corpo)
+	}
+}
+
+func TestChegadas_PapelSensivelComSegundoFactor_Prossegue(t *testing.T) {
+	r := routerChegadas(t, &duploRegistarChegada{}, &duploRegistarWalkIn{}, sessaoRecepcaoDe("dir-1", identidade.PapelDirector))
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/marcacoes/marc-1/chegada", nil)
+	r.ServeHTTP(w, req)
+	if w.Code == 403 {
+		t.Errorf("com segundo factor não devia dar 403; corpo = %s", w.Body.String())
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -98,5 +99,42 @@ func TestFilaClinica_MedicoPodeLer(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != 200 {
 		t.Fatalf("o médico pode ler a fila clínica: esperava 200, veio %d", w.Code)
+	}
+}
+
+// ADR-042: antes desta fatia, os grupos da Triagem não recebiam a MFAObrigatoria,
+// pelo que um papel sensível alcançava a leitura clínica da triagem sem segundo
+// factor. Usa-se o Director porque é o papel sensível que o `leituraClinica` do
+// handler admite — com um papel fora do RBAC o par de testes provaria o RBAC, não
+// o MFA. A sessão é construída à mão (e não pela `sessaoRecepcaoDe`) porque esta
+// fixa sempre o segundo factor — é justamente a sua ausência que se prova. A rota
+// GET /api/v1/chegadas/:cid/triagem é leitura pura (obterTriagem).
+func TestTriagem_PapelSensivelSemSegundoFactor_403(t *testing.T) {
+	r := routerTriagem(t, &duploRegistarTriagem{}, identidade.Sessao{
+		Sujeito: "dir-1",
+		Papeis:  []identidade.Papel{identidade.PapelDirector},
+		// sem AutenticacaoForte: é este o ponto do teste
+	})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/chegadas/cheg-1/triagem", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != 403 {
+		t.Fatalf("código = %d, queria 403", w.Code)
+	}
+	// Asserir o tipo do problema, e não só o 403: sem isto, o teste não distingue
+	// o 403 do MFA do 403 do RBAC, e passaria a verde pela razão errada se o RBAC
+	// mudasse.
+	if corpo := w.Body.String(); !strings.Contains(corpo, "mfa-obrigatorio") {
+		t.Errorf("corpo = %s, queria type mfa-obrigatorio", corpo)
+	}
+}
+
+func TestTriagem_PapelSensivelComSegundoFactor_Prossegue(t *testing.T) {
+	r := routerTriagem(t, &duploRegistarTriagem{}, sessaoRecepcaoDe("dir-1", identidade.PapelDirector))
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/chegadas/cheg-1/triagem", nil)
+	r.ServeHTTP(w, req)
+	if w.Code == 403 {
+		t.Errorf("com segundo factor não devia dar 403; corpo = %s", w.Body.String())
 	}
 }

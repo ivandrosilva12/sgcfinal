@@ -3,6 +3,7 @@ package http_test
 import (
 	"context"
 	nethttp "net/http"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -147,5 +148,40 @@ func TestFarmaciaStock_ListarLotes_LeituraAmpla(t *testing.T) {
 	r := routerFarmaciaStock(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}, AutenticacaoForte: true}, fakeDispensar{})
 	if w := pedido(r, "GET", "/api/v1/farmacia/medicamentos/med-1/lotes?apenas_disponiveis=true", "Bearer x"); w.Code != nethttp.StatusOK {
 		t.Fatalf("esperava 200, obtive %d", w.Code)
+	}
+}
+
+// ADR-042: antes desta fatia, o grupo de Farmácia-Stock não recebia a
+// MFAObrigatoria, pelo que um papel sensível consultava o stock sem segundo
+// factor. Usa-se o Director porque é um papel sensível que o `leitura` do handler
+// admite — com um papel fora do RBAC o par de testes provaria o RBAC, não o MFA. A
+// rota GET /api/v1/farmacia/medicamentos/:id/stock é leitura pura (consultarStock).
+func TestFarmaciaStock_PapelSensivelSemSegundoFactor_403(t *testing.T) {
+	r := routerFarmaciaStock(dominio.Sessao{
+		Sujeito: "dir-1",
+		Papeis:  []dominio.Papel{dominio.PapelDirector},
+		// sem AutenticacaoForte: é este o ponto do teste
+	}, fakeDispensar{})
+	w := pedido(r, "GET", "/api/v1/farmacia/medicamentos/med-1/stock", "Bearer x")
+	if w.Code != nethttp.StatusForbidden {
+		t.Fatalf("código = %d, queria 403", w.Code)
+	}
+	// Asserir o tipo do problema, e não só o 403: sem isto, o teste não distingue
+	// o 403 do MFA do 403 do RBAC, e passaria a verde pela razão errada se o RBAC
+	// mudasse.
+	if corpo := w.Body.String(); !strings.Contains(corpo, "mfa-obrigatorio") {
+		t.Errorf("corpo = %s, queria type mfa-obrigatorio", corpo)
+	}
+}
+
+func TestFarmaciaStock_PapelSensivelComSegundoFactor_Prossegue(t *testing.T) {
+	r := routerFarmaciaStock(dominio.Sessao{
+		Sujeito:           "dir-1",
+		Papeis:            []dominio.Papel{dominio.PapelDirector},
+		AutenticacaoForte: true,
+	}, fakeDispensar{})
+	w := pedido(r, "GET", "/api/v1/farmacia/medicamentos/med-1/stock", "Bearer x")
+	if w.Code == nethttp.StatusForbidden {
+		t.Errorf("com segundo factor não devia dar 403; corpo = %s", w.Body.String())
 	}
 }
