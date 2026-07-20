@@ -78,7 +78,7 @@ func routerFarmaciaStock(sessao dominio.Sessao, dispensar fakeDispensar) *gin.En
 		fakeListarLotes{out: []appfarmacia.ResumoLote{}},
 		dispensar,
 	)
-	adhttp.RegistarFarmaciaStock(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+	adhttp.RegistarFarmaciaStock(r, h, adhttp.Auth(fakeAuth{sessao: sessao}), adhttp.MFAObrigatoria())
 	return r
 }
 
@@ -144,7 +144,7 @@ func TestFarmaciaStock_Dispensar_Alergia_422(t *testing.T) {
 }
 
 func TestFarmaciaStock_ListarLotes_LeituraAmpla(t *testing.T) {
-	r := routerFarmaciaStock(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}}, fakeDispensar{})
+	r := routerFarmaciaStock(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}, AutenticacaoForte: true}, fakeDispensar{})
 	if w := pedido(r, "GET", "/api/v1/farmacia/medicamentos/med-1/lotes?apenas_disponiveis=true", "Bearer x"); w.Code != nethttp.StatusOK {
 		t.Fatalf("esperava 200, obtive %d", w.Code)
 	}

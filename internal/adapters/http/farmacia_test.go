@@ -113,7 +113,7 @@ func routerFarmacia(sessao dominio.Sessao, emitir fakeEmitirReceita) *gin.Engine
 		fakeObterReceita{out: appfarmacia.DetalheReceita{ID: "rec-1"}},
 		fakeListarReceitas{out: appfarmacia.PaginaReceitas{Total: 0}},
 	)
-	adhttp.RegistarFarmacia(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+	adhttp.RegistarFarmacia(r, h, adhttp.Auth(fakeAuth{sessao: sessao}), adhttp.MFAObrigatoria())
 	return r
 }
 
@@ -234,7 +234,7 @@ func TestFarmacia_AnularReceita_CorpoVazio(t *testing.T) {
 }
 
 func TestFarmacia_ObterReceita_LeituraAmpla(t *testing.T) {
-	r := routerFarmacia(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelDirector}}, fakeEmitirReceita{})
+	r := routerFarmacia(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelDirector}, AutenticacaoForte: true}, fakeEmitirReceita{})
 	if w := pedido(r, "GET", "/api/v1/farmacia/receitas/rec-1", "Bearer x"); w.Code != nethttp.StatusOK {
 		t.Fatalf("esperava 200, obtive %d (%s)", w.Code, w.Body.String())
 	}
@@ -266,7 +266,7 @@ func routerFarmaciaFalhas(sessao dominio.Sessao) *gin.Engine {
 		fakeObterReceita{err: erroServico},
 		fakeListarReceitas{err: erroServico},
 	)
-	adhttp.RegistarFarmacia(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+	adhttp.RegistarFarmacia(r, h, adhttp.Auth(fakeAuth{sessao: sessao}), adhttp.MFAObrigatoria())
 	return r
 }
 
@@ -327,7 +327,7 @@ func TestFarmacia_AnularReceita_ErroServico(t *testing.T) {
 }
 
 func TestFarmacia_ObterReceita_ErroServico(t *testing.T) {
-	r := routerFarmaciaFalhas(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelDirector}})
+	r := routerFarmaciaFalhas(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelDirector}, AutenticacaoForte: true})
 	w := pedido(r, "GET", "/api/v1/farmacia/receitas/rec-1", "Bearer x")
 	if w.Code != nethttp.StatusInternalServerError {
 		t.Fatalf("esperava 500, obtive %d (%s)", w.Code, w.Body.String())

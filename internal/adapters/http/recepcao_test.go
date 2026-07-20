@@ -72,7 +72,7 @@ func routerRecepcao(t *testing.T, marcar *duploMarcar, sessao identidade.Sessao)
 		marcar, duploRemarcar{}, duploCancelar{}, duploRegistarFalta{},
 		duploListarAgenda{}, duploListarMarcacoesDoente{},
 	)
-	adhttp.RegistarRecepcao(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+	adhttp.RegistarRecepcao(r, h, adhttp.Auth(fakeAuth{sessao: sessao}), adhttp.MFAObrigatoria())
 	return r
 }
 

@@ -60,7 +60,7 @@ func routerConsent(sessao dominio.Sessao) *gin.Engine {
 		fakeListarConsent{},
 		fakeObterConsent{out: appclinico.DetalheConsentimento{ID: "cons-1"}},
 	)
-	adhttp.RegistarConsentimentos(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+	adhttp.RegistarConsentimentos(r, h, adhttp.Auth(fakeAuth{sessao: sessao}), adhttp.MFAObrigatoria())
 	return r
 }
 
@@ -97,7 +97,7 @@ func TestConsentimentos_Registar_CorpoInvalido_400(t *testing.T) {
 }
 
 func TestConsentimentos_Listar_LeituraClinica_200(t *testing.T) {
-	r := routerConsent(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}})
+	r := routerConsent(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}, AutenticacaoForte: true})
 	w := pedido(r, "GET", "/api/v1/doentes/d1/consentimentos", "Bearer xyz")
 	if w.Code != nethttp.StatusOK {
 		t.Fatalf("esperava 200, obtive %d (%s)", w.Code, w.Body.String())
@@ -105,7 +105,7 @@ func TestConsentimentos_Listar_LeituraClinica_200(t *testing.T) {
 }
 
 func TestConsentimentos_Listar_ComFiltros_200(t *testing.T) {
-	r := routerConsent(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelDirector}})
+	r := routerConsent(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelDirector}, AutenticacaoForte: true})
 	w := pedido(r, "GET", "/api/v1/doentes/d1/consentimentos?finalidade=TRATAMENTO&vigentes=true", "Bearer xyz")
 	if w.Code != nethttp.StatusOK {
 		t.Fatalf("esperava 200, obtive %d (%s)", w.Code, w.Body.String())
@@ -159,7 +159,7 @@ func TestConsentimentos_Registar_ErroConflito_409(t *testing.T) {
 		fakeRegistarConsent{err: erros.Novo(erros.CategoriaConflito, "consentimento já registado")},
 		fakeRevogarConsent{}, fakeListarConsent{}, fakeObterConsent{},
 	)
-	adhttp.RegistarConsentimentos(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}))
+	adhttp.RegistarConsentimentos(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}), adhttp.MFAObrigatoria())
 	w := pedidoCorpo(r, "POST", "/api/v1/doentes/d1/consentimentos", `{"finalidade":"TRATAMENTO","concedido":true}`)
 	if w.Code != nethttp.StatusConflict {
 		t.Fatalf("esperava 409, obtive %d (%s)", w.Code, w.Body.String())
@@ -173,7 +173,7 @@ func TestConsentimentos_Revogar_ErroRegraNegocio_422(t *testing.T) {
 		fakeRegistarConsent{}, fakeRevogarConsent{err: erros.Novo(erros.CategoriaRegraNegocio, "consentimento já revogado")},
 		fakeListarConsent{}, fakeObterConsent{},
 	)
-	adhttp.RegistarConsentimentos(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Sujeito: "m1", Papeis: []dominio.Papel{dominio.PapelMedico}}}))
+	adhttp.RegistarConsentimentos(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Sujeito: "m1", Papeis: []dominio.Papel{dominio.PapelMedico}}}), adhttp.MFAObrigatoria())
 	w := pedidoCorpo(r, "POST", "/api/v1/consentimentos/cons-1/revogar", ``)
 	if w.Code != nethttp.StatusUnprocessableEntity {
 		t.Fatalf("esperava 422, obtive %d (%s)", w.Code, w.Body.String())
@@ -187,7 +187,7 @@ func TestConsentimentos_Obter_ErroNaoEncontrado_404(t *testing.T) {
 		fakeRegistarConsent{}, fakeRevogarConsent{},
 		fakeListarConsent{}, fakeObterConsent{err: erros.Novo(erros.CategoriaNaoEncontrado, "consentimento não encontrado")},
 	)
-	adhttp.RegistarConsentimentos(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}))
+	adhttp.RegistarConsentimentos(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}), adhttp.MFAObrigatoria())
 	w := pedido(r, "GET", "/api/v1/consentimentos/inexistente", "Bearer xyz")
 	if w.Code != nethttp.StatusNotFound {
 		t.Fatalf("esperava 404, obtive %d", w.Code)

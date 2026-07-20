@@ -128,13 +128,17 @@ func routerLab(t *testing.T, emitir *duploEmitir, submeter *duploSubmeter,
 		duploListarFila{}, duploListarResultadosEpisodio{},
 		validar, corrigir,
 	)
-	adhttp.RegistarLaboratorio(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+	adhttp.RegistarLaboratorio(r, h, adhttp.Auth(fakeAuth{sessao: sessao}), adhttp.MFAObrigatoria())
 	return r
 }
 
 // sessaoLabDe constrói uma sessão de teste com um papel.
 func sessaoLabDe(sujeito string, papel identidade.Papel) identidade.Sessao {
-	return identidade.Sessao{Sujeito: sujeito, Papeis: []identidade.Papel{papel}}
+	// Segundo factor sempre presente: o router de teste espelha a cadeia da
+	// produção (Auth + MFAObrigatoria), pelo que as sessões de papel sensível
+	// (Director, Admin) têm de comprovar autenticação forte. Para os papéis
+	// não-sensíveis o campo é inócuo — o middleware é um no-op.
+	return identidade.Sessao{Sujeito: sujeito, Papeis: []identidade.Papel{papel}, AutenticacaoForte: true}
 }
 
 func TestEmitirRequisicao_UsaOSujeitoAutenticado(t *testing.T) {

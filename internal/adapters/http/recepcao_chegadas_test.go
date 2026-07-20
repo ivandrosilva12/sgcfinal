@@ -52,7 +52,7 @@ func routerChegadas(t *testing.T, chegar *duploRegistarChegada, walkin *duploReg
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	h := adhttp.NovoRecepcaoChegadasHandler(chegar, walkin, duploChamar{}, duploDesistencia{}, duploListarFilaChegadas{})
-	adhttp.RegistarRecepcaoChegadas(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+	adhttp.RegistarRecepcaoChegadas(r, h, adhttp.Auth(fakeAuth{sessao: sessao}), adhttp.MFAObrigatoria())
 	return r
 }
 

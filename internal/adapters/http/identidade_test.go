@@ -204,7 +204,7 @@ func TestRegistarIdentidade_Perfil_200(t *testing.T) {
 	perfil := appident.Perfil{KeycloakID: "uuid-1", Nome: "Ana Silva", Email: "ana@sgc.ao", Activo: true, Papeis: []string{"Medico"}}
 	h := adhttp.NovoIdentidadeHandler(fakePerfil{perfil: perfil}, fakeAtualizarPerfil{})
 
-	adhttp.RegistarIdentidade(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+	adhttp.RegistarIdentidade(r, h, adhttp.Auth(fakeAuth{sessao: sessao}), adhttp.MFAObrigatoria())
 
 	w := pedido(r, "GET", "/api/v1/identidade/perfil", "Bearer xyz")
 	if w.Code != nethttp.StatusOK {
@@ -218,7 +218,7 @@ func TestRegistarIdentidade_Perfil_200(t *testing.T) {
 func TestRegistarIdentidade_Perfil_SemToken_401(t *testing.T) {
 	r := novoRouter()
 	h := adhttp.NovoIdentidadeHandler(fakePerfil{}, fakeAtualizarPerfil{})
-	adhttp.RegistarIdentidade(r, h, adhttp.Auth(fakeAuth{err: erros.Novo(erros.CategoriaNaoAutorizado, "sem token")}))
+	adhttp.RegistarIdentidade(r, h, adhttp.Auth(fakeAuth{err: erros.Novo(erros.CategoriaNaoAutorizado, "sem token")}), adhttp.MFAObrigatoria())
 
 	if w := pedido(r, "GET", "/api/v1/identidade/perfil", ""); w.Code != nethttp.StatusUnauthorized {
 		t.Fatalf("esperava 401, obtive %d", w.Code)
@@ -230,7 +230,7 @@ func TestRegistarIdentidade_AtualizarPerfil_200(t *testing.T) {
 	sessao := dominio.Sessao{Sujeito: "uuid-1", Papeis: []dominio.Papel{dominio.PapelMedico}}
 	perfil := appident.Perfil{KeycloakID: "uuid-1", Nome: "Ana", Email: "ana@sgc.ao", Telefone: "+244 923 456 789", Activo: true, Papeis: []string{"Medico"}}
 	h := adhttp.NovoIdentidadeHandler(fakePerfil{}, fakeAtualizarPerfil{perfil: perfil})
-	adhttp.RegistarIdentidade(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+	adhttp.RegistarIdentidade(r, h, adhttp.Auth(fakeAuth{sessao: sessao}), adhttp.MFAObrigatoria())
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("PATCH", "/api/v1/identidade/perfil", strings.NewReader(`{"telefone":"+244 923 456 789"}`))

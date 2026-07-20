@@ -80,7 +80,7 @@ func routerCirurgia(sessao dominio.Sessao) *gin.Engine {
 		fakeObterProc{out: appclinico.DetalheProcedimento{ID: "proc-1"}},
 		fakeListarProc{},
 	)
-	adhttp.RegistarCirurgia(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+	adhttp.RegistarCirurgia(r, h, adhttp.Auth(fakeAuth{sessao: sessao}), adhttp.MFAObrigatoria())
 	return r
 }
 
@@ -118,7 +118,7 @@ func TestCirurgia_Agendar_CorpoInvalido_400(t *testing.T) {
 }
 
 func TestCirurgia_Listar_LeituraClinica_200(t *testing.T) {
-	r := routerCirurgia(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}})
+	r := routerCirurgia(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}, AutenticacaoForte: true})
 	w := pedido(r, "GET", "/api/v1/episodios/ep1/procedimentos", "Bearer xyz")
 	if w.Code != nethttp.StatusOK {
 		t.Fatalf("esperava 200, obtive %d (%s)", w.Code, w.Body.String())
@@ -239,7 +239,7 @@ func TestCirurgia_Cancelar_MotivoEmFalta_400(t *testing.T) {
 		fakeCancelarProc{err: erros.Novo(erros.CategoriaValidacao, "o motivo do cancelamento é obrigatório")},
 		fakeObterProc{}, fakeListarProc{},
 	)
-	adhttp.RegistarCirurgia(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Sujeito: "m1", Papeis: []dominio.Papel{dominio.PapelMedico}}}))
+	adhttp.RegistarCirurgia(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Sujeito: "m1", Papeis: []dominio.Papel{dominio.PapelMedico}}}), adhttp.MFAObrigatoria())
 	w := pedidoCorpo(r, "POST", "/api/v1/procedimentos/proc-1/cancelar", `{}`)
 	if w.Code != nethttp.StatusBadRequest {
 		t.Fatalf("esperava 400, obtive %d (%s)", w.Code, w.Body.String())
@@ -253,7 +253,7 @@ func TestCirurgia_Agendar_ErroConflito_409(t *testing.T) {
 		fakeAgendar{err: erros.Novo(erros.CategoriaConflito, "sala já ocupada")},
 		fakeIniciarProc{}, fakeConcluirProc{}, fakeCancelarProc{}, fakeObterProc{}, fakeListarProc{},
 	)
-	adhttp.RegistarCirurgia(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Sujeito: "m1", Papeis: []dominio.Papel{dominio.PapelMedico}}}))
+	adhttp.RegistarCirurgia(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Sujeito: "m1", Papeis: []dominio.Papel{dominio.PapelMedico}}}), adhttp.MFAObrigatoria())
 	w := pedidoCorpo(r, "POST", "/api/v1/episodios/ep1/procedimentos", `{"codigo_procedimento":"PRC001"}`)
 	if w.Code != nethttp.StatusConflict {
 		t.Fatalf("esperava 409, obtive %d (%s)", w.Code, w.Body.String())
@@ -267,7 +267,7 @@ func TestCirurgia_Iniciar_ErroRegraNegocio_422(t *testing.T) {
 		fakeAgendar{}, fakeIniciarProc{err: erros.Novo(erros.CategoriaRegraNegocio, "consentimento em falta")},
 		fakeConcluirProc{}, fakeCancelarProc{}, fakeObterProc{}, fakeListarProc{},
 	)
-	adhttp.RegistarCirurgia(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Sujeito: "m1", Papeis: []dominio.Papel{dominio.PapelMedico}}}))
+	adhttp.RegistarCirurgia(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Sujeito: "m1", Papeis: []dominio.Papel{dominio.PapelMedico}}}), adhttp.MFAObrigatoria())
 	w := pedidoCorpo(r, "POST", "/api/v1/procedimentos/proc-1/iniciar", ``)
 	if w.Code != nethttp.StatusUnprocessableEntity {
 		t.Fatalf("esperava 422, obtive %d (%s)", w.Code, w.Body.String())
@@ -281,7 +281,7 @@ func TestCirurgia_Obter_ErroNaoEncontrado_404(t *testing.T) {
 		fakeAgendar{}, fakeIniciarProc{}, fakeConcluirProc{}, fakeCancelarProc{},
 		fakeObterProc{err: erros.Novo(erros.CategoriaNaoEncontrado, "procedimento não encontrado")}, fakeListarProc{},
 	)
-	adhttp.RegistarCirurgia(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}))
+	adhttp.RegistarCirurgia(r, h, adhttp.Auth(fakeAuth{sessao: dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelMedico}}}), adhttp.MFAObrigatoria())
 	w := pedido(r, "GET", "/api/v1/procedimentos/inexistente", "Bearer xyz")
 	if w.Code != nethttp.StatusNotFound {
 		t.Fatalf("esperava 404, obtive %d", w.Code)

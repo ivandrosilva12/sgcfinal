@@ -38,7 +38,7 @@ func routerTriagem(t *testing.T, registar *duploRegistarTriagem, sessao identida
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	h := adhttp.NovoRecepcaoTriagemHandler(registar, duploObterTriagem{}, duploListarFilaClinica{})
-	adhttp.RegistarRecepcaoTriagem(r, h, adhttp.Auth(fakeAuth{sessao: sessao}))
+	adhttp.RegistarRecepcaoTriagem(r, h, adhttp.Auth(fakeAuth{sessao: sessao}), adhttp.MFAObrigatoria())
 	return r
 }
 
