@@ -190,6 +190,12 @@ func TestDoentes_Actualizar_Proibido(t *testing.T) {
 	if w.Code != nethttp.StatusForbidden {
 		t.Fatalf("esperava 403, obtive %d", w.Code)
 	}
+	// ADR-042: o Auditor é um papel sensível, pelo que este 403 tem de vir do RBAC
+	// e não da MFAObrigatoria. Sem esta asserção, perder o `AutenticacaoForte` da
+	// sessão deixava o teste verde a provar a coisa errada.
+	if corpo := w.Body.String(); strings.Contains(corpo, "mfa-obrigatorio") {
+		t.Errorf("o 403 devia vir do RBAC, não do MFA; corpo = %s", corpo)
+	}
 }
 
 func TestDoentes_Alergia_MedicoPermitido(t *testing.T) {
@@ -301,6 +307,12 @@ func TestDoentes_Estado_Proibido(t *testing.T) {
 	if w.Code != nethttp.StatusForbidden {
 		t.Fatalf("esperava 403, obtive %d", w.Code)
 	}
+	// ADR-042: o Auditor é um papel sensível, pelo que este 403 tem de vir do RBAC
+	// e não da MFAObrigatoria. Sem esta asserção, perder o `AutenticacaoForte` da
+	// sessão deixava o teste verde a provar a coisa errada.
+	if corpo := w.Body.String(); strings.Contains(corpo, "mfa-obrigatorio") {
+		t.Errorf("o 403 devia vir do RBAC, não do MFA; corpo = %s", corpo)
+	}
 }
 
 func TestDoentes_Alergia_CorpoInvalido_400(t *testing.T) {
@@ -347,6 +359,41 @@ func TestDoentes_Pesquisar_ErroAplicacaoMapeado_500(t *testing.T) {
 	w := pedido(r, "GET", "/api/v1/doentes", "Bearer xyz")
 	if w.Code != nethttp.StatusInternalServerError {
 		t.Fatalf("esperava 500, obtive %d", w.Code)
+	}
+}
+
+// ADR-042: antes desta fatia, o grupo de Doentes não recebia a MFAObrigatoria,
+// pelo que um papel sensível alcançava dados clínicos sem segundo factor. Usa-se o
+// Director (e não o Admin) porque é um papel sensível que o RBAC de leitura de
+// doentes admite — com um papel fora do RBAC o par de testes provaria o RBAC, não
+// o MFA.
+func TestDoentes_PapelSensivelSemSegundoFactor_403(t *testing.T) {
+	r := routerDoentes(dominio.Sessao{
+		Sujeito: "dir-1",
+		Papeis:  []dominio.Papel{dominio.PapelDirector},
+		// sem AutenticacaoForte: é este o ponto do teste
+	})
+	w := pedido(r, "GET", "/api/v1/doentes/id-1", "Bearer xyz")
+	if w.Code != nethttp.StatusForbidden {
+		t.Fatalf("código = %d, queria 403", w.Code)
+	}
+	// Asserir o tipo do problema, e não só o 403: sem isto, o teste não distingue
+	// o 403 do MFA do 403 do RBAC, e passaria a verde pela razão errada se o RBAC
+	// mudasse.
+	if corpo := w.Body.String(); !strings.Contains(corpo, "mfa-obrigatorio") {
+		t.Errorf("corpo = %s, queria type mfa-obrigatorio", corpo)
+	}
+}
+
+func TestDoentes_PapelSensivelComSegundoFactor_Prossegue(t *testing.T) {
+	r := routerDoentes(dominio.Sessao{
+		Sujeito:           "dir-1",
+		Papeis:            []dominio.Papel{dominio.PapelDirector},
+		AutenticacaoForte: true,
+	})
+	w := pedido(r, "GET", "/api/v1/doentes/id-1", "Bearer xyz")
+	if w.Code == nethttp.StatusForbidden {
+		t.Errorf("com segundo factor não devia dar 403; corpo = %s", w.Body.String())
 	}
 }
 

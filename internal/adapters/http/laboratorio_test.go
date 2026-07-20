@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -312,6 +313,12 @@ func TestResultadosEpisodio_Admin_Proibido(t *testing.T) {
 	if w.Code != 403 {
 		t.Fatalf("esperava 403 para o Admin nos resultados do episódio, veio %d (%s)", w.Code, w.Body.String())
 	}
+	// ADR-042: o Admin é um papel sensível, pelo que este 403 tem de vir do RBAC
+	// e não da MFAObrigatoria. Sem esta asserção, perder o `AutenticacaoForte` da
+	// sessão deixava o teste verde a provar a coisa errada.
+	if corpo := w.Body.String(); strings.Contains(corpo, "mfa-obrigatorio") {
+		t.Errorf("o 403 devia vir do RBAC, não do MFA; corpo = %s", corpo)
+	}
 }
 
 func TestColherAmostra_TecnicoLab_200(t *testing.T) {
@@ -515,5 +522,43 @@ func TestCorrigirResultado_CorpoMalformado_400(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != 400 {
 		t.Fatalf("corpo malformado devia dar 400, veio %d", w.Code)
+	}
+}
+
+// ADR-042: antes desta fatia, os grupos do Laboratório não recebiam a
+// MFAObrigatoria, pelo que um papel sensível alcançava a fila de trabalho sem
+// segundo factor. A sessão é construída à mão (e não pela `sessaoLabDe`) porque
+// esta fixa sempre o segundo factor — é justamente a sua ausência que se prova.
+func TestLaboratorio_PapelSensivelSemSegundoFactor_403(t *testing.T) {
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{},
+		identidade.Sessao{
+			Sujeito: "dir-1",
+			Papeis:  []identidade.Papel{identidade.PapelDirector},
+			// sem AutenticacaoForte: é este o ponto do teste
+		})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/laboratorio/fila", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != 403 {
+		t.Fatalf("código = %d, queria 403", w.Code)
+	}
+	// Asserir o tipo do problema, e não só o 403: sem isto, o teste não distingue
+	// o 403 do MFA do 403 do RBAC, e passaria a verde pela razão errada se o RBAC
+	// mudasse.
+	if corpo := w.Body.String(); !strings.Contains(corpo, "mfa-obrigatorio") {
+		t.Errorf("corpo = %s, queria type mfa-obrigatorio", corpo)
+	}
+}
+
+func TestLaboratorio_PapelSensivelComSegundoFactor_Prossegue(t *testing.T) {
+	r := routerLab(t, &duploEmitir{}, &duploSubmeter{}, &duploValidar{}, &duploCorrigir{},
+		sessaoLabDe("dir-1", identidade.PapelDirector))
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/laboratorio/fila", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code == 403 {
+		t.Errorf("com segundo factor não devia dar 403; corpo = %s", w.Body.String())
 	}
 }

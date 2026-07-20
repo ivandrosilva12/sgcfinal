@@ -224,6 +224,12 @@ func TestAdmin_AtribuirPapel_AuditorProibido(t *testing.T) {
 	if w.Code != nethttp.StatusForbidden {
 		t.Fatalf("Auditor não deve escrever; obtive %d", w.Code)
 	}
+	// ADR-042: o Auditor é um papel sensível, pelo que este 403 tem de vir do RBAC
+	// e não da MFAObrigatoria. Sem esta asserção, perder o `AutenticacaoForte` da
+	// sessão deixava o teste verde a provar a coisa errada.
+	if corpo := w.Body.String(); strings.Contains(corpo, "mfa-obrigatorio") {
+		t.Errorf("o 403 devia vir do RBAC, não do MFA; corpo = %s", corpo)
+	}
 }
 
 func TestAdmin_AtribuirPapel_CorpoInvalido_400(t *testing.T) {
@@ -323,8 +329,15 @@ func TestAdmin_RevogarSessao_AdminOk_204(t *testing.T) {
 
 func TestAdmin_RevogarSessao_AuditorProibido(t *testing.T) {
 	r := routerAdmin(dominio.Sessao{Papeis: []dominio.Papel{dominio.PapelAuditor}, AutenticacaoForte: true}, &fakePapel{})
-	if w := pedido(r, "DELETE", "/api/v1/identidade/sessoes/sess-1", "Bearer xyz"); w.Code != nethttp.StatusForbidden {
+	w := pedido(r, "DELETE", "/api/v1/identidade/sessoes/sess-1", "Bearer xyz")
+	if w.Code != nethttp.StatusForbidden {
 		t.Fatalf("Auditor não deve revogar sessões; obtive %d", w.Code)
+	}
+	// ADR-042: o Auditor é um papel sensível, pelo que este 403 tem de vir do RBAC
+	// e não da MFAObrigatoria. Sem esta asserção, perder o `AutenticacaoForte` da
+	// sessão deixava o teste verde a provar a coisa errada.
+	if corpo := w.Body.String(); strings.Contains(corpo, "mfa-obrigatorio") {
+		t.Errorf("o 403 devia vir do RBAC, não do MFA; corpo = %s", corpo)
 	}
 }
 

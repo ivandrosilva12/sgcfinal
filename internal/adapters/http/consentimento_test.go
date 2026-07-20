@@ -3,6 +3,7 @@ package http_test
 import (
 	"context"
 	nethttp "net/http"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -191,5 +192,40 @@ func TestConsentimentos_Obter_ErroNaoEncontrado_404(t *testing.T) {
 	w := pedido(r, "GET", "/api/v1/consentimentos/inexistente", "Bearer xyz")
 	if w.Code != nethttp.StatusNotFound {
 		t.Fatalf("esperava 404, obtive %d", w.Code)
+	}
+}
+
+// ADR-042: antes desta fatia, o grupo de Consentimentos não recebia a
+// MFAObrigatoria, pelo que um papel sensível alcançava dados clínicos sem segundo
+// factor. Usa-se o Director (e não o Admin) porque é um papel sensível que a
+// leituraClinica de consentimentos admite — com um papel fora do RBAC o par de
+// testes provaria o RBAC, não o MFA.
+func TestConsentimentos_PapelSensivelSemSegundoFactor_403(t *testing.T) {
+	r := routerConsent(dominio.Sessao{
+		Sujeito: "dir-1",
+		Papeis:  []dominio.Papel{dominio.PapelDirector},
+		// sem AutenticacaoForte: é este o ponto do teste
+	})
+	w := pedido(r, "GET", "/api/v1/doentes/d1/consentimentos", "Bearer xyz")
+	if w.Code != nethttp.StatusForbidden {
+		t.Fatalf("código = %d, queria 403", w.Code)
+	}
+	// Asserir o tipo do problema, e não só o 403: sem isto, o teste não distingue
+	// o 403 do MFA do 403 do RBAC, e passaria a verde pela razão errada se o RBAC
+	// mudasse.
+	if corpo := w.Body.String(); !strings.Contains(corpo, "mfa-obrigatorio") {
+		t.Errorf("corpo = %s, queria type mfa-obrigatorio", corpo)
+	}
+}
+
+func TestConsentimentos_PapelSensivelComSegundoFactor_Prossegue(t *testing.T) {
+	r := routerConsent(dominio.Sessao{
+		Sujeito:           "dir-1",
+		Papeis:            []dominio.Papel{dominio.PapelDirector},
+		AutenticacaoForte: true,
+	})
+	w := pedido(r, "GET", "/api/v1/doentes/d1/consentimentos", "Bearer xyz")
+	if w.Code == nethttp.StatusForbidden {
+		t.Errorf("com segundo factor não devia dar 403; corpo = %s", w.Body.String())
 	}
 }
