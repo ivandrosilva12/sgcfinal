@@ -1,0 +1,56 @@
+-- Bounded Context: shared
+-- Migration forward-only. Correcção 3 da revisão da Tarefa 2 (ADR-043):
+-- revoga o DELETE de sgc_app em financeiro.series.
+--
+-- Problema: financeiro.series guarda ultimo_sequencial e ultimo_hash — a
+-- cabeça da numeração e da cadeia hash de facturas da ADR-040, bloqueada com
+-- FOR UPDATE na emissão — e, ao contrário de financeiro.facturas e
+-- financeiro.itens_factura, NÃO tem trigger nenhum. Verificado contra a base
+-- viva antes desta migração: sgc_app conseguia `DELETE FROM financeiro.series`.
+--
+-- Porque é perigoso: a re-emissão de uma factura já numerada continua travada
+-- pelos índices únicos uq_facturas_serie_sequencial e uq_facturas_numero
+-- (migrations/financeiro/0002) — não há forja de facturas por esta via. Mas
+-- apagar a linha da série perde o ultimo_hash, e o próximo INSERT nessa série
+-- (INSERT, não UPDATE — a linha já não existe) recomeça a cadeia do zero, sem
+-- ligação ao que já foi emitido antes. Numa tabela que é imutável por desenho
+-- (é a cabeça de uma cadeia hash), esse é dano não reparável: não há trigger
+-- nem invariante do domínio que reconstrua um ultimo_hash perdido.
+--
+-- A aplicação só precisa ali de SELECT, INSERT e UPDATE — nunca DELETE. A
+-- série é criada uma vez (por ano civil, ADR-040) e só cresce por UPDATE.
+--
+-- Porque vem por migração nova (0004) e não por edição da 0003: a 0003 já
+-- está registada em public.schema_migrations nas bases de dados existentes,
+-- incluindo a de desenvolvimento nesta máquina (confirmado antes de escrever
+-- esta migração). O executor salta as versões já aplicadas, pelo que editar a
+-- 0003 no lugar corrigiria apenas bases de dados criadas de raiz e deixaria as
+-- restantes a divergir do ficheiro — exactamente o erro que as migrações
+-- 0003/0004 do financeiro (ADR-041/042) já registaram e evitaram.
+--
+-- Deliberadamente NÃO se usa ALTER DEFAULT PRIVILEGES aqui: os defaults valem
+-- por schema, e retirar DELETE a todo o schema financeiro partiria a
+-- reescrita de linhas de rascunho em financeiro.itens_factura (upsert de
+-- linhas, ver TestRuntime_OperacoesLegitimasAdicionais). A revogação fica
+-- limitada à tabela financeiro.series.
+--
+-- Nota sobre a assimetria de default privileges (correcção 5 da mesma
+-- revisão): o schema auditoria recebe, desde a migração 0003, default
+-- privileges para TABLES mas não para SEQUENCES — os outros sete schemas
+-- recebem ambos. Isto é deliberado, não um esquecimento: auditoria_eventos.id
+-- é GENERATED ALWAYS AS IDENTITY (migrations/auditoria/0001), que não usa
+-- sequência com nome próprio e não precisa de privilégio de sequência — dar
+-- esse privilégio seria conceder algo que nada consome (violação do princípio
+-- do privilégio mínimo). Isto teria de ser revisto no dia em que uma futura
+-- tabela do schema auditoria seja declarada com `bigserial` (que, ao
+-- contrário de IDENTITY, cria uma sequência nomeada e depende de USAGE/SELECT
+-- nela): nesse dia, uma migração nova do BC auditoria deve acrescentar
+-- `ALTER DEFAULT PRIVILEGES FOR ROLE CURRENT_USER IN SCHEMA auditoria GRANT
+-- USAGE, SELECT ON SEQUENCES TO sgc_app` — não se deve alterar esta migração
+-- nem a 0003 para o fazer preventivamente.
+--
+-- Idempotente: REVOKE é convergente — repetir esta migração não altera nada
+-- para além do próprio REVOKE, que já não tem nada para revogar da segunda
+-- vez em diante.
+
+REVOKE DELETE ON financeiro.series FROM sgc_app;

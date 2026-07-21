@@ -266,3 +266,56 @@ func TestRuntime_OperacoesLegitimasAdicionais(t *testing.T) {
 		t.Fatalf("nextval em farmacia.seq_codigo_medicamento tem de funcionar: %v", err)
 	}
 }
+
+// TestRuntime_SeriesSemDelete prova a correcção 3 da revisão da Tarefa 2
+// (ADR-043): financeiro.series guarda ultimo_sequencial e ultimo_hash — a
+// cabeça da cadeia hash de facturas da ADR-040 — e, ao contrário de
+// facturas/itens_factura, não tem trigger nenhum a proteger UPDATE/DELETE.
+// Verificado contra a base viva antes desta migração: sgc_app conseguia
+// DELETE ali. A re-emissão continua travada pelos índices únicos
+// uq_facturas_serie_sequencial/uq_facturas_numero — não há forja de
+// facturas — mas apagar a linha perde o ultimo_hash e o elo seguinte da
+// cadeia nasce partido, numa tabela imutável por desenho: dano não
+// reparável. SELECT, INSERT e UPDATE continuam a ser trabalho legítimo do
+// runtime (é a linha bloqueada com FOR UPDATE na emissão).
+func TestRuntime_SeriesSemDelete(t *testing.T) {
+	migrarTudo(t)
+	poolApp, ctxApp := ligarApp(t)
+	poolMigracao, ctxMigracao := ligar(t)
+
+	const serieProva = "PROVA-ADR043-SERIES"
+	t.Cleanup(func() {
+		// sgc_app já não consegue DELETE em financeiro.series — é precisamente
+		// o que este teste prova — pelo que a limpeza usa a credencial de
+		// migração.
+		if _, err := poolMigracao.Exec(ctxMigracao,
+			`DELETE FROM financeiro.series WHERE serie = $1`, serieProva); err != nil {
+			t.Logf("limpeza da série de prova falhou: %v", err)
+		}
+	})
+
+	if _, err := poolApp.Exec(ctxApp,
+		`SELECT 1 FROM financeiro.series WHERE false FOR UPDATE`); err != nil {
+		t.Fatalf("SELECT ... FOR UPDATE em financeiro.series tem de continuar a funcionar: %v", err)
+	}
+
+	if _, err := poolApp.Exec(ctxApp,
+		`INSERT INTO financeiro.series (serie) VALUES ($1)`, serieProva); err != nil {
+		t.Fatalf("INSERT em financeiro.series tem de continuar a funcionar: %v", err)
+	}
+
+	if _, err := poolApp.Exec(ctxApp,
+		`UPDATE financeiro.series SET ultimo_sequencial = ultimo_sequencial + 1 WHERE serie = $1`,
+		serieProva); err != nil {
+		t.Fatalf("UPDATE em financeiro.series tem de continuar a funcionar: %v", err)
+	}
+
+	_, err := poolApp.Exec(ctxApp, `DELETE FROM financeiro.series WHERE serie = $1`, serieProva)
+	if err == nil {
+		t.Fatal("sgc_app conseguiu DELETE em financeiro.series — a migração 0004_series_sem_delete não fechou o privilégio")
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+		t.Fatalf("esperava SQLSTATE 42501 (insufficient_privilege) no DELETE de financeiro.series, obtive: %v", err)
+	}
+}
