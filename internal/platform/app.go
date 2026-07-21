@@ -48,6 +48,14 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 	}
 	defer pool.Close()
 
+	// ADR-043 (R7): o servidor recusa arrancar com um papel que possa desligar os
+	// triggers que protegem as facturas e o audit log. Sem isenção por ambiente —
+	// o desenvolvimento liga-se como a produção, que é também o que torna as
+	// provas de integração reais em vez de cerimoniais.
+	if err := db.VerificarPapelRuntime(ctx, pool); err != nil {
+		return fmt.Errorf("papel de runtime inadequado: %w", err)
+	}
+
 	redisCli, err := adredis.Ligar(cfg.URLRedis)
 	if err != nil {
 		return err
