@@ -2,7 +2,8 @@
 
 // Testes de integração da fundação: runner de migrations forward-only,
 // imutabilidade do audit log e seed dos papéis. Exigem um PostgreSQL acessível
-// via DATABASE_URL. Corridos com: go test -tags=integration ./tests/integration/...
+// via DATABASE_MIGRATION_URL (migrador) e DATABASE_URL (runtime) — ver ADR-043.
+// Corridos com: go test -tags=integration ./tests/integration/...
 package integration_test
 
 import (
@@ -18,16 +19,41 @@ import (
 	"github.com/ivandrosilva12/sgcfinal/migrations"
 )
 
+// ligar liga com a credencial de MIGRAÇÃO (sgc): tem DDL, é o que os testes de
+// integração precisam para aplicar migrations e montar cenários.
 func ligar(t *testing.T) (*pgxpool.Pool, context.Context) {
 	t.Helper()
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		t.Skip("DATABASE_URL não definido; a saltar testes de integração")
+	return ligarCom(t, "DATABASE_MIGRATION_URL")
+}
+
+// ligarApp liga com a credencial de RUNTIME (sgc_app): sem DDL, sem posse das
+// tabelas. É com esta que se provam as garantias da ADR-043.
+func ligarApp(t *testing.T) (*pgxpool.Pool, context.Context) {
+	t.Helper()
+	return ligarCom(t, "DATABASE_URL")
+}
+
+func ligarCom(t *testing.T, chave string) (*pgxpool.Pool, context.Context) {
+	t.Helper()
+	runtime := os.Getenv("DATABASE_URL")
+	migracao := os.Getenv("DATABASE_MIGRATION_URL")
+
+	// Nada configurado: a suite salta, como sempre saltou.
+	if runtime == "" && migracao == "" {
+		t.Skip("DATABASE_URL/DATABASE_MIGRATION_URL não definidos; a saltar testes de integração")
 	}
+	// Configuração pela metade é erro, não motivo para saltar. Uma suite que se
+	// cala quando devia correr é exactamente o modo de falha que a ADR-042
+	// apanhou: provas a passar a verde pela razão errada.
+	if runtime == "" || migracao == "" {
+		t.Fatal("configuração pela metade: DATABASE_URL e DATABASE_MIGRATION_URL têm de estar " +
+			"ambas definidas (ADR-043)")
+	}
+
 	ctx := context.Background()
-	pool, err := db.LigarPool(ctx, dsn)
+	pool, err := db.LigarPool(ctx, os.Getenv(chave))
 	if err != nil {
-		t.Fatalf("ligar ao PostgreSQL: %v", err)
+		t.Fatalf("ligar ao PostgreSQL com %s: %v", chave, err)
 	}
 	t.Cleanup(pool.Close)
 	return pool, ctx

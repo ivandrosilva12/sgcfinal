@@ -92,6 +92,7 @@ jobs:
       - name: Testes de integração
         env:
           DATABASE_URL: postgres://sgc:sgc@localhost:5432/sgc?sslmode=disable
+          DATABASE_MIGRATION_URL: postgres://sgc:sgc@localhost:5432/sgc?sslmode=disable
         run: go test -tags=integration ./tests/integration/...
 
   seguranca-imagem:
