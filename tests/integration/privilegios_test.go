@@ -7,10 +7,13 @@
 package integration_test
 
 import (
+	"errors"
 	"log/slog"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/ivandrosilva12/sgcfinal/internal/platform/db"
 	"github.com/ivandrosilva12/sgcfinal/migrations"
@@ -46,8 +49,22 @@ func TestRuntime_NaoConsegueSubverterAsGarantias(t *testing.T) {
 
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
-			if _, err := pool.Exec(ctx, c.sql); err == nil {
+			_, err := pool.Exec(ctx, c.sql)
+			if err == nil {
 				t.Fatalf("o papel de runtime conseguiu %q — o R7 continua aberto", c.nome)
+			}
+			// Não basta que haja ALGUM erro: um erro de sintaxe ou de tabela
+			// inexistente também satisfaria `err != nil` sem provar nada sobre
+			// privilégios. O SQLSTATE das sete operações foi medido empiricamente
+			// contra o Postgres real (ADR-043, passo de endurecimento): todas
+			// devolvem 42501 (insufficient_privilege) — quer a mensagem seja
+			// "must be owner of..." (DDL sobre objecto que não possui) quer
+			// "permission denied for..." (falta de GRANT), o PostgreSQL classifica
+			// ambas na mesma classe 42 (syntax_error_or_access_rule_violation),
+			// código 42501.
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+				t.Fatalf("esperava SQLSTATE 42501 (insufficient_privilege) em %q, obtive: %v", c.nome, err)
 			}
 		})
 	}
