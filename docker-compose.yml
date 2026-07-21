@@ -112,7 +112,7 @@ services:
       APP_ENV: dev
       HTTP_PORT: "8080"
       LOG_LEVEL: info
-      DATABASE_URL: postgres://sgc:sgc@postgres:5432/sgc?sslmode=disable
+      DATABASE_URL: postgres://sgc_app:sgc_app@postgres:5432/sgc?sslmode=disable
       REDIS_URL: redis://redis:6379/0
       KEYCLOAK_ISSUER: http://keycloak:8080/realms/sgc
       KEYCLOAK_AUDIENCE: sgc-api
