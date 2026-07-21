@@ -23,9 +23,13 @@ import (
 
 // osOitoSchemas são os schemas de negócio da base de dados: os sete a que o
 // GRANT em massa da migração 0003 dá acesso, mais auditoria (que recebe um
-// GRANT mais restrito, sem UPDATE/DELETE/TRUNCATE). Usada pelo varrimento de
-// TestRuntime_AcedeATodasAsTabelasDosOitoSchemas para não depender de uma
-// lista mantida à mão a divergir do que a migração realmente cobre.
+// GRANT mais restrito, sem UPDATE/DELETE/TRUNCATE). É, ela própria, uma lista
+// mantida à mão — por isso TestRuntime_AcedeATodasAsTabelasDosOitoSchemas não
+// se limita a usá-la: primeiro deriva os schemas de negócio directamente da
+// base (pg_namespace) e assere que os dois conjuntos coincidem exactamente,
+// antes de fazer qualquer varrimento de tabelas. Um bounded context futuro com
+// um schema novo faz essa asserção falhar — em vez de deixar o varrimento
+// passar em silêncio sobre um schema que ninguém enumerou.
 var osOitoSchemas = []string{
 	"auditoria", "clinico", "farmacia", "financeiro",
 	"identidade", "laboratorio", "recepcao", "shared",
@@ -66,6 +70,15 @@ func TestRuntime_NaoConsegueSubverterAsGarantias(t *testing.T) {
 		// buraco com a suite verde.
 		{"truncar as facturas", `TRUNCATE financeiro.facturas`},
 		{"truncar os itens de factura", `TRUNCATE financeiro.itens_factura`},
+		// A migração 0003 afirma no comentário (linha 77): "Nada em public:
+		// sgc_app não vê public.schema_migrations." Sem prova, é só uma
+		// afirmação — exactamente o que esta fatia inteira existe para não
+		// deixar passar (ADR-043, achado N3 da re-revisão). Medido
+		// empiricamente contra o Postgres real antes de escrever a asserção:
+		// ambas devolvem 42501, tal como as restantes provas negativas desta
+		// tabela — falta de GRANT em public para sgc_app, não posse.
+		{"ler o schema_migrations em public", `SELECT 1 FROM public.schema_migrations LIMIT 1`},
+		{"criar tabela em public", `CREATE TABLE public.intruso (id int)`},
 	}
 
 	for _, c := range casos {
@@ -151,6 +164,24 @@ func TestRuntime_TriggerDeRascunhoContinuaAMorder(t *testing.T) {
 	}
 }
 
+// diferencaDeConjuntos devolve os elementos de a que não estão em b. Usada
+// pela guarda de schemas de TestRuntime_AcedeATodasAsTabelasDosOitoSchemas
+// para nomear, na mensagem de falha, exactamente quais schemas estão a mais e
+// quais a menos — em vez de um "não coincide" sem detalhe.
+func diferencaDeConjuntos(a, b []string) []string {
+	presente := make(map[string]bool, len(b))
+	for _, x := range b {
+		presente[x] = true
+	}
+	var d []string
+	for _, x := range a {
+		if !presente[x] {
+			d = append(d, x)
+		}
+	}
+	return d
+}
+
 // TestRuntime_AcedeATodasAsTabelasDosOitoSchemas é a cobertura positiva que
 // faltava: até aqui, TestRuntime_ContinuaAFazerOTrabalhoLegitimo só exercitava
 // duas tabelas (auditoria_eventos, financeiro.series) como sgc_app — o resto
@@ -159,17 +190,56 @@ func TestRuntime_TriggerDeRascunhoContinuaAMorder(t *testing.T) {
 // os 25 ficheiros de teste de integração pré-existentes ligam-se todos como
 // sgc (migração), nunca como sgc_app.
 //
-// Este teste enumera as tabelas a partir de information_schema.tables (ligado
-// como sgc, que tem de ver tudo) e tenta um SELECT em cada uma como sgc_app.
-// Isto apanha, de uma vez, USAGE em falta num schema e SELECT em falta numa
-// tabela — incluindo num bounded context futuro que traga um schema novo: a
-// lista fixa da migração 0003 não o cobriria e a aplicação partiria em
-// produção, mas este teste, ligado à lista viva de osOitoSchemas, apanhá-lo-ia
-// assim que o schema fosse incluído nela.
+// Este teste começa por derivar, de forma independente, os schemas de negócio
+// que existem de facto na base (pg_namespace, com a credencial de MIGRAÇÃO —
+// enumerar com a credencial sob teste seria circular: um schema sem USAGE
+// para sgc_app não deixaria de ser real só por isso, foi bem feito da
+// primeira vez) e assere que esse conjunto coincide exactamente com
+// osOitoSchemas, reportando quais schemas estão a mais e quais a menos se não
+// coincidir — a mesma disciplina da guarda AST da ADR-042: conjunto nomeado,
+// derivação independente, asserção de que concordam. Só depois enumera as
+// tabelas a partir de information_schema.tables (também com a credencial de
+// migração, que tem de ver tudo) e tenta um SELECT em cada uma como sgc_app.
+// As duas verificações juntas apanham, de uma vez, um bounded context novo com
+// schema próprio — a asserção de igualdade fica vermelha antes de qualquer
+// varrimento, em vez de passar em silêncio — USAGE em falta num schema já
+// conhecido, e SELECT em falta numa tabela.
 func TestRuntime_AcedeATodasAsTabelasDosOitoSchemas(t *testing.T) {
 	migrarTudo(t)
 	poolMigracao, ctxMigracao := ligar(t)
 	poolApp, ctxApp := ligarApp(t)
+
+	schemasRows, err := poolMigracao.Query(ctxMigracao, `
+		SELECT nspname FROM pg_namespace
+		WHERE nspname NOT LIKE 'pg\_%' AND nspname NOT IN ('information_schema', 'public')
+		ORDER BY nspname`)
+	if err != nil {
+		t.Fatalf("derivar os schemas de negócio de pg_namespace: %v", err)
+	}
+	var schemasDaBase []string
+	for schemasRows.Next() {
+		var s string
+		if err := schemasRows.Scan(&s); err != nil {
+			t.Fatalf("ler linha de pg_namespace: %v", err)
+		}
+		schemasDaBase = append(schemasDaBase, s)
+	}
+	if err := schemasRows.Err(); err != nil {
+		t.Fatalf("percorrer pg_namespace: %v", err)
+	}
+	schemasRows.Close()
+
+	aMais := diferencaDeConjuntos(schemasDaBase, osOitoSchemas)
+	aMenos := diferencaDeConjuntos(osOitoSchemas, schemasDaBase)
+	if len(aMais) > 0 || len(aMenos) > 0 {
+		t.Fatalf("osOitoSchemas diverge dos schemas de negócio reais da base — "+
+			"a mais na base (schemas que existem mas não estão em osOitoSchemas, "+
+			"por isso NUNCA seriam enumerados abaixo) = %v; a menos na base "+
+			"(estão em osOitoSchemas mas não existem de facto) = %v — um bounded "+
+			"context novo precisa de ser tratado deliberadamente (privilégios na "+
+			"migração + entrada em osOitoSchemas) antes de este teste voltar a verde",
+			aMais, aMenos)
+	}
 
 	rows, err := poolMigracao.Query(ctxMigracao,
 		`SELECT table_schema, table_name FROM information_schema.tables
