@@ -325,6 +325,80 @@ func TestVerificarPapelRuntime_ApanhaTruncateNosItensDaFactura(t *testing.T) {
 	}
 }
 
+// TestVerificarPapelRuntime_ApanhaTruncateNaSerie e
+// ...ApanhaDeleteNaSerie cobrem a QUARTA tabela de valor legal, e a única sem
+// trigger nenhum: financeiro.series guarda ultimo_sequencial e ultimo_hash — a
+// cabeça da numeração sem buracos e da cadeia hash da ADR-040 — e é
+// serializada por SELECT ... FOR UPDATE.
+//
+// Faltava, e a falta era invisível por construção: a guarda que amarra
+// tabelasDeValorLegal deriva de pg_trigger, e uma tabela sem trigger nunca lá
+// aparece. Reproduzido contra a base viva antes desta correcção: com
+// `GRANT TRUNCATE, DELETE ON financeiro.series TO sgc_app` o servidor
+// arrancava e, como sgc_app, o TRUNCATE levou a tabela de 32 linhas a 0
+// (ADR-043, Important I1 da revisão final).
+//
+// Porque as DUAS operações e não só o TRUNCATE: o DELETE está aqui revogado
+// desde migrations/shared/0004, mas a revogação e a verificação de arranque são
+// linhas de defesa distintas — um GRANT posterior desfaz a primeira sem tocar
+// na segunda.
+func TestVerificarPapelRuntime_ApanhaTruncateNaSerie(t *testing.T) {
+	migrarTudo(t)
+	concederTemporariamente(t, "TRUNCATE", "financeiro.series")
+
+	pool, ctx := ligarApp(t)
+	err := db.VerificarPapelRuntime(ctx, pool)
+	if err == nil {
+		t.Fatal("um runtime com TRUNCATE em financeiro.series tinha de ser recusado: " +
+			"a série não tem trigger nenhum e truncá-la perde o ultimo_hash de todas as " +
+			"séries de uma vez")
+	}
+	if !strings.Contains(err.Error(), "financeiro.series") {
+		t.Fatalf("a mensagem tem de nomear a tabela; obtive: %v", err)
+	}
+}
+
+func TestVerificarPapelRuntime_ApanhaDeleteNaSerie(t *testing.T) {
+	migrarTudo(t)
+	concederTemporariamente(t, "DELETE", "financeiro.series")
+
+	pool, ctx := ligarApp(t)
+	err := db.VerificarPapelRuntime(ctx, pool)
+	if err == nil {
+		t.Fatal("um runtime com DELETE em financeiro.series tinha de ser recusado: " +
+			"apagar a linha perde o ultimo_hash e o elo seguinte da cadeia nasce partido, " +
+			"sem reparação possível")
+	}
+	if !strings.Contains(err.Error(), "financeiro.series") {
+		t.Fatalf("a mensagem tem de nomear a tabela; obtive: %v", err)
+	}
+}
+
+// TestVerificarPapelRuntime_NaoRecusaAEmissaoNaSerie é a não-regressão que aqui
+// é fácil de partir: sgc_app TEM de continuar a poder fazer SELECT, INSERT e
+// UPDATE em financeiro.series — o SELECT ... FOR UPDATE da numeração sem
+// buracos e o UPDATE do ultimo_hash/ultimo_sequencial são o coração da emissão
+// (ADR-040). Só DELETE e TRUNCATE são proibidos.
+func TestVerificarPapelRuntime_NaoRecusaAEmissaoNaSerie(t *testing.T) {
+	migrarTudo(t)
+	pool, ctx := ligarApp(t)
+
+	if err := db.VerificarPapelRuntime(ctx, pool); err != nil {
+		t.Fatalf("o estado limpo tem de ser aceite: %v", err)
+	}
+	for _, priv := range []string{"SELECT", "INSERT", "UPDATE"} {
+		var tem bool
+		if err := pool.QueryRow(ctx,
+			`SELECT has_table_privilege(current_user, 'financeiro.series', $1)`, priv).Scan(&tem); err != nil {
+			t.Fatalf("ler o privilégio %s em financeiro.series: %v", priv, err)
+		}
+		if !tem {
+			t.Fatalf("sgc_app perdeu %s em financeiro.series — a emissão da ADR-040 "+
+				"deixa de funcionar", priv)
+		}
+	}
+}
+
 // TestVerificarPapelRuntime_ApanhaTruncateNasFacturasPorPertencaNoInherit junta
 // os dois vectores: a tabela que faltava (correcção 7) e a via que a correcção 6
 // fechou (pertença NOINHERIT, poder por SET ROLE).

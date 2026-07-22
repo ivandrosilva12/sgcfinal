@@ -28,10 +28,10 @@ type tabelaDeValorLegal struct {
 // tabelasDeValorLegal são as tabelas cuja posse daria ao runtime o poder de
 // desligar os triggers que as protegem (ADR-040, ADR-042 §2.6).
 //
-// O conjunto proibido NÃO é o mesmo nas três, e colapsá-lo partiria a
+// O conjunto proibido NÃO é o mesmo nas quatro, e colapsá-lo partiria a
 // aplicação: a factura em RASCUNHO é mutável (ADR-039) e sgc_app tem hoje
 // UPDATE e DELETE nas duas tabelas do Financeiro — é trabalho legítimo. O que
-// não pode ter em nenhuma das três é TRUNCATE: os três triggers de
+// não pode ter em nenhuma das quatro é TRUNCATE: os três triggers de
 // imutabilidade são FOR EACH ROW (verificado em pg_get_triggerdef para
 // trg_facturas_imutaveis, trg_itens_factura_imutaveis e trg_auditoria_imutavel)
 // e TRUNCATE não dispara triggers de linha. Em auditoria_eventos, append-only
@@ -43,9 +43,25 @@ type tabelaDeValorLegal struct {
 // `TRUNCATE financeiro.itens_factura, financeiro.facturas` executou. É a
 // destruição integral da cadeia de hash, da numeração sem buracos e da base do
 // SAF-T-AO/AGT (ADR-040/041, CLAUDE.md §5.4).
+//
+// financeiro.series é a QUARTA entrada e a única sem trigger nenhum: guarda
+// ultimo_sequencial e ultimo_hash — a cabeça da numeração sem buracos e da
+// cadeia hash da ADR-040 — e é serializada por SELECT ... FOR UPDATE, não por
+// trigger. Apagar a linha perde o ultimo_hash e o elo seguinte nasce partido:
+// dano não reparável. Faltava aqui, e a falta era invisível por construção —
+// TestTabelasDeValorLegal_CobreAsTabelasProtegidasPorTrigger deriva de
+// pg_trigger e nunca a veria (ADR-043, Important I1 da revisão final).
+// Reproduzido contra sgc-postgres-1 em transacção revertida: com
+// `GRANT TRUNCATE, DELETE ON financeiro.series TO sgc_app` o servidor
+// arrancava, e como sgc_app o TRUNCATE levou 32 linhas a 0.
+//
+// Só DELETE e TRUNCATE são proibidos: SELECT, INSERT e UPDATE são o coração da
+// emissão (o FOR UPDATE da numeração e o UPDATE do ultimo_hash) e proibi-los
+// partiria a ADR-040.
 var tabelasDeValorLegal = []tabelaDeValorLegal{
 	{Nome: "financeiro.facturas", Proibidos: []string{"TRUNCATE"}},
 	{Nome: "financeiro.itens_factura", Proibidos: []string{"TRUNCATE"}},
+	{Nome: "financeiro.series", Proibidos: []string{"DELETE", "TRUNCATE"}},
 	{Nome: "auditoria.auditoria_eventos", Proibidos: []string{"DELETE", "TRUNCATE", "UPDATE"}},
 }
 
@@ -64,7 +80,7 @@ func nomesDasTabelasDeValorLegal() []string {
 // consegue subverter as garantias que a base de dados impõe por trigger: não é
 // administrador, não é — nem pode assumir — o dono das tabelas de valor legal,
 // não cria objectos (nem nos schemas de negócio nem na base de dados, que
-// permitiria schemas novos) e não pode destruir nenhuma das três tabelas de
+// permitiria schemas novos) e não pode destruir nenhuma das quatro tabelas de
 // valor legal por uma via que os triggers de linha não vêem.
 //
 // Devolve erro, nunca panic; o chamador trata-o como fatal. O servidor não
@@ -167,7 +183,7 @@ func recusarDono(ctx context.Context, pool *pgxpool.Pool, papel string) error {
 	//
 	//   GRANT sgc TO sgc_app WITH INHERIT FALSE
 	//
-	// (sgc é o dono real das três tabelas de valor legal neste ambiente),
+	// (sgc é o dono real das tabelas de valor legal neste ambiente),
 	// pg_has_role(current_user, 'sgc', 'USAGE') devolveu false — a versão
 	// anterior desta consulta não apanhava o caso — mas 'MEMBER' devolveu true,
 	// e SET ROLE sgc seguido de DISABLE TRIGGER desligou o mesmo trigger.
@@ -272,7 +288,7 @@ func recusarCriacaoDeObjectos(ctx context.Context, pool *pgxpool.Pool, papel str
 	return nil
 }
 
-// recusarMutacaoDoValorLegal percorre as TRÊS tabelas de valor legal, cada uma
+// recusarMutacaoDoValorLegal percorre as QUATRO tabelas de valor legal, cada uma
 // com o seu conjunto proibido — não uma tabela fixa no texto da consulta, que é
 // o que deixava `financeiro.facturas` e `financeiro.itens_factura` sem qualquer
 // protecção contra TRUNCATE enquanto a função dizia proteger o valor legal
@@ -280,10 +296,11 @@ func recusarCriacaoDeObjectos(ctx context.Context, pool *pgxpool.Pool, papel str
 // recusarMutacaoDaAuditoria: o nome dizia a verdade sobre o que fazia e mentia
 // sobre o que prometia.
 func recusarMutacaoDoValorLegal(ctx context.Context, pool *pgxpool.Pool, papel string) error {
-	// UPDATE, DELETE e TRUNCATE no audit log; só TRUNCATE nas duas tabelas do
-	// Financeiro — a factura em RASCUNHO é mutável (ADR-039) e sgc_app tem hoje
-	// UPDATE/DELETE lá, que é trabalho legítimo. Ver o comentário de
-	// tabelasDeValorLegal para o porquê de os conjuntos serem diferentes.
+	// UPDATE, DELETE e TRUNCATE no audit log; só TRUNCATE nas duas tabelas de
+	// facturas — a factura em RASCUNHO é mutável (ADR-039) e sgc_app tem hoje
+	// UPDATE/DELETE lá, que é trabalho legítimo; DELETE e TRUNCATE em
+	// financeiro.series, onde SELECT/INSERT/UPDATE são a própria emissão. Ver o
+	// comentário de tabelasDeValorLegal para o porquê de os conjuntos diferirem.
 	//
 	// Como em recusarCriacaoDeObjectos, a pergunta é sobre a UNIÃO dos papéis
 	// assumíveis por SET ROLE e não sobre current_user (ADR-043, correcção 6 da
@@ -326,24 +343,53 @@ func recusarMutacaoDoValorLegal(ctx context.Context, pool *pgxpool.Pool, papel s
 		}
 	}
 
-	// has_table_privilege(oid, text, text) rebenta se a tabela não existir —
-	// aceitável porque recusarDono já correu e exigiu as três presentes, com
-	// mensagem própria para o caso de faltarem.
+	// O JOIN é por to_regclass e não pelo nome directamente em
+	// has_table_privilege(oid, text, text), que REBENTA se a tabela não
+	// existir. Antes isto estava só documentado como "aceitável porque
+	// recusarDono já correu"; passando por to_regclass, que devolve NULL em vez
+	// de erro, a ordem das verificações deixa de importar — e uma dependência
+	// de ordem que não existe é melhor do que uma documentada (ADR-043, A2 da
+	// revisão da Tarefa 3). Uma tabela ausente é caso de recusarDono, que tem
+	// mensagem própria para ela; aqui apenas não produz linha.
 	const q = `SELECT coalesce(string_agg(t.tabela || ' ' || t.priv || ' (via ' || r.rolname || ')',
-	                                      ', ' ORDER BY t.tabela, t.priv, r.rolname), '')
+	                                      ', ' ORDER BY t.tabela, t.priv, r.rolname), ''),
+	                  coalesce(bool_or(t.tabela = 'auditoria.auditoria_eventos'), false),
+	                  coalesce(bool_or(t.tabela LIKE 'financeiro.%'), false)
 	             FROM unnest($1::text[], $2::text[]) AS t(tabela, priv)
+	             JOIN pg_class c ON c.oid = to_regclass(t.tabela)
 	             JOIN pg_roles r ON pg_has_role(current_user, r.oid, 'MEMBER')
-	            WHERE has_table_privilege(r.oid, t.tabela, t.priv)`
+	            WHERE has_table_privilege(r.oid, c.oid, t.priv)`
 	var vias string
-	if err := pool.QueryRow(ctx, q, tabelas, privilegios).Scan(&vias); err != nil {
+	var tocaAuditoria, tocaFinanceiro bool
+	if err := pool.QueryRow(ctx, q, tabelas, privilegios).Scan(&vias, &tocaAuditoria, &tocaFinanceiro); err != nil {
 		return fmt.Errorf("verificar os privilégios sobre as tabelas de valor legal: %w", err)
 	}
 	if vias != "" {
 		return fmt.Errorf("o papel de runtime %q tem — por si ou por um papel que pode assumir "+
 			"com SET ROLE — privilégios que destroem valor legal por uma via que os triggers de "+
-			"linha não vêem: %s. O audit log é append-only com retenção de 10 anos (LPDP / Lei "+
-			"22/11) e a cadeia de hash das facturas não sobrevive a um TRUNCATE (ADR-040/041, "+
-			"ADR-043)", papel, vias)
+			"linha não vêem: %s.%s (ADR-040/041, ADR-043)", papel, vias,
+			consequenciaDaViolacao(tocaAuditoria, tocaFinanceiro))
 	}
 	return nil
+}
+
+// consequenciaDaViolacao devolve a cauda da mensagem de erro conforme o que foi
+// DE FACTO violado. A cauda era fixa e falava sempre do audit log append-only:
+// com financeiro.series no conjunto, uma violação da cadeia de hash vinha
+// acompanhada de uma frase sobre retenção de 10 anos que não lhe dizia respeito
+// (ADR-043, A4 da revisão da Tarefa 3). A violação em si já vem nomeada antes;
+// isto só evita que o ruído a contradiga.
+func consequenciaDaViolacao(auditoria, financeiro bool) string {
+	switch {
+	case auditoria && financeiro:
+		return " O audit log é append-only com retenção de 10 anos (LPDP / Lei 22/11), e nem a " +
+			"cadeia de hash das facturas nem a cabeça da série sobrevivem a estas operações."
+	case auditoria:
+		return " O audit log é append-only com retenção de 10 anos (LPDP / Lei 22/11)."
+	case financeiro:
+		return " A cadeia de hash das facturas não sobrevive a um TRUNCATE, e apagar a linha da " +
+			"série perde o ultimo_hash: o elo seguinte nasce partido, sem reparação possível."
+	default:
+		return ""
+	}
 }

@@ -14,12 +14,80 @@ package db
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/ivandrosilva12/sgcfinal/migrations"
 )
+
+// TestMain aplica as migrations com a credencial de MIGRAÇÃO antes de correr
+// as provas deste pacote.
+//
+// Sem isto, a CI ficava VERMELHA — medido, não deduzido, contra um postgres:16
+// descartável provisionado exactamente como o workflow o faz (papel sgc_app
+// criado por psql, sem init.sql, base virgem): a primeira corrida do comando
+// exacto de .github/workflows/ci.yml falhava aqui com "o runtime não alcança
+// schema de negócio nenhum" e "não há trigger nenhum nos schemas de negócio",
+// e a segunda corrida contra a MESMA base passava. Era estado, não asserção
+// errada.
+//
+// A causa: o passo de integração passou a correr ./tests/integration/... e
+// ./internal/platform/db/... no mesmo `go test`, que corre pacotes em
+// PARALELO. As migrations só eram aplicadas por dentro do outro pacote
+// (migrarTudo), a CI não tem passo de migração, e a shared/0003 — que concede
+// o USAGE — é a última migration de todas. Estas provas ligavam-se em ~0,5 s;
+// a corrida de migrações demora ~5,7 s.
+//
+// A correcção é dar a este pacote o SEU PRÓPRIO arranque, e não um remendo no
+// workflow: assim `go test -tags=integration ./internal/platform/db/` está
+// correcto para quem quer que o corra, por qualquer ordem, incluindo um
+// programador com base virgem. O pacote migrations só importa `embed`, e a
+// camada plataforma já pode depender dele (.go-arch-lint.yml), pelo que não há
+// ciclo nem violação de camada.
+//
+// Deliberadamente NÃO se salta quando a base não está migrada: um t.Skip aqui
+// devolveria verde em silêncio na CI, que é exactamente o modo de falha
+// "verde pela razão errada" que esta fatia existe para evitar (ADR-043,
+// Critical C1 da revisão final).
+func TestMain(m *testing.M) {
+	if err := migrarParaAsProvas(); err != nil {
+		fmt.Fprintf(os.Stderr, "arranque das provas de privilégio: %v\n", err)
+		os.Exit(1)
+	}
+	os.Exit(m.Run())
+}
+
+func migrarParaAsProvas() error {
+	runtime, migracao := os.Getenv("DATABASE_URL"), os.Getenv("DATABASE_MIGRATION_URL")
+	// Nada configurado: cada prova salta por si, como sempre saltou.
+	if runtime == "" && migracao == "" {
+		return nil
+	}
+	// Configuração pela metade é erro, não motivo para saltar — a mesma
+	// disciplina de ligarCom em tests/integration.
+	if runtime == "" || migracao == "" {
+		return fmt.Errorf("configuração pela metade: DATABASE_URL e DATABASE_MIGRATION_URL " +
+			"têm de estar ambas definidas (ADR-043)")
+	}
+
+	ctx := context.Background()
+	pool, err := LigarPool(ctx, migracao)
+	if err != nil {
+		return fmt.Errorf("ligar com a credencial de migração: %w", err)
+	}
+	defer pool.Close()
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	if err := AplicarMigracoes(ctx, pool, migrations.FS, logger); err != nil {
+		return fmt.Errorf("aplicar migrations: %w", err)
+	}
+	return nil
+}
 
 // ligarRuntimeParaProva liga com a credencial de runtime (DATABASE_URL). O
 // catálogo do PostgreSQL (pg_namespace, pg_trigger, pg_class) é legível por
@@ -230,15 +298,16 @@ func TestTabelasDeValorLegal_CobreAsTabelasProtegidasPorTrigger(t *testing.T) {
 	// trigger, porque a protecção pode ser outra — financeiro.series é
 	// serializada por SELECT ... FOR UPDATE e não tem trigger nenhum.
 	//
-	// Hoje este ramo NÃO dispara, e é correcto que não dispare: as três entradas
-	// de tabelasDeValorLegal são exactamente as três tabelas com trigger, e
-	// financeiro.series não está declarada (é protegida pelo REVOKE DELETE de
-	// migrations/shared/0004, não pela verificação de arranque). O ramo existe
-	// para o dia em que uma tabela sem trigger seja declarada: nesse dia tem de
-	// aparecer no log como diferença conhecida, e não fazer o teste ficar
-	// vermelho (ADR-043, Minor 4 da revisão da Tarefa 4 — a versão anterior
-	// deste comentário afirmava, erradamente, que financeiro.series já era o
-	// exemplo vivo).
+	// Este ramo DISPARA desde a revisão final, e imprime `[financeiro.series]`:
+	// a série passou a ser a quarta entrada de tabelasDeValorLegal (ADR-043,
+	// Important I1) e é a única declarada sem trigger. É o dia para que o ramo
+	// existia — e confirma-se que é log, e não falha: uma tabela de valor legal
+	// sem trigger é legítima e não pode fazer este teste ficar vermelho.
+	//
+	// É também a razão por que esta guarda NÃO chega sozinha: derivando de
+	// pg_trigger, era cega por construção à única tabela de valor legal sem
+	// trigger, e foi assim que financeiro.series ficou de fora da verificação
+	// de arranque durante três fatias.
 	if semTrigger := diferencaDeConjuntos(declaradas, nomesProtegidos); len(semTrigger) > 0 {
 		t.Logf("tabelas de valor legal declaradas sem trigger (legítimo — a protecção pode ser "+
 			"outra, como o SELECT ... FOR UPDATE de financeiro.series): %v", semTrigger)
@@ -263,6 +332,28 @@ func contem(lista []string, valor string) bool {
 		}
 	}
 	return false
+}
+
+// TestRecusarMutacaoDoValorLegal_NaoDependeDaOrdemDasVerificacoes prova a
+// correcção A2: has_table_privilege(oid, TEXT, text) REBENTA se a tabela não
+// existir, e isso estava apenas documentado como aceitável ("recusarDono já
+// correu antes e exigiu as tabelas presentes"). Passando o nome por
+// to_regclass — que devolve NULL em vez de erro, como recusarDono já fazia — a
+// dependência de ordem deixa de existir em vez de ficar registada num
+// comentário. Uma tabela ausente é assunto de recusarDono, que tem mensagem
+// própria; aqui limita-se a não produzir linha.
+func TestRecusarMutacaoDoValorLegal_NaoDependeDaOrdemDasVerificacoes(t *testing.T) {
+	pool, ctx := ligarRuntimeParaProva(t)
+
+	original := tabelasDeValorLegal
+	t.Cleanup(func() { tabelasDeValorLegal = original })
+	tabelasDeValorLegal = append(append([]tabelaDeValorLegal{}, original...),
+		tabelaDeValorLegal{Nome: "financeiro.zz_tabela_inexistente", Proibidos: []string{"TRUNCATE"}})
+
+	if err := recusarMutacaoDoValorLegal(ctx, pool, "sgc_app"); err != nil {
+		t.Fatalf("uma tabela ausente na lista não pode fazer esta verificação rebentar — "+
+			"tem de ser ignorada aqui e apanhada por recusarDono; obtive: %v", err)
+	}
 }
 
 // TestRecusarMutacaoDoValorLegal_RecusaTabelaSemProibidos cobre o ramo
