@@ -167,17 +167,45 @@ func recusarCriacaoDeObjectos(ctx context.Context, pool *pgxpool.Pool, papel str
 			"credencial de migração antes de arrancar (ADR-043)", faltam)
 	}
 
-	const q = `SELECT coalesce(string_agg(nome, ', '), '')
+	// A pergunta é sobre a UNIÃO dos papéis que current_user pode assumir por
+	// SET ROLE, não sobre current_user: has_schema_privilege(current_user, ...)
+	// responde "o que este papel tem POR HERANÇA", que é a mesma semântica
+	// errada que a correcção de 'USAGE'→'MEMBER' já tinha identificado acima e
+	// que esta consulta ignorava (ADR-043, correcção 6 da revisão da Tarefa 3).
+	// Exploração reproduzida contra sgc-postgres-1:
+	//
+	//   CREATE ROLE zz_create_teste NOLOGIN;
+	//   GRANT CREATE, USAGE ON SCHEMA financeiro TO zz_create_teste;
+	//   GRANT zz_create_teste TO sgc_app WITH INHERIT FALSE;
+	//
+	// deixava as quatro interrogações todas limpas — o servidor arrancava — e a
+	// seguir, como sgc_app, `SET ROLE zz_create_teste; CREATE TABLE
+	// financeiro.zz_ddl_teste(x int);` executou: DDL fora das migrations
+	// forward-only.
+	//
+	// pg_has_role(current_user, r.oid, 'MEMBER') é verdadeiro para o próprio
+	// current_user, pelo que esta consulta CONTÉM a anterior — medido, não
+	// deduzido: com a base no estado de provisionamento a consulta antiga e a
+	// nova devolvem ambas vazio, e um GRANT CREATE directo a sgc_app é apanhado
+	// pelas duas.
+	//
+	// Nomear o papel pela via do qual o poder chega ("financeiro (via
+	// zz_create_teste)") e não só o schema: quem lê o erro em produção precisa
+	// de saber o que revogar.
+	const q = `SELECT coalesce(string_agg(x.nome || ' (via ' || r.rolname || ')', ', '
+	                                      ORDER BY x.nome, r.rolname), '')
 	             FROM (SELECT s AS nome, to_regnamespace(s) AS ns
 	                     FROM unnest($1::text[]) AS s) x
-	            WHERE has_schema_privilege(current_user, ns::oid, 'CREATE')`
+	             JOIN pg_roles r ON pg_has_role(current_user, r.oid, 'MEMBER')
+	            WHERE has_schema_privilege(r.oid, x.ns::oid, 'CREATE')`
 	var comCreate string
 	if err := pool.QueryRow(ctx, q, schemasBC).Scan(&comCreate); err != nil {
 		return fmt.Errorf("verificar o privilégio CREATE nos schemas: %w", err)
 	}
 	if comCreate != "" {
-		return fmt.Errorf("o papel de runtime %q tem CREATE nos schemas %s: pode criar objectos "+
-			"fora das migrations forward-only (ADR-043)", papel, comCreate)
+		return fmt.Errorf("o papel de runtime %q tem — por si ou por um papel que pode assumir "+
+			"com SET ROLE — CREATE nos schemas %s: pode criar objectos fora das migrations "+
+			"forward-only (ADR-043)", papel, comCreate)
 	}
 	return nil
 }
@@ -192,17 +220,43 @@ func recusarMutacaoDaAuditoria(ctx context.Context, pool *pgxpool.Pool, papel st
 	// promete: sem esta linha, um GRANT TRUNCATE futuro apagaria o audit log
 	// inteiro contornando o trigger, e esta função continuaria a devolver nil
 	// (ADR-043, correcção da revisão da Tarefa 3).
-	const q = `SELECT has_table_privilege(current_user, 'auditoria.auditoria_eventos', 'UPDATE')
-	              OR has_table_privilege(current_user, 'auditoria.auditoria_eventos', 'DELETE')
-	              OR has_table_privilege(current_user, 'auditoria.auditoria_eventos', 'TRUNCATE')`
-	var muta bool
-	if err := pool.QueryRow(ctx, q).Scan(&muta); err != nil {
+	// Como em recusarCriacaoDeObjectos, a pergunta é sobre a UNIÃO dos papéis
+	// assumíveis por SET ROLE e não sobre current_user (ADR-043, correcção 6 da
+	// revisão da Tarefa 3). has_table_privilege(current_user, ...) responde "o
+	// que este papel tem POR HERANÇA"; uma pertença NOINHERIT não herda nada e
+	// mesmo assim faz SET ROLE. Exploração reproduzida contra sgc-postgres-1:
+	//
+	//   CREATE ROLE zz_trunc_teste NOLOGIN;
+	//   GRANT TRUNCATE ON auditoria.auditoria_eventos TO zz_trunc_teste;
+	//   GRANT zz_trunc_teste TO sgc_app WITH INHERIT FALSE;
+	//
+	// deixava tudo limpo — o servidor arrancava — e a seguir, como sgc_app,
+	// `SET ROLE zz_trunc_teste; TRUNCATE auditoria.auditoria_eventos;` executou:
+	// apagamento integral do audit log, com retenção obrigatória de 10 anos,
+	// contornando o trigger (que é FOR EACH ROW e não vê TRUNCATE).
+	//
+	// Esta via genérica cobre também os papéis predefinidos que a lista fixa de
+	// recusarAdministrador não enumera: dos 14 do PG16 nenhum tem rolsuper,
+	// rolcreaterole ou rolcreatedb (medido: todos `f`), pelo que
+	// `GRANT pg_write_all_data TO sgc_app WITH INHERIT FALSE` era invisível —
+	// e passa a ser apanhado aqui, porque pg_write_all_data tem UPDATE e DELETE
+	// em auditoria_eventos. Preferir a via genérica a alargar listas fixas: a
+	// lista fixa fica sempre atrás da próxima versão do PostgreSQL.
+	const q = `SELECT coalesce(string_agg(r.rolname || ' (' || p.priv || ')', ', '
+	                                      ORDER BY r.rolname, p.priv), '')
+	             FROM pg_roles r
+	             CROSS JOIN unnest(ARRAY['UPDATE', 'DELETE', 'TRUNCATE']) AS p(priv)
+	            WHERE pg_has_role(current_user, r.oid, 'MEMBER')
+	              AND has_table_privilege(r.oid, 'auditoria.auditoria_eventos', p.priv)`
+	var vias string
+	if err := pool.QueryRow(ctx, q).Scan(&vias); err != nil {
 		return fmt.Errorf("verificar os privilégios sobre o audit log: %w", err)
 	}
-	if muta {
-		return fmt.Errorf("o papel de runtime %q tem UPDATE, DELETE ou TRUNCATE em "+
-			"auditoria.auditoria_eventos: o audit log é append-only e a retenção de 10 anos "+
-			"depende disso (LPDP / Lei 22/11, ADR-043)", papel)
+	if vias != "" {
+		return fmt.Errorf("o papel de runtime %q tem — por si ou por um papel que pode assumir "+
+			"com SET ROLE — UPDATE, DELETE ou TRUNCATE em auditoria.auditoria_eventos (via %s): "+
+			"o audit log é append-only e a retenção de 10 anos depende disso "+
+			"(LPDP / Lei 22/11, ADR-043)", papel, vias)
 	}
 	return nil
 }

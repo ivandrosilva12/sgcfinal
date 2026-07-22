@@ -140,6 +140,142 @@ func TestVerificarPapelRuntime_ApanhaPertencaAPapelAdministrativo(t *testing.T) 
 	}
 }
 
+// papelDescartavelNoInherit cria um papel de teste sem login, corre os comandos
+// de preparação dados (tipicamente GRANTs sobre esse papel) e concede-o a
+// sgc_app com `WITH INHERIT FALSE` — a forma que NÃO se herda automaticamente
+// mas que continua a permitir `SET ROLE`. Regista a limpeza (DROP OWNED BY +
+// DROP ROLE) antes de qualquer asserção, para que a base não fique envenenada
+// quando o teste falha a meio.
+func papelDescartavelNoInherit(t *testing.T, nome string, preparar ...string) {
+	t.Helper()
+	admin, ctxAdmin := ligar(t)
+
+	if _, err := admin.Exec(ctxAdmin, `CREATE ROLE `+nome+` NOLOGIN`); err != nil {
+		t.Fatalf("criar o papel de teste %s: %v", nome, err)
+	}
+	t.Cleanup(func() {
+		if _, err := admin.Exec(ctxAdmin, `DROP OWNED BY `+nome); err != nil {
+			t.Fatalf("largar os privilégios de %s: %v — a base FICOU com o papel de teste e os "+
+				"privilégios dele; repor manualmente com `DROP OWNED BY %s; DROP ROLE %s;` antes "+
+				"de correr qualquer outro teste", nome, err, nome, nome)
+		}
+		if _, err := admin.Exec(ctxAdmin, `DROP ROLE `+nome); err != nil {
+			t.Fatalf("apagar o papel de teste %s: %v — a base FICOU com o papel residual (e "+
+				"possivelmente ainda concedido a sgc_app); repor manualmente com `REVOKE %s FROM "+
+				"sgc_app; DROP ROLE %s;` antes de correr qualquer outro teste", nome, err, nome, nome)
+		}
+	})
+
+	for _, sql := range preparar {
+		if _, err := admin.Exec(ctxAdmin, sql); err != nil {
+			t.Fatalf("preparar %q: %v", sql, err)
+		}
+	}
+	if _, err := admin.Exec(ctxAdmin, `GRANT `+nome+` TO sgc_app WITH INHERIT FALSE`); err != nil {
+		t.Fatalf("conceder %s a sgc_app: %v", nome, err)
+	}
+}
+
+// TestVerificarPapelRuntime_ApanhaTruncatePorPertencaNoInherit é a prova da
+// correcção 6 (CRITICAL) do lado do audit log: recusarMutacaoDaAuditoria
+// perguntava `has_table_privilege(current_user, ...)`, que responde "o que este
+// papel tem POR HERANÇA". Uma pertença NOINHERIT não herda — mas faz SET ROLE, e
+// aí usa tudo o que o outro papel tem. Reproduzido contra sgc-postgres-1: com
+//
+//	CREATE ROLE zz_trunc_teste NOLOGIN;
+//	GRANT TRUNCATE ON auditoria.auditoria_eventos TO zz_trunc_teste;
+//	GRANT zz_trunc_teste TO sgc_app WITH INHERIT FALSE;
+//
+// as quatro interrogações devolviam tudo limpo e o servidor arrancava; a seguir,
+// como sgc_app, `SET ROLE zz_trunc_teste; TRUNCATE auditoria.auditoria_eventos;`
+// executou — apagamento integral de um log append-only com retenção obrigatória
+// de 10 anos (LPDP / Lei 22/11), contornando o trigger, que não vê TRUNCATE.
+func TestVerificarPapelRuntime_ApanhaTruncatePorPertencaNoInherit(t *testing.T) {
+	migrarTudo(t)
+	papelDescartavelNoInherit(t, "zz_trunc_teste",
+		`GRANT USAGE ON SCHEMA auditoria TO zz_trunc_teste`,
+		`GRANT TRUNCATE ON auditoria.auditoria_eventos TO zz_trunc_teste`)
+
+	pool, ctx := ligarApp(t)
+	err := db.VerificarPapelRuntime(ctx, pool)
+	if err == nil {
+		t.Fatal("um runtime que pode assumir (SET ROLE) um papel com TRUNCATE em " +
+			"auditoria.auditoria_eventos tinha de ser recusado; uma verificação sobre " +
+			"has_table_privilege(current_user, ...) só vê o privilégio herdado e não apanha isto")
+	}
+	if !strings.Contains(err.Error(), "zz_trunc_teste") {
+		t.Fatalf("a mensagem tem de nomear o papel pela via do qual o poder chega, senão quem "+
+			"lê o erro em produção não sabe o que revogar; obtive: %v", err)
+	}
+	if !strings.Contains(err.Error(), "auditoria.auditoria_eventos") {
+		t.Fatalf("a mensagem tem de continuar a nomear a tabela; obtive: %v", err)
+	}
+}
+
+// TestVerificarPapelRuntime_ApanhaCreateNoSchemaPorPertencaNoInherit é a mesma
+// correcção 6 do lado do DDL: recusarCriacaoDeObjectos perguntava
+// `has_schema_privilege(current_user, ...)`. Reproduzido: com CREATE no schema
+// financeiro concedido a um papel assumível por SET ROLE, `CREATE TABLE
+// financeiro.zz_ddl_teste(x int)` executou como sgc_app — objectos fora das
+// migrations forward-only.
+func TestVerificarPapelRuntime_ApanhaCreateNoSchemaPorPertencaNoInherit(t *testing.T) {
+	migrarTudo(t)
+	papelDescartavelNoInherit(t, "zz_create_teste",
+		`GRANT USAGE ON SCHEMA financeiro TO zz_create_teste`,
+		`GRANT CREATE ON SCHEMA financeiro TO zz_create_teste`)
+
+	pool, ctx := ligarApp(t)
+	err := db.VerificarPapelRuntime(ctx, pool)
+	if err == nil {
+		t.Fatal("um runtime que pode assumir (SET ROLE) um papel com CREATE num schema de " +
+			"negócio tinha de ser recusado")
+	}
+	if !strings.Contains(err.Error(), "zz_create_teste") {
+		t.Fatalf("a mensagem tem de nomear o papel pela via do qual o poder chega; obtive: %v", err)
+	}
+	if !strings.Contains(err.Error(), "financeiro") {
+		t.Fatalf("a mensagem tem de continuar a nomear o schema; obtive: %v", err)
+	}
+}
+
+// TestVerificarPapelRuntime_ApanhaPgWriteAllData mede o agravante registado na
+// revisão: dos 14 papéis predefinidos do PG16, nenhum tem rolsuper/rolcreaterole
+// /rolcreatedb (medido: todos `f`) e só três estão na lista fixa de
+// recusarAdministrador. `pg_write_all_data` dá INSERT/UPDATE/DELETE em todas as
+// tabelas — incluindo o audit log — e por pertença NOINHERIT ficava invisível às
+// quatro interrogações. Depois da correcção 6 é apanhado pela via genérica (o
+// privilégio de UPDATE/DELETE sobre auditoria_eventos passa a ser avaliado sobre
+// a união dos papéis assumíveis por SET ROLE), sem precisar de o acrescentar a
+// nenhuma lista fixa — que é precisamente a razão para preferir a via genérica.
+func TestVerificarPapelRuntime_ApanhaPgWriteAllData(t *testing.T) {
+	migrarTudo(t)
+	admin, ctxAdmin := ligar(t)
+
+	if _, err := admin.Exec(ctxAdmin,
+		`GRANT pg_write_all_data TO sgc_app WITH INHERIT FALSE`); err != nil {
+		t.Fatalf("preparar o desvio: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := admin.Exec(ctxAdmin, `REVOKE pg_write_all_data FROM sgc_app`); err != nil {
+			t.Fatalf("repor a pertença: %v — a base FICOU com sgc_app membro de "+
+				"pg_write_all_data, o que lhe dá escrita em TODAS as tabelas incluindo o audit "+
+				"log; repor manualmente com `REVOKE pg_write_all_data FROM sgc_app;` antes de "+
+				"correr qualquer outro teste", err)
+		}
+	})
+
+	pool, ctx := ligarApp(t)
+	err := db.VerificarPapelRuntime(ctx, pool)
+	if err == nil {
+		t.Fatal("um runtime que pode assumir (SET ROLE) pg_write_all_data tinha de ser " +
+			"recusado: esse papel dá UPDATE e DELETE em auditoria.auditoria_eventos")
+	}
+	if !strings.Contains(err.Error(), "pg_write_all_data") {
+		t.Fatalf("a mensagem tem de nomear o papel predefinido pela via do qual o poder "+
+			"chega; obtive: %v", err)
+	}
+}
+
 // TestVerificarPapelRuntime_ApanhaTruncateNaAuditoria trava a regressão da
 // correcção 3 da revisão da Tarefa 3: recusarMutacaoDaAuditoria verificava
 // UPDATE e DELETE mas não TRUNCATE. O único trigger em auditoria_eventos é
