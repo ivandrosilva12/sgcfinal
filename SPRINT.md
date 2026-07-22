@@ -467,8 +467,12 @@
 - [x] Mutação feita e registada: 21 mutações independentes contra a guarda de deriva e
       17 contra a guarda AST, todas medidas a morder. Também contra base de dados criada
       do zero.
-- [x] Migrações `shared/0003` e `shared/0004` aplicadas e embebidas; forward-only, sem
-      editar migrações já aplicadas.
+- [x] Migrações `shared/0003` e `shared/0004` aplicadas e embebidas; forward-only, com
+      **uma excepção registada e justificada**: o `ALTER ROLE` da `shared/0003` foi editado
+      no lugar (passou a condicional) porque a versão original não corre com um migrador
+      `NOSUPERUSER` — edição justificada por igualdade de resultado, documentada na
+      **ADR-043 §6 R1**. É essa a fonte a ler antes de citar este critério para justificar
+      outra edição; nenhuma outra migração já aplicada foi editada.
 - [x] Gates de cobertura verdes (domínio ≥85%, aplicação ≥75%, adaptadores ≥60%);
       `go-arch-lint` sem violações.
 - [x] Runbook de provisionamento escrito com **cada consulta executada** contra uma

@@ -230,13 +230,18 @@ notarização externa. **Esta ADR não afirma que o fecha.**
 | `.github/workflows/ci.yml` | passo `psql` de credencial; as duas variáveis; `internal/platform/db` no passo de integração; `-count=1` |
 | `tests/integration/migracoes_test.go` | `ligar()` passa a migrador; novo `ligarApp()`; guarda de meia-configuração |
 | `tests/integration/privilegios_test.go` | novo — provas de comportamento e inventário de deriva |
-| `docs/RUNBOOK-provisionamento-bd.md` | novo — provisionamento de produção |
+| `tests/integration/privilegios_arranque_test.go` | novo — provas de arranque, incluindo as quatro tabelas de valor legal |
+| `internal/platform/db/migrate.go` | advisory lock a serializar `AplicarMigracoes` |
+| `docs/RUNBOOK-provisionamento-bd.md` | novo — provisionamento de produção; §5.3 cobre as **quatro** tabelas |
+| `README.md` | comando de integração corrigido para as duas credenciais e os dois pacotes |
 | `adrs/ADR-043-separacao-credenciais.md` | esta ADR — novo |
 | `adrs/ADR-040-emissao-factura.md` | R7 marcado resolvido (aditivo) |
 | `CLAUDE.md`, `SPRINT.md` | marco e sprint |
 
-**Não muda:** o domínio, a canonicalização do hash, o vector dourado, as rotas,
-o RBAC, nem `internal/platform/db/migrate.go`.
+**Não muda:** o domínio, a canonicalização do hash, o vector dourado, as rotas
+nem o RBAC. O `internal/platform/db/migrate.go` **passou a mudar** na revisão
+final (advisory lock, ver R7): a ordenação e a idempotência das migrações ficam
+como estavam, só deixa de haver corrida entre migradores concorrentes.
 
 ## 4. Provas
 
@@ -395,6 +400,65 @@ e é decisão arquitectural para fatia própria. O **subconjunto perigoso** já 
 imposto ao arranque (`TRUNCATE` nas três tabelas de valor legal, `UPDATE`/
 `DELETE` no audit log, `CREATE` nos schemas e na base). Para produção, o runbook
 §5.4 transcreve as mesmas consultas para o operador correr à mão.
+
+### R7 — Dois migradores concorrentes corriam à mesma migração (fechado)
+
+Fechado nesta fatia, mas fica registado porque a causa é estrutural e a
+descoberta foi tardia. `AplicarMigracoes` lê `jaAplicada` e só depois aplica:
+entre as duas há uma janela em que dois migradores concorrentes vêem ambos a
+migração por aplicar. Ficou visível quando o passo de integração da CI passou a
+correr, no mesmo `go test`, **dois pacotes que migram** — e `go test` corre
+pacotes em paralelo. Medido contra base virgem, deterministicamente nas duas
+tentativas:
+
+```
+aplicar migration auditoria/0001_auditoria_eventos:
+  duplicate key value violates unique constraint "pg_namespace_nspname_index" (SQLSTATE 23505)
+aplicar migration farmacia/0002_stock:
+  duplicate key value violates unique constraint "pg_type_typname_nsp_index" (SQLSTATE 23505)
+```
+
+A corrida **já existia antes desta fatia** — dentro do próprio
+`tests/integration`, e entre duas réplicas da API a arrancar ao mesmo tempo —
+e nunca fora observada porque a base de desenvolvimento já estava migrada. É a
+mesma lição do C1: o ambiente de medição escondia o defeito. Fechado com um
+advisory lock de sessão (`pg_advisory_lock`), tomado e largado na mesma ligação
+adquirida do pool.
+
+### R8 — Nada impede a próxima edição de uma migração já aplicada
+
+`public.schema_migrations` regista `bounded_context`, `versao` e `aplicada_em`
+— **não** um checksum. O executor salta versões já registadas, pelo que editar
+uma migração aplicada é silencioso: as bases existentes divergem do ficheiro e
+nada o detecta. Esta fatia abriu o precedente (R1, o `ALTER ROLE` da
+`shared/0003`, com edição justificada por igualdade de resultado) e **não** o
+fechou — é a única invariante de prosa desta fatia que não foi convertida em
+guarda, num projecto que converteu todas as outras (AST sobre o `app.go`,
+derivação dos três inventários).
+
+Fica para **fatia própria**. Candidata: coluna `sha256` em
+`public.schema_migrations`, preenchida na aplicação e verificada no arranque,
+com **excepção declarada** para a `shared/0003` (que já divergiu por R1) — a
+excepção tem de ser nomeada e justificada em código, não um caso especial mudo.
+Não implementar de passagem: mexe no controlo de migrações de todas as bases
+existentes.
+
+### R9 — Uma guarda derivada é cega ao que a sua fonte não vê
+
+`TestTabelasDeValorLegal_CobreAsTabelasProtegidasPorTrigger` amarra
+`tabelasDeValorLegal` derivando de `pg_trigger`. Garante que uma tabela **com**
+trigger não fica de fora; não pode garantir nada sobre uma tabela de valor legal
+**sem** trigger — e era exactamente essa, `financeiro.series`, que faltava na
+lista (achado I1 da revisão final: com `GRANT TRUNCATE, DELETE` o servidor
+arrancava e o `TRUNCATE` levou a tabela de 32 linhas a 0). Corrigido:
+`financeiro.series` é a quarta entrada, com `DELETE` e `TRUNCATE` proibidos e
+`SELECT`/`INSERT`/`UPDATE` preservados, porque são a própria emissão da ADR-040.
+
+O risco que fica é o geral: **uma guarda derivada não substitui a decisão sobre
+o que pertence ao conjunto**, só impede que o conjunto encolha em silêncio
+naquilo que a fonte vê. Ao acrescentar uma tabela de valor legal futura,
+verificar sempre pelas duas vias — a derivação e a leitura da ADR — porque a
+derivação, sozinha, ficará calada se a protecção não for por trigger.
 
 ### N1 — A assimetria dos default privileges de sequências em `auditoria`
 

@@ -70,7 +70,9 @@ seeds/  tests/  docs/  adrs/  docker/
 4. **Cadeia hash de facturas** — SHA-256, imutáveis. Anulação por nova factura.
 5. **Domínio rico, não anémico** — regras nas entidades.
 6. **Fakes > Mocks** em testes de aplicação.
-7. **Forward-only migrations**.
+7. **Forward-only migrations**. Excepção única e registada: a edição do `ALTER ROLE` da
+   `shared/0003` (ver **ADR-043 §6 R1**), justificada por igualdade de resultado. Não é
+   precedente — qualquer outra correcção continua a ser por migração nova.
 8. **Nada de `panic()`** fora de inicialização — sempre `error`.
 9. Cobertura **desde Sprint 1**: domínio ≥85%, aplicação ≥75%, adapters ≥60%.
 

@@ -54,13 +54,21 @@ make test    # unit + aplicação (-race)
 make cover   # gate de cobertura por camada (domínio ≥85%, aplicação ≥75%, adapters ≥60%)
 ```
 
-Testes de integração (migrations, imutabilidade do audit log, seed dos 11 papéis) exigem um
-PostgreSQL e são separados por build tag:
+Testes de integração (migrations, imutabilidade do audit log, seed dos papéis, separação de
+credenciais) exigem um PostgreSQL e são separados por build tag. Desde a ADR-043 são precisas
+**as duas** credenciais — `DATABASE_URL` é a de **runtime** (`sgc_app`, sem DDL nem posse) e
+`DATABASE_MIGRATION_URL` a de **migração** (`sgc`) — e configurar só uma é erro, não motivo
+para saltar:
 
 ```bash
-DATABASE_URL=postgres://sgc:sgc@localhost:5432/sgc?sslmode=disable \
-  go test -tags=integration ./tests/integration/...
+DATABASE_URL=postgres://sgc_app:sgc_app@localhost:5432/sgc?sslmode=disable \
+DATABASE_MIGRATION_URL=postgres://sgc:sgc@localhost:5432/sgc?sslmode=disable \
+  go test -count=1 -tags=integration ./tests/integration/... ./internal/platform/db/...
 ```
+
+`./internal/platform/db/...` entra explicitamente: as provas de caixa branca dos privilégios
+também vivem atrás da tag `integration`. O `-count=1` desliga a cache de resultados — o input
+real destes testes é o estado da base de dados, que o Go não vê.
 
 ## Licença / Conformidade
 

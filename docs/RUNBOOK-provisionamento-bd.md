@@ -311,22 +311,36 @@ SELECT current_database() AS base,
 **Esperado: `vias` vazio.** Medido: `sgc | ` (base `sgc`, sem vias).
 
 Privilégios que destroem valor legal por vias que os triggers **de linha** não
-vêem — `TRUNCATE` nas três tabelas, mais `UPDATE`/`DELETE` no audit log
-(`UPDATE`/`DELETE` continuam legítimos nas facturas, porque o rascunho é
-mutável):
+vêem — `TRUNCATE` nas **quatro** tabelas de valor legal, mais `UPDATE`/`DELETE`
+no audit log e `DELETE` na série (`UPDATE`/`DELETE` continuam legítimos nas
+facturas, porque o rascunho é mutável; `SELECT`/`INSERT`/`UPDATE` continuam
+legítimos na série, porque são a própria emissão):
 
 ```sql
 SELECT coalesce(string_agg(t.tabela || ' ' || t.priv || ' (via ' || r.rolname || ')',
                            ', ' ORDER BY t.tabela, t.priv, r.rolname), '') AS vias
   FROM (VALUES ('financeiro.facturas','TRUNCATE'),
                ('financeiro.itens_factura','TRUNCATE'),
+               ('financeiro.series','DELETE'),
+               ('financeiro.series','TRUNCATE'),
                ('auditoria.auditoria_eventos','DELETE'),
                ('auditoria.auditoria_eventos','TRUNCATE'),
                ('auditoria.auditoria_eventos','UPDATE')) AS t(tabela, priv)
+  JOIN pg_class c ON c.oid = to_regclass(t.tabela)
   JOIN pg_roles r ON pg_has_role(current_user, r.oid, 'MEMBER')
- WHERE has_table_privilege(r.oid, t.tabela, t.priv);
+ WHERE has_table_privilege(r.oid, c.oid, t.priv);
 ```
 **Esperado: vazio.** Medido: vazio.
+
+`financeiro.series` é a quarta tabela desta lista e a única **sem trigger
+nenhum**: guarda `ultimo_sequencial` e `ultimo_hash` — a cabeça da numeração sem
+buracos e da cadeia hash da ADR-040 — e é serializada por `SELECT ... FOR
+UPDATE`. Faltava aqui, e a falta era invisível para a guarda que amarra a lista
+em código (deriva de `pg_trigger`, e uma tabela sem trigger nunca lá aparece —
+ADR-043 §6). O `JOIN` por `to_regclass` existe porque
+`has_table_privilege(oid, text, text)` rebenta com uma tabela inexistente: assim
+uma tabela em falta passa a ser assunto das consultas de schemas e de posse, e
+não um erro aqui.
 
 Os três triggers de imutabilidade (`trg_facturas_imutaveis`,
 `trg_itens_factura_imutaveis`, `trg_auditoria_imutavel`) são `FOR EACH ROW`:
