@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -354,21 +355,24 @@ func recusarMutacaoDoValorLegal(ctx context.Context, pool *pgxpool.Pool, papel s
 	const q = `SELECT coalesce(string_agg(t.tabela || ' ' || t.priv || ' (via ' || r.rolname || ')',
 	                                      ', ' ORDER BY t.tabela, t.priv, r.rolname), ''),
 	                  coalesce(bool_or(t.tabela = 'auditoria.auditoria_eventos'), false),
-	                  coalesce(bool_or(t.tabela LIKE 'financeiro.%'), false)
+	                  coalesce(bool_or(t.tabela IN ('financeiro.facturas',
+	                                                'financeiro.itens_factura')), false),
+	                  coalesce(bool_or(t.tabela = 'financeiro.series'), false)
 	             FROM unnest($1::text[], $2::text[]) AS t(tabela, priv)
 	             JOIN pg_class c ON c.oid = to_regclass(t.tabela)
 	             JOIN pg_roles r ON pg_has_role(current_user, r.oid, 'MEMBER')
 	            WHERE has_table_privilege(r.oid, c.oid, t.priv)`
 	var vias string
-	var tocaAuditoria, tocaFinanceiro bool
-	if err := pool.QueryRow(ctx, q, tabelas, privilegios).Scan(&vias, &tocaAuditoria, &tocaFinanceiro); err != nil {
+	var tocaAuditoria, tocaFacturas, tocaSerie bool
+	if err := pool.QueryRow(ctx, q, tabelas, privilegios).Scan(
+		&vias, &tocaAuditoria, &tocaFacturas, &tocaSerie); err != nil {
 		return fmt.Errorf("verificar os privilégios sobre as tabelas de valor legal: %w", err)
 	}
 	if vias != "" {
 		return fmt.Errorf("o papel de runtime %q tem — por si ou por um papel que pode assumir "+
 			"com SET ROLE — privilégios que destroem valor legal por uma via que os triggers de "+
 			"linha não vêem: %s.%s (ADR-040/041, ADR-043)", papel, vias,
-			consequenciaDaViolacao(tocaAuditoria, tocaFinanceiro))
+			consequenciaDaViolacao(tocaAuditoria, tocaFacturas, tocaSerie))
 	}
 	return nil
 }
@@ -377,19 +381,36 @@ func recusarMutacaoDoValorLegal(ctx context.Context, pool *pgxpool.Pool, papel s
 // DE FACTO violado. A cauda era fixa e falava sempre do audit log append-only:
 // com financeiro.series no conjunto, uma violação da cadeia de hash vinha
 // acompanhada de uma frase sobre retenção de 10 anos que não lhe dizia respeito
-// (ADR-043, A4 da revisão da Tarefa 3). A violação em si já vem nomeada antes;
-// isto só evita que o ruído a contradiga.
-func consequenciaDaViolacao(auditoria, financeiro bool) string {
-	switch {
-	case auditoria && financeiro:
-		return " O audit log é append-only com retenção de 10 anos (LPDP / Lei 22/11), e nem a " +
-			"cadeia de hash das facturas nem a cabeça da série sobrevivem a estas operações."
-	case auditoria:
-		return " O audit log é append-only com retenção de 10 anos (LPDP / Lei 22/11)."
-	case financeiro:
-		return " A cadeia de hash das facturas não sobrevive a um TRUNCATE, e apagar a linha da " +
-			"série perde o ultimo_hash: o elo seguinte nasce partido, sem reparação possível."
-	default:
+// (ADR-043, A4 da revisão da Tarefa 3).
+//
+// A distinção é entre as TRÊS consequências e não entre dois schemas: agrupar
+// as facturas com a série imprimia "apagar a linha da série perde o
+// ultimo_hash" numa violação só de financeiro.facturas, sobre uma tabela que
+// não fora violada — o mesmo defeito uma camada abaixo (ADR-043, N5 da
+// re-revisão). A violação em si já vem nomeada antes; isto só evita que o ruído
+// a contradiga.
+func consequenciaDaViolacao(auditoria, facturas, serie bool) string {
+	var partes []string
+	if auditoria {
+		partes = append(partes,
+			"o audit log é append-only com retenção de 10 anos (LPDP / Lei 22/11)")
+	}
+	if facturas {
+		partes = append(partes,
+			"a cadeia de hash das facturas não sobrevive a um TRUNCATE")
+	}
+	if serie {
+		partes = append(partes,
+			"apagar a linha da série perde o ultimo_hash e o elo seguinte nasce partido, "+
+				"sem reparação possível")
+	}
+	switch len(partes) {
+	case 0:
 		return ""
+	case 1:
+		return " Nota: " + partes[0] + "."
+	default:
+		return " Nota: " + strings.Join(partes[:len(partes)-1], "; ") + "; e " +
+			partes[len(partes)-1] + "."
 	}
 }

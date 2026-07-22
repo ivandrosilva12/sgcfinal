@@ -256,10 +256,15 @@ superuser — e esse membro consegue `ALTER TABLE … DISABLE TRIGGER`
 
 ### 5.2 Não é dono das tabelas de valor legal, e elas existem
 
+São **quatro**: `financeiro.facturas`, `financeiro.itens_factura`,
+`financeiro.series` e `auditoria.auditoria_eventos`. A série entrou na re-revisão
+da ADR-043 (§6 R9) e é a única sem trigger — é a cabeça da numeração e da cadeia
+hash, protegida por `SELECT … FOR UPDATE`.
+
 ```sql
 SELECT coalesce(string_agg(t.nome, ', '), '') AS em_falta
   FROM unnest(ARRAY['financeiro.facturas','financeiro.itens_factura',
-                    'auditoria.auditoria_eventos']) AS t(nome)
+                    'financeiro.series','auditoria.auditoria_eventos']) AS t(nome)
  WHERE to_regclass(t.nome) IS NULL;
 ```
 **Esperado: vazio** (uma tabela em falta significa base por migrar). Medido: vazio.
@@ -267,7 +272,7 @@ SELECT coalesce(string_agg(t.nome, ', '), '') AS em_falta
 ```sql
 SELECT coalesce(bool_or(pg_has_role(current_user, c.relowner, 'MEMBER')), false) AS e_dono
   FROM unnest(ARRAY['financeiro.facturas','financeiro.itens_factura',
-                    'auditoria.auditoria_eventos']) AS t(nome)
+                    'financeiro.series','auditoria.auditoria_eventos']) AS t(nome)
   JOIN pg_class c ON c.oid = to_regclass(t.nome);
 ```
 **Esperado: `f`.** Medido: `f`.

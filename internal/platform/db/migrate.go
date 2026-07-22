@@ -30,19 +30,57 @@ const chaveBloqueioMigracoes int64 = 5_043_2026
 // um comete, o outro rebenta (chave duplicada em schema_migrations, ou o
 // próprio DDL a colidir). Não é hipotético: passou a acontecer quando o passo
 // de integração da CI passou a correr, no mesmo `go test`, dois pacotes que
-// migram — e vale igualmente para duas réplicas da API a arrancar ao mesmo
-// tempo. Quem chega em segundo espera e, ao entrar, encontra tudo já aplicado
+// migram. Quem chega em segundo espera e, ao entrar, encontra tudo já aplicado
 // e não faz nada.
+//
+// Os dois cenários de concorrência REAIS são esses dois: os pacotes de teste, e
+// um pipeline que invoque `api migrate` mais do que uma vez em simultâneo. NÃO
+// inclui "duas réplicas da API a arrancar ao mesmo tempo": `ExecutarServidor`
+// não migra — `AplicarMigracoes` é chamada apenas de `ExecutarMigracoes` e dos
+// testes, e o runbook §4 faz da migração um passo separado. A afirmação
+// anterior reivindicava um risco que não existe (ADR-043, N2 da re-revisão).
 func AplicarMigracoes(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS, logger *slog.Logger) error {
 	// O lock é de SESSÃO, pelo que tem de ser tomado e largado na MESMA
-	// ligação: com o pool, cada Exec pode sair numa ligação diferente.
+	// ligação, retirada do pool e segurada até ao fim. O corpo continua a usar
+	// o pool, pelo que uma ligação NÃO chega: com pool_max_conns=1 a primeira
+	// consulta do corpo ficaria à espera da ligação que esta função segura, e
+	// o resultado é um bloqueio permanente — medido, com prazo de 4 s no
+	// contexto: "criar schema_migrations: context deadline exceeded" aos
+	// 4,001 s. Em produção (`api migrate`, contexto sem prazo) seria uma
+	// paragem silenciosa e para sempre. pgxpool.ParseConfig honra
+	// `pool_max_conns` na própria connection string, pelo que o caso é
+	// alcançável só por configuração; recusar à cabeça, com mensagem que diz
+	// porquê, é preferível a pendurar (ADR-043, N3 da re-revisão).
+	if max := pool.Config().MaxConns; max < 2 {
+		return fmt.Errorf("o pool de migração tem MaxConns=%d: são precisas pelo menos 2 "+
+			"ligações, porque uma fica segura com o bloqueio de migrações e as restantes "+
+			"consultas usam o pool — com uma só, a migração bloqueia para sempre. Corrija "+
+			"`pool_max_conns` na DATABASE_MIGRATION_URL (ADR-043)", max)
+	}
+
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("obter ligação para o bloqueio de migrações: %w", err)
 	}
 	defer conn.Release()
-	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, chaveBloqueioMigracoes); err != nil {
-		return fmt.Errorf("obter o bloqueio de migrações: %w", err)
+
+	// Tentar primeiro sem bloquear, para poder DIZER que se vai esperar: o
+	// contexto de ExecutarMigracoes não tem prazo e pg_advisory_lock espera
+	// indefinidamente, pelo que o operador via um `api migrate` parado sem uma
+	// linha de log, a meio de uma janela de deploy (ADR-043, N4 da re-revisão).
+	// O comportamento é o mesmo; muda só a legibilidade.
+	var obtido bool
+	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, chaveBloqueioMigracoes).Scan(&obtido); err != nil {
+		return fmt.Errorf("tentar o bloqueio de migrações: %w", err)
+	}
+	if !obtido {
+		if logger != nil {
+			logger.Info("à espera do bloqueio de migrações",
+				"motivo", "outro migrador está a aplicar migrations nesta base de dados")
+		}
+		if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, chaveBloqueioMigracoes); err != nil {
+			return fmt.Errorf("obter o bloqueio de migrações: %w", err)
+		}
 	}
 	defer func() {
 		if _, err := conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, chaveBloqueioMigracoes); err != nil && logger != nil {

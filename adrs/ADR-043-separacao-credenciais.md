@@ -146,17 +146,24 @@ próprio papel nem sobre o privilégio herdado:
    `rolcreatedb`, mais os três papéis predefinidos de escrita e execução no
    servidor (`pg_write_server_files`, `pg_execute_server_program`,
    `pg_read_server_files`), que a via genérica por atributos nunca apanharia.
-2. **Posse** das três tabelas de valor legal (`pg_has_role(…, relowner,
+2. **Posse** das **quatro** tabelas de valor legal (`pg_has_role(…, relowner,
    'MEMBER')`), precedida de uma verificação de existência por `to_regclass` que
    distingue "base por migrar" de "papel privilegiado".
 3. **Criação de objectos** — `CREATE` nos oito schemas **e** `CREATE` na base de
    dados, que é uma via distinta e igualmente fatal para a restrição
    forward-only: não cria objectos nos schemas conhecidos, cria schemas novos.
-4. **Mutação do valor legal** — `TRUNCATE` nas três tabelas, mais `UPDATE` e
-   `DELETE` no audit log. O conjunto proibido **não é o mesmo nas três**, e
-   colapsá-lo partiria a aplicação (ver §2.2). Esta via genérica apanha também
+4. **Mutação do valor legal** — `TRUNCATE` nas **quatro** tabelas, mais
+   `UPDATE`/`DELETE` no audit log e `DELETE` em `financeiro.series`. O conjunto
+   proibido **não é o mesmo nas quatro**, e colapsá-lo partiria a aplicação (ver
+   §2.2): a factura em RASCUNHO é mutável, e `SELECT`/`INSERT`/`UPDATE` na série
+   são a própria emissão da ADR-040. Esta via genérica apanha também
    `pg_write_all_data` sem que ele esteja em lista nenhuma — porque tem `UPDATE`
    e `DELETE` em `auditoria_eventos`.
+
+   As **quatro** são `financeiro.facturas`, `financeiro.itens_factura`,
+   `financeiro.series` e `auditoria.auditoria_eventos`. A série entrou na
+   re-revisão (ver R9) e é a única sem trigger: é protegida por `SELECT … FOR
+   UPDATE`, e por isso a guarda derivada de `pg_trigger` nunca a veria.
 
 `ExecutarMigracoes` não recebe verificação simétrica: correr migrações com a
 credencial de runtime falha naturalmente, na primeira instrução DDL.
@@ -397,8 +404,8 @@ O inventário exacto protege CI e desenvolvimento; **não impede deriva numa bas
 de produção entre deploys**. Promovê-lo ao arranque mudaria o contrato — o
 servidor recusaria arrancar por um `GRANT` a mais numa tabela sem valor legal —
 e é decisão arquitectural para fatia própria. O **subconjunto perigoso** já é
-imposto ao arranque (`TRUNCATE` nas três tabelas de valor legal, `UPDATE`/
-`DELETE` no audit log, `CREATE` nos schemas e na base). Para produção, o runbook
+imposto ao arranque (`TRUNCATE` nas **quatro** tabelas de valor legal, `UPDATE`/
+`DELETE` no audit log, `DELETE` na série, `CREATE` nos schemas e na base). Para produção, o runbook
 §5.4 transcreve as mesmas consultas para o operador correr à mão.
 
 ### R7 — Dois migradores concorrentes corriam à mesma migração (fechado)
@@ -418,12 +425,27 @@ aplicar migration farmacia/0002_stock:
   duplicate key value violates unique constraint "pg_type_typname_nsp_index" (SQLSTATE 23505)
 ```
 
-A corrida **já existia antes desta fatia** — dentro do próprio
-`tests/integration`, e entre duas réplicas da API a arrancar ao mesmo tempo —
-e nunca fora observada porque a base de desenvolvimento já estava migrada. É a
-mesma lição do C1: o ambiente de medição escondia o defeito. Fechado com um
-advisory lock de sessão (`pg_advisory_lock`), tomado e largado na mesma ligação
+A corrida **já existia antes desta fatia**, dentro do próprio
+`tests/integration`, e nunca fora observada porque a base de desenvolvimento já
+estava migrada. É a mesma lição do C1: o ambiente de medição escondia o defeito.
+Fechado com um advisory lock de sessão, tomado e largado na mesma ligação
 adquirida do pool.
+
+Os cenários de concorrência **reais** são dois: os pacotes de teste, e um
+pipeline que invoque `api migrate` mais do que uma vez em simultâneo. **Não**
+inclui "duas réplicas da API a arrancar ao mesmo tempo" — verificado:
+`AplicarMigracoes` é chamada apenas de `ExecutarMigracoes` (`app.go`) e dos
+testes; `ExecutarServidor` **não migra**, e o runbook §4 faz da migração um passo
+separado. A primeira redacção desta nota reivindicava um risco que não existe, o
+que é a mesma classe de defeito desta fatia no sentido contrário (N2 da
+re-revisão).
+
+Dois cuidados que o lock trouxe e que estão fechados: `AplicarMigracoes` **exige
+`MaxConns ≥ 2`** (segura uma ligação e o corpo continua a usar o pool; com uma
+só, bloqueava para sempre — medido com `pool_max_conns=1`, e agora recusado à
+cabeça com mensagem própria); e tenta primeiro `pg_try_advisory_lock`, para poder
+**registar em log** que vai esperar em vez de deixar o `api migrate` parado e
+mudo (N3 e N4 da re-revisão).
 
 ### R8 — Nada impede a próxima edição de uma migração já aplicada
 
@@ -442,6 +464,12 @@ com **excepção declarada** para a `shared/0003` (que já divergiu por R1) — 
 excepção tem de ser nomeada e justificada em código, não um caso especial mudo.
 Não implementar de passagem: mexe no controlo de migrações de todas as bases
 existentes.
+
+**Cuidado que não pode ser descoberto no próprio dia:** o `sha256` terá de ser
+**semeado** a partir do conteúdo actual dos ficheiros para as migrações já
+registadas. Sem esse passo de sementeira, todas as migrações aplicadas até hoje
+nascem com checksum vazio ou divergente e a guarda acusa deriva em toda a linha,
+logo no primeiro arranque de todas as instalações.
 
 ### R9 — Uma guarda derivada é cega ao que a sua fonte não vê
 
