@@ -100,3 +100,40 @@ func TestCarregar_FaltaAdminClient(t *testing.T) {
 		t.Fatal("esperava erro por faltar KEYCLOAK_ADMIN_CLIENT_ID/SECRET")
 	}
 }
+
+func TestCarregar_MigracaoOpcionalEAusenteNaoImpedeArranque(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/sgc")
+	t.Setenv("REDIS_URL", "redis://localhost:6379/0")
+	t.Setenv("KEYCLOAK_ISSUER", "http://localhost:8081/realms/sgc")
+	t.Setenv("KEYCLOAK_ADMIN_CLIENT_ID", "sgc-admin")
+	t.Setenv("KEYCLOAK_ADMIN_CLIENT_SECRET", "segredo")
+	t.Setenv("DATABASE_MIGRATION_URL", "")
+
+	cfg, err := config.Carregar()
+	if err != nil {
+		t.Fatalf("DATABASE_MIGRATION_URL é opcional: o servidor tem de arrancar sem ela; obtive %v", err)
+	}
+	if cfg.URLMigracaoBaseDados != "" {
+		t.Fatalf("esperava DSN de migração vazio, obtive %q", cfg.URLMigracaoBaseDados)
+	}
+}
+
+func TestCarregar_MigracaoQuandoDefinidaEhLida(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://sgc_app:p@localhost:5432/sgc")
+	t.Setenv("REDIS_URL", "redis://localhost:6379/0")
+	t.Setenv("KEYCLOAK_ISSUER", "http://localhost:8081/realms/sgc")
+	t.Setenv("KEYCLOAK_ADMIN_CLIENT_ID", "sgc-admin")
+	t.Setenv("KEYCLOAK_ADMIN_CLIENT_SECRET", "segredo")
+	t.Setenv("DATABASE_MIGRATION_URL", "postgres://sgc:p@localhost:5432/sgc")
+
+	cfg, err := config.Carregar()
+	if err != nil {
+		t.Fatalf("Carregar: %v", err)
+	}
+	if cfg.URLMigracaoBaseDados != "postgres://sgc:p@localhost:5432/sgc" {
+		t.Fatalf("DSN de migração não foi lido: %q", cfg.URLMigracaoBaseDados)
+	}
+	if cfg.URLBaseDados == cfg.URLMigracaoBaseDados {
+		t.Fatal("os dois DSN têm de ser independentes")
+	}
+}

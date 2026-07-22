@@ -13,3 +13,13 @@ CREATE SCHEMA IF NOT EXISTS clinico;
 CREATE SCHEMA IF NOT EXISTS farmacia;
 CREATE SCHEMA IF NOT EXISTS laboratorio;
 CREATE SCHEMA IF NOT EXISTS financeiro;
+
+-- Papel de runtime (ADR-043 / R7). Os PRIVILÉGIOS são dados pela migração
+-- shared/0003_papel_runtime.sql; aqui dá-se apenas a CREDENCIAL de
+-- desenvolvimento. Em produção, ver docs/RUNBOOK-provisionamento-bd.md: a
+-- password é gerada pelo operador e NUNCA vem de git.
+--
+-- Este ficheiro só corre na primeira criação do volume. Numa base de dados de
+-- desenvolvimento já existente, correr à mão:
+--   CREATE ROLE sgc_app NOSUPERUSER NOCREATEDB NOCREATEROLE LOGIN PASSWORD 'sgc_app';
+CREATE ROLE sgc_app NOSUPERUSER NOCREATEDB NOCREATEROLE LOGIN PASSWORD 'sgc_app';

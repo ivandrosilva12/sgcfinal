@@ -471,6 +471,17 @@ Em produção, o papel da aplicação **não deve ser dono** de `financeiro.fact
 contornável pela própria aplicação, e a separação de propriedade — não mais triggers —
 é o que fecha a classe da fabricação.
 
+> **Resolvido pela ADR-043 (2026-07-22).** A credencial de runtime (`sgc_app`, em
+> `DATABASE_URL`) ficou separada da de migração (`sgc`, em `DATABASE_MIGRATION_URL`):
+> `sgc_app` não é dono de nada, não tem DDL e o servidor **recusa arrancar** com um papel
+> que possa desligar triggers ou apagar o audit log (`db.VerificarPapelRuntime`, sem
+> isenção por ambiente). A medição da ADR-043 mostrou que o R7 era mais largo do que
+> aqui se descreve: o papel era **superuser**, não apenas dono, e `TRUNCATE
+> auditoria.auditoria_eventos` apagava o audit log sem sequer tocar em triggers — o que
+> não estava registado em risco nenhum. Ver ADR-043 §1, §2.3 e
+> `docs/RUNBOOK-provisionamento-bd.md`. **Não fecha** o acesso directo ao cluster (DBA,
+> `pg_dump`/`pg_restore`): ver ADR-043 §2.6 e §6 R2.
+
 ## Fora do âmbito desta fatia
 
 Registado explicitamente para não haver leitura optimista desta ADR:

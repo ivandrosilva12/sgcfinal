@@ -17,6 +17,7 @@ type Config struct {
 	PortaHTTP                 string        // porta do servidor HTTP (ex.: "8080")
 	NivelLog                  string        // "debug" | "info" | "warn" | "error"
 	URLBaseDados              string        // DSN PostgreSQL (pgx)
+	URLMigracaoBaseDados      string        // DSN do migrador (ADR-043); opcional — o servidor corre sem ela
 	URLRedis                  string        // URL Redis (redis://...)
 	TimeoutParagem            time.Duration // tempo máximo de shutdown gracioso
 	KeycloakIssuer            string        // issuer OIDC (obrigatório desde Sprint 2)
@@ -54,6 +55,7 @@ func Carregar() (Config, error) {
 		PortaHTTP:                 valorOu("HTTP_PORT", "8080"),
 		NivelLog:                  valorOu("LOG_LEVEL", "info"),
 		URLBaseDados:              os.Getenv("DATABASE_URL"),
+		URLMigracaoBaseDados:      os.Getenv("DATABASE_MIGRATION_URL"),
 		URLRedis:                  os.Getenv("REDIS_URL"),
 		TimeoutParagem:            15 * time.Second,
 		KeycloakIssuer:            os.Getenv("KEYCLOAK_ISSUER"),

@@ -21,7 +21,7 @@ run: ## Arranca a API localmente
 	go run ./cmd/api
 
 .PHONY: migrate
-migrate: ## Aplica as migrations forward-only
+migrate: ## Aplica as migrations forward-only (exige DATABASE_MIGRATION_URL — ADR-043)
 	go run ./cmd/api migrate
 
 .PHONY: test

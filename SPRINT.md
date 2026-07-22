@@ -1,14 +1,69 @@
 # SPRINT ACTUAL
 
 - **Marco**: M4 — Financeiro — **em curso**
-- **Sprint**: 17 (Segurança — imposição uniforme de MFA e factura nascida em RASCUNHO)
+- **Sprint**: 18 (Segurança — separação da credencial de migração da de runtime)
   — **entregue**
-- **Objectivo**: fechar dois riscos herdados da ADR-040 — o **R3** (segundo factor
-  imposto em três dos catorze grupos de rotas, faltando nos outros onze, dos quais dez
-  expõem papel sensível) e o **R6** (a factura podia nascer `EMITIDA`). O **R7** (o
-  papel da aplicação é dono das tabelas fiscais e pode desligar os triggers) fica fora,
-  em fatia própria, e **continua aberto**. A anulação, os pagamentos, o SAF-T-AO e a
-  certificação AGT ficam fora e **não estão feitos**.
+- **Objectivo**: fechar o **R7** da ADR-040 — o papel da aplicação era dono das tabelas
+  de valor legal e podia desligar os triggers que as protegem. A anulação, os pagamentos,
+  o SAF-T-AO e a certificação AGT ficam fora e **não estão feitos**. O acesso directo ao
+  cluster (DBA, `pg_dump`/`pg_restore`) fica declarado como **limite**, não como omissão.
+
+## Sprint 18 — entregue
+
+- [x] **Duas credenciais com significado fixo** em dev, CI e produção: `DATABASE_URL` =
+      runtime (`sgc_app`), `DATABASE_MIGRATION_URL` = migrador (`sgc`).
+      `URLMigracaoBaseDados` é **opcional** em `config.Carregar()` e obrigatória dentro de
+      `ExecutarMigracoes` — é isso que permite ao processo servidor correr sem sequer ter
+      a credencial de migração no ambiente.
+- [x] **Papel `sgc_app`** (`migrations/shared/0003`, forward-only): `NOSUPERUSER
+      NOCREATEDB NOCREATEROLE NOLOGIN`, sem password (a credencial é acto de
+      provisionamento); `USAGE` e **não** `CREATE` nos oito schemas; DML nos sete de
+      negócio; **só `SELECT, INSERT` em `auditoria`**; nada em `public`. `shared/0004`
+      revoga o `DELETE` em `financeiro.series` — cabeça da cadeia hash, sem trigger, e
+      medido: `sgc_app` conseguia `DELETE FROM financeiro.series`.
+- [x] **A medição que o R7 escondia**: `sgc` era **superuser** por construção da imagem, e
+      **`TRUNCATE auditoria.auditoria_eventos` apagava o audit log de retenção obrigatória
+      de 10 anos sem tocar em triggers** — não estava registado em risco nenhum.
+- [x] **`db.VerificarPapelRuntime` no arranque**, sem isenção por ambiente: quatro
+      famílias de interrogação (administrador, posse, criação de objectos em schema **e**
+      na base de dados, mutação do valor legal), todas avaliadas sobre a **união dos
+      papéis assumíveis por `SET ROLE`**. `pg_has_role` com **`MEMBER`, não `USAGE`**:
+      medido, um membro `NOINHERIT` dá `USAGE=false`, `MEMBER=true` e o `SET ROLE`
+      funciona na mesma.
+- [x] **Guarda AST sobre o `app.go`** (`internal/platform/arranque_guarda_test.go`): forma
+      canónica com pacote resolvido por caminho de import, pool de `LigarPool`, `return`
+      directo **e ordem** (índice do `if` < índice do `srv.Iniciar`), falhando fechada.
+      **17 mutações medidas**, incluindo a isenção por ambiente, que é a neutralização
+      mais provável na vida real.
+- [x] **Guarda de deriva — inventário EXACTO** de privilégios (31 tabelas + 3 sequências
+      dos oito schemas), lido por `aclexplode` e não por lista fixa de privilégios
+      (`MAINTAIN` do PG17 não existe no PG16 — medido); `PUBLIC` (oid 0) e papéis
+      assumíveis incluídos no `grantee`; segunda passagem sobre `pg_attribute.attacl`.
+      Os três inventários à mão amarrados à base pela derivação que corresponde ao que
+      cada um decide.
+- [x] **Provas com SQLSTATE verificado** (9 negativas, `42501`/`23001` medidos, não
+      presumidos) e cobertura **positiva** real como `sgc_app` (as 31 tabelas, bloqueio
+      optimista, reescrita de rascunho, `nextval`, emissão com `FOR UPDATE`). Suite verde
+      contra base de desenvolvimento **e** contra base criada do zero.
+- [x] **Runbook de produção** (`docs/RUNBOOK-provisionamento-bd.md`), com cada consulta
+      executada contra uma instalação provisionada por ele. Fixa que o **papel de migração
+      é imutável** durante a vida da instalação (trocá-lo falha em **silêncio**: medido,
+      tabela criada por outro papel nasce sem privilégios para `sgc_app`).
+- [x] **O migrador é `NOSUPERUSER` em produção, sem janela de privilégio.** O ensaio
+      literal do runbook contra um cluster limpo revelou que o `ALTER ROLE` incondicional
+      da `shared/0003` **não corre** com migrador `NOSUPERUSER` — o PostgreSQL exige
+      superuser para tocar no atributo `SUPERUSER`, mesmo para o repor no valor que já
+      tem. Em dev e em CI nunca falhou, porque lá o migrador é superuser por construção da
+      imagem: **o ambiente que a fatia endurece era o único onde o defeito aparecia.** O
+      `ALTER ROLE` passou a condicional (edição justificada por igualdade de resultado —
+      ver ADR-043 §6 R1), e a guarda **continua a morder**: `sgc_app` criado com `CREATEDB`
+      fica `rolcreatedb=f` depois do `api migrate`.
+- [x] **Âmbito registado com honestidade**: o R7 defende contra **aplicação
+      comprometida**, não contra acesso directo ao cluster. A ADR **não** afirma fechar o
+      DBA malicioso nem o `pg_dump`/`pg_restore`, e **não** antecipa anulação, pagamentos,
+      SAF-T-AO ou certificação AGT.
+- [x] ADR-043, e R7 da ADR-040 marcado como resolvido **aditivamente**. CLAUDE.md §6 e o
+      índice de ADRs actualizados; `Próximo ADR: ADR-044`.
 
 ## Sprint 17 — entregue
 
@@ -387,6 +442,43 @@
 - [x] Gates de cobertura verdes (domínio ≥85%, aplicação ≥75%, adaptadores ≥60%);
       `go-arch-lint` sem violações.
 - [x] ADR-039 registada; CLAUDE.md §6 e o índice de ADRs actualizados.
+
+## Critérios de saída — Separação de credenciais / R7 (ADR-043)
+
+- [x] `sgc_app` existe, é `NOSUPERUSER`/`NOCREATEDB`/`NOCREATEROLE` e não é dono de
+      nenhum objecto nem membro de `sgc` (verificado: `pg_auth_members` a zero).
+- [x] O servidor liga-se como `sgc_app` em dev, CI e no compose; a credencial de
+      migração não está no ambiente do processo servidor.
+- [x] `ExecutarServidor` recusa arrancar com papel privilegiado, sem isenção por
+      ambiente — e a verificação é feita sobre a **união dos papéis assumíveis por
+      `SET ROLE`**, não sobre os atributos do papel nem sobre o privilégio herdado.
+- [x] As provas negativas falham com erro de permissão como `sgc_app`, com o **SQLSTATE
+      verificado**. Foram **nove**, não sete: o `TRUNCATE` das duas tabelas do Financeiro
+      juntou-se às sete do desenho, porque os três triggers de imutabilidade são
+      `FOR EACH ROW` e nenhum vê o `TRUNCATE` passar.
+- [x] As provas positivas passam como `sgc_app` — a aplicação não regride: as 31 tabelas
+      dos oito schemas, o bloqueio optimista, a reescrita de rascunho, o `nextval` e a
+      emissão com `SELECT … FOR UPDATE`.
+- [x] O teste de inventário cobre os oito schemas. Foi **além** do desenho: assere o
+      conjunto **exacto** de privilégios relação a relação (apanha deriva nos dois
+      sentidos, incluindo um `GRANT TRUNCATE` colado por engano), inclui sequências e
+      grants de coluna, e vê `PUBLIC` e os papéis assumíveis.
+- [x] `ligar()` falha, em vez de saltar, com configuração pela metade.
+- [x] Mutação feita e registada: 21 mutações independentes contra a guarda de deriva e
+      17 contra a guarda AST, todas medidas a morder. Também contra base de dados criada
+      do zero.
+- [x] Migrações `shared/0003` e `shared/0004` aplicadas e embebidas; forward-only, com
+      **uma excepção registada e justificada**: o `ALTER ROLE` da `shared/0003` foi editado
+      no lugar (passou a condicional) porque a versão original não corre com um migrador
+      `NOSUPERUSER` — edição justificada por igualdade de resultado, documentada na
+      **ADR-043 §6 R1**. É essa a fonte a ler antes de citar este critério para justificar
+      outra edição; nenhuma outra migração já aplicada foi editada.
+- [x] Gates de cobertura verdes (domínio ≥85%, aplicação ≥75%, adaptadores ≥60%);
+      `go-arch-lint` sem violações.
+- [x] Runbook de provisionamento escrito com **cada consulta executada** contra uma
+      instalação provisionada por ele, e não transcrita de memória.
+- [x] ADR-043 registada; R7 da ADR-040 marcado resolvido aditivamente; `CLAUDE.md` §6 e
+      índice de ADRs actualizados; `SPRINT.md` actualizado.
 
 ## Critérios de saída M1
 

@@ -48,6 +48,14 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 	}
 	defer pool.Close()
 
+	// ADR-043 (R7): o servidor recusa arrancar com um papel que possa desligar os
+	// triggers que protegem as facturas e o audit log. Sem isenção por ambiente —
+	// o desenvolvimento liga-se como a produção, que é também o que torna as
+	// provas de integração reais em vez de cerimoniais.
+	if err := db.VerificarPapelRuntime(ctx, pool); err != nil {
+		return fmt.Errorf("papel de runtime inadequado: %w", err)
+	}
+
 	redisCli, err := adredis.Ligar(cfg.URLRedis)
 	if err != nil {
 		return err
@@ -317,13 +325,23 @@ func ExecutarServidor(ctx context.Context, logger *slog.Logger) error {
 
 // ExecutarMigracoes carrega a configuração e aplica as migrations forward-only
 // embebidas, saindo no fim. Usado por `make migrate` (subcomando "migrate").
+//
+// Usa DATABASE_MIGRATION_URL e nunca DATABASE_URL: desde a ADR-043 a credencial
+// de runtime não tem privilégios de DDL, e correr migrations com ela falharia na
+// primeira instrução com um erro de permissão obscuro. Falhar aqui, com mensagem
+// explícita, é mais honesto.
 func ExecutarMigracoes(ctx context.Context, logger *slog.Logger) error {
 	cfg, err := config.Carregar()
 	if err != nil {
 		return err
 	}
 
-	pool, err := db.LigarPool(ctx, cfg.URLBaseDados)
+	if cfg.URLMigracaoBaseDados == "" {
+		return fmt.Errorf("DATABASE_MIGRATION_URL não definida: as migrations exigem a " +
+			"credencial de migração, distinta da de runtime (ADR-043)")
+	}
+
+	pool, err := db.LigarPool(ctx, cfg.URLMigracaoBaseDados)
 	if err != nil {
 		return err
 	}

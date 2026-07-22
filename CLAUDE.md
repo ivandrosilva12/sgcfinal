@@ -70,13 +70,15 @@ seeds/  tests/  docs/  adrs/  docker/
 4. **Cadeia hash de facturas** — SHA-256, imutáveis. Anulação por nova factura.
 5. **Domínio rico, não anémico** — regras nas entidades.
 6. **Fakes > Mocks** em testes de aplicação.
-7. **Forward-only migrations**.
+7. **Forward-only migrations**. Excepção única e registada: a edição do `ALTER ROLE` da
+   `shared/0003` (ver **ADR-043 §6 R1**), justificada por igualdade de resultado. Não é
+   precedente — qualquer outra correcção continua a ser por migração nova.
 8. **Nada de `panic()`** fora de inicialização — sempre `error`.
 9. Cobertura **desde Sprint 1**: domínio ≥85%, aplicação ≥75%, adapters ≥60%.
 
 ## 6. Marco Actual
 
-**M4 — Financeiro** (em curso; Sprints 14–17; ver `SPRINT.md`). Arranque do último dos
+**M4 — Financeiro** (em curso; Sprints 14–18; ver `SPRINT.md`). Arranque do último dos
 5 bounded contexts, precedido da fundação RBAC do 12.º papel **Tesoureiro**
 (ERRATA-002, `docs/ERRATA-002-papel-tesoureiro.md`; não-sensível na fatia do ADR-039 e
 **sensível, com MFA obrigatória**, desde a emissão — ver a revisão de 2026-07-18 na
@@ -132,10 +134,36 @@ deixou a exposição passar — routers de teste com cadeias próprias, nada a v
 nas 10 famílias e routers de teste a espelhar a produção. OTP completo no realm
 (`admin.teste`, `dpo.teste`, `auditor.teste`). **R6:** a factura passa a **nascer
 RASCUNHO** (trigger `BEFORE INSERT ... WHEN (NEW.estado <> 'RASCUNHO')`, migração
-`financeiro/0004`) — **mas** a garantia continua condicionada pelo **R7**, que **continua
-aberto** (a aplicação é dona da tabela e pode desligar o trigger; fatia própria para
-separar a credencial de migração da de runtime). `RegistarHealth` fica isento por
-desenho. **Não existem** ainda anulação, pagamentos, SAF-T-AO nem certificação AGT.
+`financeiro/0004`) — **mas** a garantia ficou condicionada pelo **R7**, fechado depois
+pela ADR-043. `RegistarHealth` fica isento por desenho. **Não existem** ainda anulação,
+pagamentos, SAF-T-AO nem certificação AGT.
+
+A Sprint 18 entregou a **separação da credencial de migração da de runtime** (ADR-043),
+fechando o **R7** — o último risco estrutural herdado da ADR-040. A medição mostrou que o
+R7 era mais largo do que as três ADR anteriores descreviam: o papel único (`sgc`) era
+**superuser** por construção da imagem `postgres:16`, não apenas dono, e **`TRUNCATE
+auditoria.auditoria_eventos` apagava o audit log de retenção obrigatória de 10 anos sem
+sequer tocar em triggers** — não estava registado em risco nenhum. Nasce `sgc_app`
+(`DATABASE_URL`; DML apenas, sem posse e sem DDL), `sgc` fica migrador
+(`DATABASE_MIGRATION_URL`, **opcional** na config precisamente para não ter de viver no
+ambiente do processo servidor), e `db.VerificarPapelRuntime` faz o servidor **recusar
+arrancar** com papel privilegiado, sem isenção por ambiente. As quatro famílias de
+interrogação avaliam o poder sobre a **união dos papéis assumíveis por `SET ROLE`** e não
+os atributos do papel: a lição transferível é que **`pg_has_role` se pergunta com
+`MEMBER`, não com `USAGE`** — medido, um membro `NOINHERIT` dá `USAGE=false`,
+`MEMBER=true` e o `SET ROLE` funciona na mesma. Acrescem uma guarda AST sobre o `app.go`
+(17 mutações medidas) e uma guarda de deriva do **inventário exacto** de privilégios (31
+tabelas + 3 sequências). A fatia custou **dois Critical**, ambos com exploração
+reproduzida e ambos da mesma classe — o âmbito real da verificação era mais estreito do
+que o nome dela prometia. O **R2 (DBA malicioso, `pg_dump`/`pg_restore`) fica declarado
+como limite, não como omissão**: o R7 defende contra aplicação comprometida, não contra
+acesso directo ao cluster. Provisionamento de produção em
+`docs/RUNBOOK-provisionamento-bd.md`, cujo ensaio literal contra um cluster limpo apanhou
+o último defeito da fatia: o `ALTER ROLE` incondicional da `shared/0003` **não corria**
+com o migrador `NOSUPERUSER` que o próprio runbook prescreve — e em dev/CI nunca falhava,
+porque lá o migrador é superuser por construção da imagem. **O ambiente que a fatia
+endurece era o único onde o defeito aparecia.** Continuam por fazer **anulação**,
+**pagamentos**, **SAF-T-AO** e **certificação AGT**.
 
 **M3 — Laboratório** (entregue; Sprints 12–13; ver `SPRINT.md`). Entrega o BC
 Laboratório completo: catálogo de análises, requisição (via ACL sobre o Clínico),
@@ -208,8 +236,9 @@ confirmação humana**. Nunca improvisar decisão arquitectural ou de conformida
 `adrs/ADR-039-bc-financeiro-factura.md`,
 `adrs/ADR-040-emissao-factura.md`,
 `adrs/ADR-041-selagem-canonica.md`,
-`adrs/ADR-042-mfa-uniforme.md`.
-Próximo ADR: **ADR-043**.
+`adrs/ADR-042-mfa-uniforme.md`,
+`adrs/ADR-043-separacao-credenciais.md`.
+Próximo ADR: **ADR-044**.
 
 ## graphify
 
