@@ -7,6 +7,7 @@
 package integration_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ivandrosilva12/sgcfinal/internal/platform/db"
 	"github.com/ivandrosilva12/sgcfinal/migrations"
@@ -24,16 +26,42 @@ import (
 // osOitoSchemas são os schemas de negócio da base de dados: os sete a que o
 // GRANT em massa da migração 0003 dá acesso, mais auditoria (que recebe um
 // GRANT mais restrito, sem UPDATE/DELETE/TRUNCATE). É, ela própria, uma lista
-// mantida à mão — por isso TestRuntime_AcedeATodasAsTabelasDosOitoSchemas não
-// se limita a usá-la: primeiro deriva os schemas de negócio directamente da
-// base (pg_namespace) e assere que os dois conjuntos coincidem exactamente,
-// antes de fazer qualquer varrimento de tabelas. Um bounded context futuro com
-// um schema novo faz essa asserção falhar — em vez de deixar o varrimento
-// passar em silêncio sobre um schema que ninguém enumerou.
+// mantida à mão — por isso nenhuma prova desta suite se limita a usá-la:
+// exigirSchemasDeNegocioCoincidentes deriva os schemas de negócio
+// directamente da base (pg_namespace) e assere que os dois conjuntos
+// coincidem exactamente, antes de qualquer varrimento. Um bounded context
+// futuro com um schema novo faz essa asserção falhar — em vez de deixar o
+// varrimento passar em silêncio sobre um schema que ninguém enumerou.
 var osOitoSchemas = []string{
 	"auditoria", "clinico", "farmacia", "financeiro",
 	"identidade", "laboratorio", "recepcao", "shared",
 }
+
+// schemasDeExtensao é a lista de exclusão declarada para a SEGUNDA causa de um
+// schema aparecer na base sem estar em osOitoSchemas: um schema criado por uma
+// EXTENSÃO do PostgreSQL, e não por um bounded context.
+//
+// As duas causas existem em separado porque o remédio é OPOSTO. Para um
+// bounded context novo, o remédio é conceder USAGE + DML a sgc_app na migração
+// do BC e acrescentá-lo a osOitoSchemas. Para um schema de extensão, conceder
+// DML seria alargar a superfície do runtime exactamente onde esta guarda
+// existe para a estreitar — o remédio certo é declará-lo aqui, sem GRANT
+// nenhum. Colapsar as duas causas numa só mensagem faria a guarda ditar, com
+// autoridade, o remédio inseguro (ADR-043, Minor A da revisão da Tarefa 3).
+//
+// Hoje está vazia, e é o estado correcto: as três extensões instaladas
+// (plpgsql, btree_gist, pg_trgm — medido em pg_extension) vivem em pg_catalog
+// e public, ambos já excluídos pelo filtro. Extensões que instalam schema
+// próprio — pg_cron→cron, postgis→postgis, timescaledb→_timescaledb_catalog,
+// pg_repack→repack — passariam o filtro e cairiam aqui.
+//
+// Nota: a derivação exclui já, automaticamente, os schemas que o PostgreSQL
+// ATRIBUI a uma extensão em pg_depend (deptype 'e'), que é o caso de quem faz
+// `CREATE EXTENSION` sem schema pré-criado. Esta lista cobre o resto: quem
+// cria o schema à mão e só depois lá instala a extensão, caso em que o
+// PostgreSQL não regista dependência nenhuma e o schema fica indistinguível
+// de um schema de negócio.
+var schemasDeExtensao = []string{}
 
 // migrarTudo aplica as migrations com a credencial de MIGRAÇÃO. As provas de
 // privilégio precisam do esquema montado antes de se ligarem como sgc_app.
@@ -182,6 +210,74 @@ func diferencaDeConjuntos(a, b []string) []string {
 	return d
 }
 
+// exigirSchemasDeNegocioCoincidentes deriva, de forma independente, os
+// schemas de negócio que existem de facto na base e assere que esse conjunto
+// coincide exactamente com osOitoSchemas — reportando quais estão a mais e
+// quais a menos, e nomeando as DUAS causas possíveis com o remédio de cada uma
+// (ver schemasDeExtensao). É a mesma disciplina da guarda AST da ADR-042:
+// conjunto nomeado, derivação independente, asserção de que concordam.
+//
+// Vive num helper e não dentro de um teste porque é o pré-requisito de tudo o
+// que varre "os oito schemas": sem ela, um nono schema não enumerado deixaria
+// os varrimentos a passar em silêncio precisamente sobre o schema novo.
+// Escrever a lista à mão uma segunda vez dentro de outro teste reintroduziria
+// esse buraco (ADR-043, correcção 1 da revisão da Tarefa 4).
+//
+// Recebe a ligação de MIGRAÇÃO: enumerar com a credencial sob teste seria
+// circular — um schema sem USAGE para sgc_app não deixa de ser real por isso.
+func exigirSchemasDeNegocioCoincidentes(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+
+	// deptype 'e': o objecto pertence a uma extensão. Cobre o schema que a
+	// própria `CREATE EXTENSION` cria; o resto vive em schemasDeExtensao.
+	rows, err := pool.Query(ctx, `
+		SELECT n.nspname
+		  FROM pg_namespace n
+		 WHERE n.nspname NOT LIKE 'pg\_%'
+		   AND n.nspname NOT IN ('information_schema', 'public')
+		   AND NOT (n.nspname = ANY($1::text[]))
+		   AND NOT EXISTS (SELECT 1 FROM pg_depend d
+		                    WHERE d.classid = 'pg_namespace'::regclass
+		                      AND d.objid = n.oid
+		                      AND d.deptype = 'e')
+		 ORDER BY n.nspname`, schemasDeExtensao)
+	if err != nil {
+		t.Fatalf("derivar os schemas de negócio de pg_namespace: %v", err)
+	}
+	defer rows.Close()
+
+	var schemasDaBase []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			t.Fatalf("ler linha de pg_namespace: %v", err)
+		}
+		schemasDaBase = append(schemasDaBase, s)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("percorrer pg_namespace: %v", err)
+	}
+
+	aMais := diferencaDeConjuntos(schemasDaBase, osOitoSchemas)
+	aMenos := diferencaDeConjuntos(osOitoSchemas, schemasDaBase)
+	if len(aMais) == 0 && len(aMenos) == 0 {
+		return
+	}
+	t.Fatalf("osOitoSchemas diverge dos schemas de negócio reais da base — "+
+		"a mais na base (existem mas não estão em osOitoSchemas, por isso NUNCA "+
+		"seriam enumerados pelas verificações de privilégio) = %v; a menos na base "+
+		"(estão em osOitoSchemas mas não existem de facto) = %v.\n"+
+		"Um schema a mais tem DUAS causas possíveis, com remédios OPOSTOS:\n"+
+		"  (1) bounded context novo — trate-o deliberadamente: GRANT USAGE e o DML "+
+		"mínimo a sgc_app na migração do BC, mais a entrada em osOitoSchemas;\n"+
+		"  (2) schema de uma EXTENSÃO do PostgreSQL instalada fora de pg_catalog/public "+
+		"(pg_cron→cron, postgis→postgis, timescaledb→_timescaledb_catalog, "+
+		"pg_repack→repack) — NÃO lhe conceda DML nenhum: declare-o em schemasDeExtensao. "+
+		"Aplicar o remédio (1) a um schema de extensão alarga a superfície do runtime "+
+		"exactamente onde esta guarda existe para a estreitar (ADR-043)",
+		aMais, aMenos)
+}
+
 // TestRuntime_AcedeATodasAsTabelasDosOitoSchemas é a cobertura positiva que
 // faltava: até aqui, TestRuntime_ContinuaAFazerOTrabalhoLegitimo só exercitava
 // duas tabelas (auditoria_eventos, financeiro.series) como sgc_app — o resto
@@ -190,15 +286,9 @@ func diferencaDeConjuntos(a, b []string) []string {
 // os 25 ficheiros de teste de integração pré-existentes ligam-se todos como
 // sgc (migração), nunca como sgc_app.
 //
-// Este teste começa por derivar, de forma independente, os schemas de negócio
-// que existem de facto na base (pg_namespace, com a credencial de MIGRAÇÃO —
-// enumerar com a credencial sob teste seria circular: um schema sem USAGE
-// para sgc_app não deixaria de ser real só por isso, foi bem feito da
-// primeira vez) e assere que esse conjunto coincide exactamente com
-// osOitoSchemas, reportando quais schemas estão a mais e quais a menos se não
-// coincidir — a mesma disciplina da guarda AST da ADR-042: conjunto nomeado,
-// derivação independente, asserção de que concordam. Só depois enumera as
-// tabelas a partir de information_schema.tables (também com a credencial de
+// Este teste começa por exigir que osOitoSchemas coincida com os schemas de
+// negócio reais da base (exigirSchemasDeNegocioCoincidentes). Só depois enumera
+// as tabelas a partir de information_schema.tables (com a credencial de
 // migração, que tem de ver tudo) e tenta um SELECT em cada uma como sgc_app.
 // As duas verificações juntas apanham, de uma vez, um bounded context novo com
 // schema próprio — a asserção de igualdade fica vermelha antes de qualquer
@@ -209,37 +299,7 @@ func TestRuntime_AcedeATodasAsTabelasDosOitoSchemas(t *testing.T) {
 	poolMigracao, ctxMigracao := ligar(t)
 	poolApp, ctxApp := ligarApp(t)
 
-	schemasRows, err := poolMigracao.Query(ctxMigracao, `
-		SELECT nspname FROM pg_namespace
-		WHERE nspname NOT LIKE 'pg\_%' AND nspname NOT IN ('information_schema', 'public')
-		ORDER BY nspname`)
-	if err != nil {
-		t.Fatalf("derivar os schemas de negócio de pg_namespace: %v", err)
-	}
-	var schemasDaBase []string
-	for schemasRows.Next() {
-		var s string
-		if err := schemasRows.Scan(&s); err != nil {
-			t.Fatalf("ler linha de pg_namespace: %v", err)
-		}
-		schemasDaBase = append(schemasDaBase, s)
-	}
-	if err := schemasRows.Err(); err != nil {
-		t.Fatalf("percorrer pg_namespace: %v", err)
-	}
-	schemasRows.Close()
-
-	aMais := diferencaDeConjuntos(schemasDaBase, osOitoSchemas)
-	aMenos := diferencaDeConjuntos(osOitoSchemas, schemasDaBase)
-	if len(aMais) > 0 || len(aMenos) > 0 {
-		t.Fatalf("osOitoSchemas diverge dos schemas de negócio reais da base — "+
-			"a mais na base (schemas que existem mas não estão em osOitoSchemas, "+
-			"por isso NUNCA seriam enumerados abaixo) = %v; a menos na base "+
-			"(estão em osOitoSchemas mas não existem de facto) = %v — um bounded "+
-			"context novo precisa de ser tratado deliberadamente (privilégios na "+
-			"migração + entrada em osOitoSchemas) antes de este teste voltar a verde",
-			aMais, aMenos)
-	}
+	exigirSchemasDeNegocioCoincidentes(t, ctxMigracao, poolMigracao)
 
 	rows, err := poolMigracao.Query(ctxMigracao,
 		`SELECT table_schema, table_name FROM information_schema.tables
@@ -387,5 +447,196 @@ func TestRuntime_SeriesSemDelete(t *testing.T) {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
 		t.Fatalf("esperava SQLSTATE 42501 (insufficient_privilege) no DELETE de financeiro.series, obtive: %v", err)
+	}
+}
+
+// privilegiosEsperados devolve o conjunto EXACTO de privilégios que sgc_app
+// tem de ter sobre uma relação dos oito schemas, por ordem alfabética (a mesma
+// do string_agg da consulta). É a transcrição fiel do que as migrações
+// concedem, e não uma lista independente: por isso a regra é por SCHEMA, com
+// as excepções por tabela declaradas à parte — uma tabela nova no schema
+// auditoria herda automaticamente a expectativa certa, em vez de nascer fora
+// do inventário.
+//
+//   - migrations/shared/0003_papel_runtime.sql concede, nos sete schemas de
+//     negócio, SELECT/INSERT/UPDATE/DELETE em tabelas e USAGE/SELECT em
+//     sequências; e, no schema auditoria, apenas SELECT/INSERT em tabelas.
+//   - migrations/shared/0004_series_sem_delete.sql revoga o DELETE em
+//     financeiro.series.
+func privilegiosEsperados(schema, nome string, ehSequencia bool) []string {
+	if ehSequencia {
+		// Assimetria conhecida e deliberada (documentada em
+		// migrations/shared/0004): o schema auditoria NÃO recebe privilégios de
+		// sequência, nem por GRANT em massa nem por default privileges. A única
+		// sequência que lá existe é auditoria_eventos_id_seq, criada
+		// implicitamente pela coluna GENERATED ALWAYS AS IDENTITY de
+		// migrations/auditoria/0001 — e uma coluna IDENTITY não consome
+		// USAGE/SELECT na sequência (o INSERT no audit log funciona sem eles, o
+		// que TestRuntime_ContinuaAFazerOTrabalhoLegitimo prova). Conceder ali
+		// privilégio seria dar algo que nada consome. Medido contra a base:
+		// auditoria.auditoria_eventos_id_seq tem ACL vazia para sgc_app,
+		// enquanto farmacia.seq_codigo_medicamento e shared.outbox_id_seq têm
+		// SELECT+USAGE. O teste reflecte a assimetria em vez de a esconder.
+		//
+		// UPDATE não é concedido em sequência nenhuma: só `setval` o consome, e
+		// reescrever o contador não é trabalho legítimo do runtime — o nextval
+		// basta-se com USAGE.
+		if schema == "auditoria" {
+			return nil
+		}
+		return []string{"SELECT", "USAGE"}
+	}
+	// Append-only: retenção obrigatória de 10 anos (LPDP / Lei 22/11). Sem
+	// UPDATE nem DELETE ao nível do privilégio, a imutabilidade do audit log
+	// deixa de depender exclusivamente do trigger trg_auditoria_imutavel.
+	if schema == "auditoria" {
+		return []string{"INSERT", "SELECT"}
+	}
+	// financeiro.series é a cabeça da cadeia hash e da numeração sem buracos da
+	// ADR-040 (ultimo_sequencial, ultimo_hash) e não tem trigger nenhum a
+	// protegê-la — é serializada por SELECT ... FOR UPDATE. Apagar a linha perde
+	// o ultimo_hash e o elo seguinte nasce partido, sem reparação possível
+	// (migrations/shared/0004). SELECT, INSERT e UPDATE continuam a ser trabalho
+	// legítimo do runtime.
+	if schema == "financeiro" && nome == "series" {
+		return []string{"INSERT", "SELECT", "UPDATE"}
+	}
+	return []string{"DELETE", "INSERT", "SELECT", "UPDATE"}
+}
+
+// listaDePrivilegios parte a lista separada por vírgulas que a consulta
+// devolve, tratando a lista vazia como conjunto vazio: strings.Split("", ",")
+// devolveria [""], que envenenaria as diferenças de conjuntos com um elemento
+// fantasma.
+func listaDePrivilegios(csv string) []string {
+	if csv == "" {
+		return nil
+	}
+	return strings.Split(csv, ",")
+}
+
+// TestPrivilegios_InventarioExactoDeTabelasESequencias é a guarda de deriva do
+// inventário de privilégios (ADR-043, Tarefa 4). Existe por duas razões
+// distintas:
+//
+//  1. O `ALTER DEFAULT PRIVILEGES` da migração 0003 cobre tabelas novas em
+//     schemas existentes, mas NÃO cobre um schema novo — que é o que um
+//     bounded context novo traz. Uma tabela órfã sem GRANT nenhum aparece aqui
+//     como privilégios "a menos".
+//
+//  2. Verificar apenas a PRESENÇA de SELECT apanharia a deriva num sentido e
+//     seria cega ao outro, que é o perigoso: um `GRANT TRUNCATE` colado a uma
+//     tabela por engano passaria despercebido, e TRUNCATE não dispara triggers
+//     FOR EACH ROW — é assim que se destrói a cadeia de hash das facturas e o
+//     audit log (medido na Tarefa 3: com TRUNCATE concedido, as quatro
+//     interrogações de VerificarPapelRuntime ficavam limpas e o `TRUNCATE
+//     financeiro.itens_factura, financeiro.facturas` executou). Por isso a
+//     asserção é sobre o conjunto EXACTO, relação a relação, e não sobre a
+//     presença de um privilégio.
+//
+// Cobre tabelas E sequências. Cobrir só tabelas seria a mesma classe de
+// defeito que esta fatia já pagou duas vezes: âmbito real mais estreito do que
+// o nome promete.
+//
+// O inventário é lido de pg_class/aclexplode com a credencial de MIGRAÇÃO, e
+// não de has_table_privilege por privilégio nomeado, deliberadamente: a lista
+// dos privilégios que existem é um facto da VERSÃO do PostgreSQL, não deste
+// projecto, e uma lista fixa ficaria atrás da próxima versão em silêncio (o
+// PG17 acrescenta MAINTAIN, que o PG16 nem reconhece — medido: `unrecognized
+// privilege type`). Ler a ACL devolve qualquer privilégio que o servidor
+// conheça. O filtro sobre grantee inclui o pseudo-papel PUBLIC (oid 0) e os
+// papéis que sgc_app pode assumir por SET ROLE — um `GRANT TRUNCATE ... TO
+// PUBLIC` chega a sgc_app na mesma.
+//
+// Torna redundante uma verificação separada só sobre
+// auditoria.auditoria_eventos: a expectativa append-only dessa tabela é
+// asserida aqui, no mesmo sítio que todas as outras, para que não possam
+// existir duas verificações a dizer coisas diferentes sobre a mesma tabela.
+func TestPrivilegios_InventarioExactoDeTabelasESequencias(t *testing.T) {
+	migrarTudo(t)
+	pool, ctx := ligar(t)
+
+	// Sem isto, um nono schema não enumerado deixava o varrimento abaixo a
+	// passar em silêncio precisamente sobre o schema novo.
+	exigirSchemasDeNegocioCoincidentes(t, ctx, pool)
+
+	const q = `
+		SELECT n.nspname, c.relname, c.relkind = 'S',
+		       coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), ''),
+		       CASE WHEN c.relkind = 'r'
+		            THEN has_table_privilege('sgc_app', c.oid, 'TRUNCATE') END
+		  FROM pg_class c
+		  JOIN pg_namespace n ON n.oid = c.relnamespace
+		  LEFT JOIN LATERAL (
+		        SELECT x.privilege_type
+		          FROM aclexplode(coalesce(c.relacl,
+		                 acldefault((CASE c.relkind WHEN 'S' THEN 's' ELSE 'r' END)::"char",
+		                            c.relowner))) x
+		         WHERE x.grantee = 0 OR pg_has_role('sgc_app', x.grantee, 'MEMBER')) a ON TRUE
+		 WHERE c.relkind IN ('r', 'S') AND n.nspname = ANY($1::text[])
+		 GROUP BY n.nspname, c.relname, c.relkind, c.oid
+		 ORDER BY n.nspname, c.relname`
+
+	rows, err := pool.Query(ctx, q, osOitoSchemas)
+	if err != nil {
+		t.Fatalf("inventariar os privilégios de sgc_app: %v", err)
+	}
+	defer rows.Close()
+
+	type relacao struct {
+		schema, nome  string
+		ehSequencia   bool
+		privilegios   string
+		truncEfectivo *bool
+	}
+	var relacoes []relacao
+	for rows.Next() {
+		var r relacao
+		if err := rows.Scan(&r.schema, &r.nome, &r.ehSequencia, &r.privilegios, &r.truncEfectivo); err != nil {
+			t.Fatalf("ler linha do inventário de privilégios: %v", err)
+		}
+		relacoes = append(relacoes, r)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("percorrer o inventário de privilégios: %v", err)
+	}
+	if len(relacoes) == 0 {
+		t.Fatal("esperava encontrar tabelas e sequências nos oito schemas — " +
+			"a consulta do inventário ou a lista de schemas está errada")
+	}
+
+	for _, r := range relacoes {
+		t.Run(r.schema+"."+r.nome, func(t *testing.T) {
+			especie := "tabela"
+			if r.ehSequencia {
+				especie = "sequência"
+			}
+			esperados := privilegiosEsperados(r.schema, r.nome, r.ehSequencia)
+			esperado := strings.Join(esperados, ",")
+			if r.privilegios != esperado {
+				tem := listaDePrivilegios(r.privilegios)
+				aMais := diferencaDeConjuntos(tem, esperados)
+				aMenos := diferencaDeConjuntos(esperados, tem)
+				t.Fatalf("os privilégios de sgc_app sobre a %s %s.%s divergem do inventário "+
+					"declarado — tem [%s], devia ter [%s]; a mais = %v; a menos = %v.\n"+
+					"A MAIS é o caso perigoso: um privilégio concedido por engano (TRUNCATE "+
+					"acima de todos, que não dispara triggers FOR EACH ROW) destrói valor legal "+
+					"sem deixar rasto — revogue-o por migração nova. A MENOS parte a aplicação: "+
+					"acrescente o GRANT à migração que criou a relação, ou trate o caso em "+
+					"privilegiosEsperados se a regra mudou deliberadamente (ADR-043)",
+					especie, r.schema, r.nome, r.privilegios, esperado, aMais, aMenos)
+			}
+			// A ACL diz o que foi CONCEDIDO; has_table_privilege diz o que o papel
+			// EFECTIVAMENTE pode. As duas divergem se sgc_app for superuser — que
+			// não precisa de ACL nenhuma e pode tudo. VerificarPapelRuntime já
+			// recusa arrancar nesse caso, mas esta prova não depende dela: no
+			// privilégio que destrói a cadeia de hash, as duas respostas têm de
+			// concordar.
+			if r.truncEfectivo != nil && *r.truncEfectivo {
+				t.Fatalf("sgc_app tem TRUNCATE efectivo em %s.%s apesar de a ACL não o conceder — "+
+					"sinal de que o papel é superuser, ou de que o privilégio lhe chega por uma "+
+					"via que a ACL da relação não mostra (ADR-043)", r.schema, r.nome)
+			}
+		})
 	}
 }
