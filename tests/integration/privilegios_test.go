@@ -666,11 +666,23 @@ func TestPrivilegios_InventarioExactoDeTabelasESequencias(t *testing.T) {
 	// era mais estreito do que o próprio pg_tables do brief, que já inclui 'p':
 	// particionar auditoria.auditoria_eventos — a candidata natural, com
 	// retenção obrigatória de 10 anos — converte-a a 'p' e fá-la SAIR do
-	// inventário em silêncio, levando consigo as partições, cujos grants vêm do
-	// pai. Reproduzido: `CREATE TABLE ... PARTITION BY RANGE` mais `GRANT
-	// TRUNCATE` deixava a suite verde (ADR-043, Important 1 da revisão da Tarefa
-	// 4). O acldefault continua a distinguir só sequência de não-sequência, que
-	// é a distinção que ele próprio faz.
+	// inventário em silêncio. Reproduzido: `CREATE TABLE ... PARTITION BY RANGE`
+	// mais `GRANT TRUNCATE` deixava a suite verde (ADR-043, Important 1 da
+	// revisão da Tarefa 4).
+	//
+	// As partições, essas, continuavam a ser varridas — nascem com relkind 'r' e
+	// NÃO herdam a ACL do pai (medido: com `GRANT TRUNCATE` no pai, o pai fica
+	// `sgc_app=arwdD/sgc` e a partição criada a seguir nasce `sgc_app=arwd/sgc`,
+	// vinda dos default privileges). A razão pela qual isso não salvava nada é
+	// mais forte: o privilégio do PAI basta para destruir toda a hierarquia.
+	// Medido, com TRUNCATE explicitamente REVOGADO na partição
+	// (has_table_privilege: pai=t, partição=f), `TRUNCATE` no pai como sgc_app
+	// executou e esvaziou a partição na mesma. Um pai fora do inventário é toda
+	// a hierarquia fora do inventário, por mais apertados que sejam os
+	// privilégios das partições.
+	//
+	// O acldefault continua a distinguir só sequência de não-sequência, que é a
+	// distinção que ele próprio faz.
 	//
 	// is_grantable entra no texto do privilégio, e não é ignorado: um `GRANT
 	// SELECT ... WITH GRANT OPTION` deixa sgc_app re-conceder a terceiros, o que
