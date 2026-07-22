@@ -21,50 +21,59 @@ const pacoteDBImportPath = "github.com/ivandrosilva12/sgcfinal/internal/platform
 // passar na mesma, porque essas chamam a função directamente e não pelo
 // arranque.
 //
-// A guarda original (anterior a esta correcção) só verificava que a SelectorExpr
-// `db.VerificarPapelRuntime(...)` aparecia algures dentro de ExecutarServidor —
-// via ast.Inspect sem restrição de posição ou de tratamento do erro. Isso
-// aceitava, além da remoção pura, seis variantes que não protegem nada:
+// A guarda exige uma FORMA CANÓNICA, e recusa tudo o resto (falha fechada). No
+// corpo de ExecutarServidor tem de existir um statement DIRECTO — elemento de
+// Body.List, não aninhado em coisa nenhuma — que seja um `if` com:
 //
-//  1. `_ = db.VerificarPapelRuntime(ctx, pool)` — chamada feita, erro descartado.
-//  2. erro capturado mas só passado a `logger.Warn`, sem `return`.
-//  3. chamada dentro de `if false { ... }` — nunca executa.
-//  4. chamada dentro de uma closure atribuída a uma variável nunca invocada.
-//  5. `db` redefinido por um import com esse alias apontando para outro
-//     pacote, enquanto o pacote real (com o mesmo nome de função) fica sob um
-//     alias diferente — a guarda por nome via "db.VerificarPapelRuntime" e
-//     achava-se satisfeita, sem que a função real alguma vez fosse chamada.
+//  1. Init = atribuição de uma só variável ao resultado de uma chamada a
+//     VerificarPapelRuntime, num pacote resolvido pelo CAMINHO DE IMPORT
+//     (pacoteDBImportPath), não pelo identificador "db";
+//  2. segundo argumento dessa chamada = o mesmo identificador que recebeu o
+//     pool de db.LigarPool (também resolvido por caminho);
+//  3. Cond = `<mesma variável> != nil`;
+//  4. Body.List com um `return` DIRECTO;
+//  5. índice desse `if` estritamente menor que o índice do statement que
+//     contém a chamada a `.Iniciar` do servidor — verifica-se ANTES de servir.
 //
-// Esta versão exige DUAS coisas, cada uma insuficiente sem a outra:
+// Duas escolhas de desenho fazem o trabalho pesado, e são o motivo de esta
+// versão ser mais curta do que a anterior em vez de mais longa:
 //
-//  1. Resolução por caminho de import, não por identificador — o pacote do
-//     lado esquerdo do selector é resolvido contra os imports do próprio
-//     ficheiro (resolverAliasesDeImport) e comparado a pacoteDBImportPath.
-//     Isto apanha a variante 5 (o nome "db" ligado a outro pacote) e, ao
-//     mesmo tempo, não quebra se o import real for renomeado para outro
-//     alias (ex.: `dbreal "…/internal/platform/db"`), porque o que importa é
-//     o caminho, não o nome local.
-//  2. A chamada tem de ser tratada como fatal — Init de um `if` cujo Cond
-//     compara a variável atribuída com `nil` e cujo corpo contém, em algum
-//     ponto do seu próprio bloco (sem descer a closures aninhadas), um
-//     `return`. Isto apanha as variantes 1 (erro descartado, não há `if`
-//     nenhum a examinar), 2 (corpo sem `return`) e 3 (o `if false` que
-//     envolve o padrão é reconhecido como ramo morto e podado da procura,
-//     antes de sequer se olhar para o que lá dentro). A variante 4 (closure
-//     nunca invocada) fica de fora porque só se desce para dentro de um
-//     `*ast.FuncLit` quando ele é invocado imediatamente (`func(){...}()`) —
-//     uma atribuição a uma variável não conta, invocada depois ou não.
+//   - Exigir que o `if` seja elemento DIRECTO de Body.List dispensa reconhecer
+//     ramos mortos. A versão anterior descia recursivamente e tentava podar o
+//     caso `if false { … }` com um teste ao literal `false` — o que deixava
+//     passar `if 1 == 2 { … }` (medido: guarda VERDE) e qualquer outra
+//     constante falsa. Aninhar a verificação em seja o que for passa agora a
+//     ser recusado sem a guarda ter de avaliar constantes nem provar que o
+//     ramo é morto.
+//   - Percorrer Body.List por índice dá de graça a garantia de ORDEM, que a
+//     versão anterior declarava como limitação por ser cara. Deixou de ser.
 //
-// O que esta guarda NÃO garante, deliberadamente: a POSIÇÃO da chamada dentro
-// de ExecutarServidor. Uma chamada colocada depois de `return srv.Iniciar(ctx)`
-// (ou, de forma mais realista, depois de o servidor já ter começado a aceitar
-// ligações) passaria por esta guarda na mesma — é a mesma limitação que a
-// versão anterior já documentava, e fica deliberadamente por corrigir aqui: o
-// pedido desta tarefa era endurecer contra ERRO DESCARTADO e ALIAS TROCADO,
-// não contra ORDEM. Uma guarda de posição exigiria comparar índices de
-// statement dentro do corpo da função, o que a tornaria frágil a qualquer
-// refactor inócuo de ExecutarServidor; não vale o custo para o que é, no
-// limite, um erro de code review humano mais do que um ataque automatizável.
+// Variantes medidas por mutação real de app.go (gofmt + go build + esta guarda,
+// com `git checkout --` entre cada uma). Contra a versão anterior desta guarda,
+// (g), (h), (i) e (k) ficavam VERDES:
+//
+//	a  `_ = db.VerificarPapelRuntime(...)`                    → VERMELHO
+//	b  erro só em logger.Warn, sem return                     → VERMELHO
+//	c  dentro de `if false { … }`                             → VERMELHO
+//	d  dentro de closure nunca invocada                       → VERMELHO
+//	e  `db` como alias de OUTRO pacote (chamariz)             → VERMELHO
+//	f  alias legítimo do pacote certo (`dbreal "…/db"`)       → VERDE
+//	g  chamada depois de `srv.Iniciar`                        → VERMELHO
+//	h  dentro de `if 1 == 2 { … }`                            → VERMELHO
+//	i  isenção por ambiente (`if cfg.EmProducao()` aninhado)  → VERMELHO
+//	j  código real, intocado                                  → VERDE
+//	k  chamada com outro pool (`db.Verificar…(ctx, outro)`)   → VERMELHO
+//
+// A variante (i) é a neutralização mais provável na vida real: lê-se como
+// engenharia razoável num code review e é exactamente o que o comentário de
+// app.go proíbe (sem isenção por ambiente). Fica fechada pelo requisito 4 — o
+// `return` tem de estar DIRECTO no corpo do `if`, não dentro de um `if`
+// aninhado.
+//
+// O que esta guarda NÃO garante, deliberadamente: que a função verificada faça
+// o que promete (isso é a suite de tests/integration) e que não exista uma
+// segunda chamada, mais abaixo, que desfaça o efeito da primeira — não há forma
+// de o fazer sem interpretar o programa.
 func TestArranque_VerificaOPapelDeRuntime(t *testing.T) {
 	fset := token.NewFileSet()
 	ficheiro, err := parser.ParseFile(fset, "app.go", nil, 0)
@@ -74,22 +83,56 @@ func TestArranque_VerificaOPapelDeRuntime(t *testing.T) {
 
 	aliases := resolverAliasesDeImport(ficheiro)
 
-	var encontrada bool
+	var corpo *ast.BlockStmt
 	for _, decl := range ficheiro.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "ExecutarServidor" || fn.Body == nil {
-			continue
-		}
-		if contemChamadaTratadaComoFatal(fn.Body, aliases) {
-			encontrada = true
+		if ok && fn.Name.Name == "ExecutarServidor" && fn.Body != nil {
+			corpo = fn.Body
+			break
 		}
 	}
+	if corpo == nil {
+		t.Fatal("não encontrei ExecutarServidor com corpo em app.go: a guarda falha fechada — " +
+			"se a função foi renomeada, actualize também esta guarda (ADR-043)")
+	}
 
-	if !encontrada {
-		t.Fatal("ExecutarServidor tem de tratar o erro de db.VerificarPapelRuntime (resolvido " +
-			"pelo caminho de import real, não só pelo nome do identificador) como fatal — a " +
-			"chamada como Init de um `if` cujo corpo devolve. Sem isso, a separação de " +
-			"credenciais da ADR-043 volta a ser uma suposição sobre o deployment")
+	nomePool := identificadorDoPool(corpo, aliases)
+	if nomePool == "" {
+		t.Fatal("não encontrei, como statement directo de ExecutarServidor, a atribuição do " +
+			"pool a partir de LigarPool no pacote " + pacoteDBImportPath + ": a guarda falha " +
+			"fechada porque sem saber qual é o pool não consegue verificar que é ESSE que vai " +
+			"à verificação de privilégios (ADR-043)")
+	}
+
+	indiceVerificacao := -1
+	for i, stmt := range corpo.List {
+		ifStmt, ok := stmt.(*ast.IfStmt)
+		if ok && verificacaoCanonica(ifStmt, aliases, nomePool) {
+			indiceVerificacao = i
+			break
+		}
+	}
+	if indiceVerificacao < 0 {
+		t.Fatal("ExecutarServidor tem de conter, como statement DIRECTO do seu corpo, " +
+			"`if err := db.VerificarPapelRuntime(ctx, " + nomePool + "); err != nil { return … }` " +
+			"— com o pacote resolvido pelo caminho de import real, o mesmo pool de LigarPool e " +
+			"um `return` directo no corpo do `if`. Aninhado em `if`, closure ou qualquer outra " +
+			"coisa não conta, e o erro não pode ser descartado nem só registado. Sem isto, a " +
+			"separação de credenciais da ADR-043 volta a ser uma suposição sobre o deployment")
+	}
+
+	indiceArranque := indiceDoArranque(corpo)
+	if indiceArranque < 0 {
+		t.Fatal("não encontrei, como statement directo de ExecutarServidor, a chamada a " +
+			"`.Iniciar` do servidor: a guarda falha fechada porque sem esse ponto de referência " +
+			"não consegue provar que a verificação de privilégios corre ANTES de o servidor " +
+			"começar a servir (ADR-043)")
+	}
+	if indiceVerificacao >= indiceArranque {
+		t.Fatalf("a verificação do papel de runtime está no statement %d e o arranque do "+
+			"servidor no %d: verificar depois de servir não protege nada — a janela entre "+
+			"aceitar ligações e recusar arrancar é exactamente o que a ADR-043 fecha",
+			indiceVerificacao, indiceArranque)
 	}
 }
 
@@ -124,87 +167,51 @@ func resolverAliasesDeImport(ficheiro *ast.File) map[string]string {
 	return aliases
 }
 
-// ehChamadaAoPacoteDB confirma que a chamada é `<alias>.VerificarPapelRuntime(...)`
-// e que <alias>, resolvido pelos imports do ficheiro, aponta mesmo para
-// pacoteDBImportPath — não apenas que se chama "db".
-func ehChamadaAoPacoteDB(chamada *ast.CallExpr, aliases map[string]string) bool {
+// chamadaAoPacoteDB confirma que a expressão é uma chamada
+// `<alias>.<funcao>(...)` em que <alias>, resolvido pelos imports do ficheiro,
+// aponta mesmo para pacoteDBImportPath — não apenas que se chama "db".
+func chamadaAoPacoteDB(expr ast.Expr, aliases map[string]string, funcao string) (*ast.CallExpr, bool) {
+	chamada, ok := expr.(*ast.CallExpr)
+	if !ok {
+		return nil, false
+	}
 	sel, ok := chamada.Fun.(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != "VerificarPapelRuntime" {
-		return false
+	if !ok || sel.Sel.Name != funcao {
+		return nil, false
 	}
 	pacote, ok := sel.X.(*ast.Ident)
 	if !ok {
-		return false
+		return nil, false
 	}
-	return aliases[pacote.Name] == pacoteDBImportPath
+	return chamada, aliases[pacote.Name] == pacoteDBImportPath
 }
 
-// contemChamadaTratadaComoFatal percorre um nó a partir do corpo de
-// ExecutarServidor à procura do padrão `if err := db.VerificarPapelRuntime(...);
-// err != nil { … return … }`. Não é um ast.Inspect genérico: a descida é
-// explícita por tipo de nó, precisamente para poder recusar-se a descer em
-// dois casos —
-//
-//   - um `if` cuja condição é o literal `false` (ramo morto, variante 3);
-//   - um `*ast.FuncLit` que não é o `Fun` de uma chamada imediata (closure não
-//     invocada, variante 4).
-//
-// Qualquer nó de outro tipo não descrito abaixo devolve false sem recursão —
-// isto é deliberado: o padrão-alvo só existe dentro de BlockStmt/IfStmt/
-// ExprStmt/CallExpr(FuncLit imediato), e alargar a recursão a mais tipos de
-// nó (for, switch, etc.) não é preciso para os casos desta tarefa e alargaria
-// a superfície sem prova de que fecha algo real.
-func contemChamadaTratadaComoFatal(node ast.Node, aliases map[string]string) bool {
-	switch n := node.(type) {
-	case *ast.BlockStmt:
-		for _, stmt := range n.List {
-			if contemChamadaTratadaComoFatal(stmt, aliases) {
-				return true
-			}
+// identificadorDoPool devolve o nome da variável que recebe o pool de
+// db.LigarPool como statement DIRECTO do corpo — `pool, err := db.LigarPool(…)`.
+// Devolve "" se não existir: é o que permite à guarda exigir que seja ESSE pool
+// a ir à verificação, fechando a variante em que a chamada existe mas recebe
+// outro pool qualquer (por exemplo o da credencial de migração, que passaria
+// a verificação enquanto o pool real, privilegiado, ficava por verificar).
+func identificadorDoPool(corpo *ast.BlockStmt, aliases map[string]string) string {
+	for _, stmt := range corpo.List {
+		atribuicao, ok := stmt.(*ast.AssignStmt)
+		if !ok || len(atribuicao.Rhs) != 1 || len(atribuicao.Lhs) == 0 {
+			continue
 		}
-		return false
-	case *ast.IfStmt:
-		if ehLiteralFalse(n.Cond) {
-			return false // ramo morto: nunca executa, não conta como protecção real
+		if _, ok := chamadaAoPacoteDB(atribuicao.Rhs[0], aliases, "LigarPool"); !ok {
+			continue
 		}
-		if chamadaTratadaComoFatalNesteIf(n, aliases) {
-			return true
+		if ident, ok := atribuicao.Lhs[0].(*ast.Ident); ok {
+			return ident.Name
 		}
-		if contemChamadaTratadaComoFatal(n.Body, aliases) {
-			return true
-		}
-		if n.Else != nil {
-			return contemChamadaTratadaComoFatal(n.Else, aliases)
-		}
-		return false
-	case *ast.ExprStmt:
-		return contemChamadaTratadaComoFatal(n.X, aliases)
-	case *ast.CallExpr:
-		if funcLit, ok := n.Fun.(*ast.FuncLit); ok {
-			// IIFE — func(){...}() — invocada imediatamente: entra.
-			return contemChamadaTratadaComoFatal(funcLit.Body, aliases)
-		}
-		return false
-	default:
-		return false
 	}
+	return ""
 }
 
-// ehLiteralFalse reconhece exactamente o literal `false` como condição de um
-// `if`. Não tenta avaliação de constantes em geral (ex.: `1 == 2`) — o caso
-// pedido por esta tarefa é `if false { … }`, e ir além disso não tem prova de
-// necessidade.
-func ehLiteralFalse(cond ast.Expr) bool {
-	ident, ok := cond.(*ast.Ident)
-	return ok && ident.Name == "false"
-}
-
-// chamadaTratadaComoFatalNesteIf confirma que ESTE `if`, especificamente, é o
-// padrão `if err := db.VerificarPapelRuntime(...); err != nil { … return … }`:
-// o Init é uma atribuição de uma única variável ao resultado da chamada ao
-// pacote db, o Cond compara essa MESMA variável com `nil`, e o Body contém um
-// `return` nalgum ponto do seu próprio bloco.
-func chamadaTratadaComoFatalNesteIf(ifStmt *ast.IfStmt, aliases map[string]string) bool {
+// verificacaoCanonica confirma que ESTE `if`, especificamente, é a forma
+// canónica: `if <err> := <pacote db>.VerificarPapelRuntime(<ctx>, <pool>);
+// <err> != nil { … return … }`, com o `return` directo no corpo.
+func verificacaoCanonica(ifStmt *ast.IfStmt, aliases map[string]string, nomePool string) bool {
 	atribuicao, ok := ifStmt.Init.(*ast.AssignStmt)
 	if !ok || len(atribuicao.Lhs) != 1 || len(atribuicao.Rhs) != 1 {
 		return false
@@ -213,14 +220,21 @@ func chamadaTratadaComoFatalNesteIf(ifStmt *ast.IfStmt, aliases map[string]strin
 	if !ok {
 		return false
 	}
-	chamada, ok := atribuicao.Rhs[0].(*ast.CallExpr)
-	if !ok || !ehChamadaAoPacoteDB(chamada, aliases) {
+	chamada, ok := chamadaAoPacoteDB(atribuicao.Rhs[0], aliases, "VerificarPapelRuntime")
+	if !ok {
+		return false
+	}
+	if len(chamada.Args) != 2 {
+		return false
+	}
+	argPool, ok := chamada.Args[1].(*ast.Ident)
+	if !ok || argPool.Name != nomePool {
 		return false
 	}
 	if !condicaoComparaComNil(ifStmt.Cond, varErro.Name) {
 		return false
 	}
-	return contemReturn(ifStmt.Body)
+	return contemReturnDirecto(ifStmt.Body)
 }
 
 // condicaoComparaComNil confirma que cond é `nomeVar != nil` ou `nil !=
@@ -240,24 +254,54 @@ func condicaoComparaComNil(cond ast.Expr, nomeVar string) bool {
 		(direita.Name == nomeVar && esquerda.Name == "nil")
 }
 
-// contemReturn procura um *ast.ReturnStmt dentro do bloco, sem descer para
-// dentro de closures aninhadas (um `return` dentro de uma FuncLit dentro do
-// corpo do `if` pertence a essa closure, não ao fluxo de ExecutarServidor, e
-// não trata o erro como fatal para o arranque).
-func contemReturn(bloco *ast.BlockStmt) bool {
-	encontrado := false
-	ast.Inspect(bloco, func(n ast.Node) bool {
+// contemReturnDirecto procura um *ast.ReturnStmt entre os statements DIRECTOS
+// do bloco. Não usa ast.Inspect: um `return` aninhado (dentro de um `if
+// cfg.EmProducao()`, de um `switch` ou de uma closure) não devolve de
+// ExecutarServidor em todos os caminhos, e era exactamente assim que a isenção
+// por ambiente da variante (i) passava despercebida.
+func contemReturnDirecto(bloco *ast.BlockStmt) bool {
+	for _, stmt := range bloco.List {
+		if _, ok := stmt.(*ast.ReturnStmt); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// indiceDoArranque devolve o índice do PRIMEIRO statement directo do corpo que
+// contenha uma chamada `<algo>.Iniciar(…)` — o ponto a partir do qual o
+// servidor aceita ligações. Devolve -1 se não existir, e a guarda falha fechada
+// nesse caso: é preferível uma guarda que chumba depois de um refactor do
+// arranque (obrigando a revê-la) a uma que se declara satisfeita por não ter
+// encontrado a referência.
+//
+// Aqui, ao contrário do resto da guarda, a procura desce por ast.Inspect: o
+// arranque pode estar embrulhado (`return srv.Iniciar(ctx)`, uma atribuição,
+// um `defer`), e o que interessa é o statement de topo em que aparece.
+func indiceDoArranque(corpo *ast.BlockStmt) int {
+	for i, stmt := range corpo.List {
+		encontrado := false
+		ast.Inspect(stmt, func(n ast.Node) bool {
+			if encontrado {
+				return false
+			}
+			chamada, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := chamada.Fun.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "Iniciar" {
+				return true
+			}
+			if _, ok := sel.X.(*ast.Ident); ok {
+				encontrado = true
+				return false
+			}
+			return true
+		})
 		if encontrado {
-			return false
+			return i
 		}
-		if _, ok := n.(*ast.FuncLit); ok {
-			return false
-		}
-		if _, ok := n.(*ast.ReturnStmt); ok {
-			encontrado = true
-			return false
-		}
-		return true
-	})
-	return encontrado
+	}
+	return -1
 }
