@@ -108,7 +108,14 @@ jobs:
         # corria na CI (ADR-043, correcção 6 da revisão da Tarefa 3). Qualquer
         # pacote novo com testes atrás da tag `integration` tem de ser
         # acrescentado aqui.
-        run: go test -tags=integration ./tests/integration/... ./internal/platform/db/...
+        #
+        # -count=1 desliga a cache de resultados: o input real destes testes é o
+        # ESTADO DA BASE DE DADOS, que o Go não vê. Sem isto, mexer na base sem
+        # tocar em ficheiro nenhum devolve `ok ... (cached)` — um verde velho
+        # sobre uma base já derivada. Em CI cada corrida é fresca e o portão não
+        # era afectado; em desenvolvimento era (ADR-043, Minor 5 da revisão da
+        # Tarefa 4). A intenção fica documentada no sítio onde se corre.
+        run: go test -count=1 -tags=integration ./tests/integration/... ./internal/platform/db/...
 
   seguranca-imagem:
     name: Segurança da imagem (hadolint, build, Trivy)

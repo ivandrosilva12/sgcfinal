@@ -227,8 +227,18 @@ func TestTabelasDeValorLegal_CobreAsTabelasProtegidasPorTrigger(t *testing.T) {
 	}
 
 	// O sentido contrário NÃO é falha: uma tabela pode ser de valor legal sem
-	// trigger — financeiro.series é o exemplo vivo. Fica registado para quem lê
-	// a saída perceber que a diferença é conhecida e não um esquecimento.
+	// trigger, porque a protecção pode ser outra — financeiro.series é
+	// serializada por SELECT ... FOR UPDATE e não tem trigger nenhum.
+	//
+	// Hoje este ramo NÃO dispara, e é correcto que não dispare: as três entradas
+	// de tabelasDeValorLegal são exactamente as três tabelas com trigger, e
+	// financeiro.series não está declarada (é protegida pelo REVOKE DELETE de
+	// migrations/shared/0004, não pela verificação de arranque). O ramo existe
+	// para o dia em que uma tabela sem trigger seja declarada: nesse dia tem de
+	// aparecer no log como diferença conhecida, e não fazer o teste ficar
+	// vermelho (ADR-043, Minor 4 da revisão da Tarefa 4 — a versão anterior
+	// deste comentário afirmava, erradamente, que financeiro.series já era o
+	// exemplo vivo).
 	if semTrigger := diferencaDeConjuntos(declaradas, nomesProtegidos); len(semTrigger) > 0 {
 		t.Logf("tabelas de valor legal declaradas sem trigger (legítimo — a protecção pode ser "+
 			"outra, como o SELECT ... FOR UPDATE de financeiro.series): %v", semTrigger)

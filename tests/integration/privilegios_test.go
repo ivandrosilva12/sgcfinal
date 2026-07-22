@@ -49,6 +49,16 @@ var osOitoSchemas = []string{
 // nenhum. Colapsar as duas causas numa só mensagem faria a guarda ditar, com
 // autoridade, o remédio inseguro (ADR-043, Minor A da revisão da Tarefa 3).
 //
+// Declarar um schema aqui NÃO o tira do varrimento de privilégios: tira-o
+// apenas da asserção de igualdade com osOitoSchemas. As suas relações continuam
+// a ser inventariadas, com a expectativa de que sgc_app não tenha lá privilégio
+// NENHUM (ver privilegiosEsperados) — asserir zero, e não saltar. Uma válvula
+// de escape que salta é uma válvula insegura: montado contra a base, um schema
+// declarado aqui e ao mesmo tempo em schemasBC, com GRANT ALL numa tabela lá
+// dentro, deixava as duas suites verdes com TRUNCATE concedido (ADR-043,
+// Minor 3 da revisão da Tarefa 4). É a mesma correcção do Minor A, aplicada à
+// própria válvula em vez de à mensagem.
+//
 // Hoje está vazia, e é o estado correcto: as três extensões instaladas
 // (plpgsql, btree_gist, pg_trgm — medido em pg_extension) vivem em pg_catalog
 // e public, ambos já excluídos pelo filtro. Extensões que instalam schema
@@ -450,9 +460,32 @@ func TestRuntime_SeriesSemDelete(t *testing.T) {
 	}
 }
 
+// especieDaRelacao traduz o relkind de pg_class para a mensagem de falha. Os
+// seis são os que o inventário varre: cobrir só 'r' e 'S' deixava de fora
+// tabelas particionadas, vistas, vistas materializadas e tabelas externas
+// (ADR-043, Important 1 da revisão da Tarefa 4).
+func especieDaRelacao(relkind string) string {
+	switch relkind {
+	case "r":
+		return "tabela"
+	case "p":
+		return "tabela particionada"
+	case "v":
+		return "vista"
+	case "m":
+		return "vista materializada"
+	case "f":
+		return "tabela externa"
+	case "S":
+		return "sequência"
+	default:
+		return "relação de espécie " + relkind
+	}
+}
+
 // privilegiosEsperados devolve o conjunto EXACTO de privilégios que sgc_app
-// tem de ter sobre uma relação dos oito schemas, por ordem alfabética (a mesma
-// do string_agg da consulta). É a transcrição fiel do que as migrações
+// tem de ter sobre uma relação varrida pelo inventário, por ordem alfabética (a
+// mesma do string_agg da consulta). É a transcrição fiel do que as migrações
 // concedem, e não uma lista independente: por isso a regra é por SCHEMA, com
 // as excepções por tabela declaradas à parte — uma tabela nova no schema
 // auditoria herda automaticamente a expectativa certa, em vez de nascer fora
@@ -463,8 +496,21 @@ func TestRuntime_SeriesSemDelete(t *testing.T) {
 //     sequências; e, no schema auditoria, apenas SELECT/INSERT em tabelas.
 //   - migrations/shared/0004_series_sem_delete.sql revoga o DELETE em
 //     financeiro.series.
-func privilegiosEsperados(schema, nome string, ehSequencia bool) []string {
-	if ehSequencia {
+//
+// A regra das tabelas vale para TODAS as espécies que não são sequência.
+// Medido contra a base: o `ALTER DEFAULT PRIVILEGES ... ON TABLES` da 0003
+// alcança de facto tabelas particionadas, vistas E vistas materializadas — as
+// três nasceram com `sgc_app=arwd/sgc` sem GRANT explícito nenhum.
+func privilegiosEsperados(schema, nome, relkind string) []string {
+	// Um schema de extensão não é território do runtime: a expectativa é
+	// privilégio nenhum, de espécie nenhuma. Asserir zero em vez de saltar (ver
+	// schemasDeExtensao).
+	for _, s := range schemasDeExtensao {
+		if s == schema {
+			return nil
+		}
+	}
+	if relkind == "S" {
 		// Assimetria conhecida e deliberada (documentada em
 		// migrations/shared/0004): o schema auditoria NÃO recebe privilégios de
 		// sequência, nem por GRANT em massa nem por default privileges. A única
@@ -515,6 +561,61 @@ func listaDePrivilegios(csv string) []string {
 	return strings.Split(csv, ",")
 }
 
+// exigirSemPrivilegiosDeColuna assere que sgc_app não tem privilégio nenhum ao
+// nível da COLUNA, em relação nenhuma dos schemas varridos.
+//
+// É uma segunda passagem, e não uma coluna a mais da consulta do inventário,
+// porque os grants de coluna vivem noutro sítio do catálogo: pg_attribute.attacl,
+// não pg_class.relacl. A leitura da relacl não os vê, e a asserção de conjunto
+// exacto passava-lhes ao lado. Medido contra a base: `GRANT UPDATE (id) ON
+// auditoria.auditoria_eventos TO sgc_app` deixava a suite verde e
+// has_table_privilege(...,'UPDATE') a devolver falso, enquanto
+// has_any_column_privilege devolvia verdadeiro — escapa também ao
+// VerificarPapelRuntime, ficando só o trigger a segurar o audit log (ADR-043,
+// Minor 2 da revisão da Tarefa 4).
+//
+// A expectativa é ZERO, sem excepções: as migrações não concedem privilégio de
+// coluna nenhum, a nenhum papel. Um grant de coluna nestes schemas é sempre
+// deriva. O filtro por schema é necessário — o pg_catalog tem attacl legítima
+// para PUBLIC (pg_subscription, medido), que não é assunto desta guarda.
+func exigirSemPrivilegiosDeColuna(t *testing.T, ctx context.Context, pool *pgxpool.Pool, schemas []string) {
+	t.Helper()
+
+	rows, err := pool.Query(ctx, `
+		SELECT n.nspname || '.' || c.relname || '.' || a.attname || ' ' || x.privilege_type ||
+		       CASE WHEN x.is_grantable THEN ' WITH GRANT OPTION' ELSE '' END
+		  FROM pg_attribute a
+		  JOIN pg_class c ON c.oid = a.attrelid
+		  JOIN pg_namespace n ON n.oid = c.relnamespace,
+		       LATERAL aclexplode(a.attacl) x
+		 WHERE n.nspname = ANY($1::text[])
+		   AND a.attacl IS NOT NULL
+		   AND (x.grantee = 0 OR pg_has_role('sgc_app', x.grantee, 'MEMBER'))
+		 ORDER BY 1`, schemas)
+	if err != nil {
+		t.Fatalf("inventariar os privilégios de coluna: %v", err)
+	}
+	defer rows.Close()
+
+	var deColuna []string
+	for rows.Next() {
+		var g string
+		if err := rows.Scan(&g); err != nil {
+			t.Fatalf("ler linha do inventário de privilégios de coluna: %v", err)
+		}
+		deColuna = append(deColuna, g)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("percorrer o inventário de privilégios de coluna: %v", err)
+	}
+	if len(deColuna) > 0 {
+		t.Fatalf("sgc_app tem privilégios ao nível da coluna, que as migrações nunca concedem "+
+			"e que a asserção sobre a ACL da relação não vê: %v — revogue-os por migração nova "+
+			"(REVOKE ... (coluna) ON ...). Um GRANT de coluna no audit log dá UPDATE efectivo "+
+			"sobre essa coluna sem que has_table_privilege o mostre (ADR-043)", deColuna)
+	}
+}
+
 // TestPrivilegios_InventarioExactoDeTabelasESequencias é a guarda de deriva do
 // inventário de privilégios (ADR-043, Tarefa 4). Existe por duas razões
 // distintas:
@@ -560,24 +661,44 @@ func TestPrivilegios_InventarioExactoDeTabelasESequencias(t *testing.T) {
 	// passar em silêncio precisamente sobre o schema novo.
 	exigirSchemasDeNegocioCoincidentes(t, ctx, pool)
 
+	// relkind: 'r' tabela, 'p' tabela particionada, 'v' vista, 'm' vista
+	// materializada, 'f' tabela externa, 'S' sequência. Filtrar só ('r','S')
+	// era mais estreito do que o próprio pg_tables do brief, que já inclui 'p':
+	// particionar auditoria.auditoria_eventos — a candidata natural, com
+	// retenção obrigatória de 10 anos — converte-a a 'p' e fá-la SAIR do
+	// inventário em silêncio, levando consigo as partições, cujos grants vêm do
+	// pai. Reproduzido: `CREATE TABLE ... PARTITION BY RANGE` mais `GRANT
+	// TRUNCATE` deixava a suite verde (ADR-043, Important 1 da revisão da Tarefa
+	// 4). O acldefault continua a distinguir só sequência de não-sequência, que
+	// é a distinção que ele próprio faz.
+	//
+	// is_grantable entra no texto do privilégio, e não é ignorado: um `GRANT
+	// SELECT ... WITH GRANT OPTION` deixa sgc_app re-conceder a terceiros, o que
+	// é deriva de privilégio tanto como o privilégio em si. Medido: `arw*d` em
+	// clinico.doentes passava despercebido (ADR-043, Minor 2).
 	const q = `
-		SELECT n.nspname, c.relname, c.relkind = 'S',
-		       coalesce(string_agg(DISTINCT a.privilege_type, ',' ORDER BY a.privilege_type), ''),
-		       CASE WHEN c.relkind = 'r'
+		SELECT n.nspname, c.relname, c.relkind,
+		       coalesce(string_agg(DISTINCT a.priv, ',' ORDER BY a.priv), ''),
+		       CASE WHEN c.relkind <> 'S'
 		            THEN has_table_privilege('sgc_app', c.oid, 'TRUNCATE') END
 		  FROM pg_class c
 		  JOIN pg_namespace n ON n.oid = c.relnamespace
 		  LEFT JOIN LATERAL (
-		        SELECT x.privilege_type
+		        SELECT x.privilege_type ||
+		               CASE WHEN x.is_grantable THEN ' WITH GRANT OPTION' ELSE '' END AS priv
 		          FROM aclexplode(coalesce(c.relacl,
 		                 acldefault((CASE c.relkind WHEN 'S' THEN 's' ELSE 'r' END)::"char",
 		                            c.relowner))) x
 		         WHERE x.grantee = 0 OR pg_has_role('sgc_app', x.grantee, 'MEMBER')) a ON TRUE
-		 WHERE c.relkind IN ('r', 'S') AND n.nspname = ANY($1::text[])
+		 WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S') AND n.nspname = ANY($1::text[])
 		 GROUP BY n.nspname, c.relname, c.relkind, c.oid
 		 ORDER BY n.nspname, c.relname`
 
-	rows, err := pool.Query(ctx, q, osOitoSchemas)
+	// Os schemas de extensão entram no varrimento — a expectativa deles é
+	// privilégio nenhum, e asserir zero não é o mesmo que não olhar.
+	schemasVarridos := append(append([]string{}, osOitoSchemas...), schemasDeExtensao...)
+
+	rows, err := pool.Query(ctx, q, schemasVarridos)
 	if err != nil {
 		t.Fatalf("inventariar os privilégios de sgc_app: %v", err)
 	}
@@ -585,14 +706,14 @@ func TestPrivilegios_InventarioExactoDeTabelasESequencias(t *testing.T) {
 
 	type relacao struct {
 		schema, nome  string
-		ehSequencia   bool
+		relkind       string
 		privilegios   string
 		truncEfectivo *bool
 	}
 	var relacoes []relacao
 	for rows.Next() {
 		var r relacao
-		if err := rows.Scan(&r.schema, &r.nome, &r.ehSequencia, &r.privilegios, &r.truncEfectivo); err != nil {
+		if err := rows.Scan(&r.schema, &r.nome, &r.relkind, &r.privilegios, &r.truncEfectivo); err != nil {
 			t.Fatalf("ler linha do inventário de privilégios: %v", err)
 		}
 		relacoes = append(relacoes, r)
@@ -601,17 +722,16 @@ func TestPrivilegios_InventarioExactoDeTabelasESequencias(t *testing.T) {
 		t.Fatalf("percorrer o inventário de privilégios: %v", err)
 	}
 	if len(relacoes) == 0 {
-		t.Fatal("esperava encontrar tabelas e sequências nos oito schemas — " +
+		t.Fatal("esperava encontrar relações nos oito schemas — " +
 			"a consulta do inventário ou a lista de schemas está errada")
 	}
 
+	exigirSemPrivilegiosDeColuna(t, ctx, pool, schemasVarridos)
+
 	for _, r := range relacoes {
 		t.Run(r.schema+"."+r.nome, func(t *testing.T) {
-			especie := "tabela"
-			if r.ehSequencia {
-				especie = "sequência"
-			}
-			esperados := privilegiosEsperados(r.schema, r.nome, r.ehSequencia)
+			especie := especieDaRelacao(r.relkind)
+			esperados := privilegiosEsperados(r.schema, r.nome, r.relkind)
 			esperado := strings.Join(esperados, ",")
 			if r.privilegios != esperado {
 				tem := listaDePrivilegios(r.privilegios)
