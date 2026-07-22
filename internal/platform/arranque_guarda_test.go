@@ -73,7 +73,17 @@ const pacoteDBImportPath = "github.com/ivandrosilva12/sgcfinal/internal/platform
 // O que esta guarda NÃO garante, deliberadamente: que a função verificada faça
 // o que promete (isso é a suite de tests/integration) e que não exista uma
 // segunda chamada, mais abaixo, que desfaça o efeito da primeira — não há forma
-// de o fazer sem interpretar o programa.
+// de o fazer sem interpretar o programa. Sobre o pool, ver o comentário de
+// identificadorDoPool: garante-se que a chamada recebe UM pool de LigarPool,
+// não O pool que a aplicação usa.
+//
+// Preço a pagar, dito por inteiro: a forma canónica cria QUATRO acoplamentos
+// sintácticos que um refactor legítimo do arranque obriga a rever nesta guarda —
+// o nome `ExecutarServidor`, o nome `LigarPool`, o nome `.Iniciar` e a ARIDADE
+// de dois argumentos de VerificarPapelRuntime (acrescentar-lhe um terceiro
+// parâmetro chumba a guarda). Todos falham fechados e todos o dizem na
+// mensagem; é o custo aceite em troca da garantia de ordem e de identidade do
+// pool.
 func TestArranque_VerificaOPapelDeRuntime(t *testing.T) {
 	fset := token.NewFileSet()
 	ficheiro, err := parser.ParseFile(fset, "app.go", nil, 0)
@@ -186,12 +196,28 @@ func chamadaAoPacoteDB(expr ast.Expr, aliases map[string]string, funcao string) 
 	return chamada, aliases[pacote.Name] == pacoteDBImportPath
 }
 
-// identificadorDoPool devolve o nome da variável que recebe o pool de
-// db.LigarPool como statement DIRECTO do corpo — `pool, err := db.LigarPool(…)`.
-// Devolve "" se não existir: é o que permite à guarda exigir que seja ESSE pool
-// a ir à verificação, fechando a variante em que a chamada existe mas recebe
-// outro pool qualquer (por exemplo o da credencial de migração, que passaria
-// a verificação enquanto o pool real, privilegiado, ficava por verificar).
+// identificadorDoPool devolve o nome da variável que recebe o pool do PRIMEIRO
+// `… := db.LigarPool(…)` que apareça como statement DIRECTO do corpo. Devolve ""
+// se não existir, e nesse caso a guarda falha fechada.
+//
+// O que isto garante de facto, dito sem inflação: que a chamada a
+// VerificarPapelRuntime recebe UM pool vindo de LigarPool — o primeiro do corpo
+// — e não uma variável arbitrária. Fecha a variante banal (chamada existe, mas
+// verifica outra coisa qualquer: a variante (k) da bancada). NÃO garante que
+// seja O pool que a aplicação acaba por usar. Ficam de fora duas variantes,
+// ambas medidas por mutação real de app.go e confirmadas VERDES:
+//
+//   - um pool-chamariz criado por LigarPool e verificado primeiro, seguido do
+//     pool real criado a seguir e nunca verificado — a âncora é o PRIMEIRO
+//     LigarPool, não o que sobrevive;
+//   - `pool = poolPriv` reatribuído DEPOIS do `if` — a verificação passou,
+//     sobre um pool que já não é o que vai ser usado.
+//
+// Ambas exigem reestruturar o arranque de uma forma que salta à vista em code
+// review (dois LigarPool, ou uma reatribuição do pool a meio da montagem das
+// dependências), e fechá-las obrigaria a seguir o fluxo de dados — interpretar
+// o programa, não inspeccionar a sua forma. A guarda cobre a forma; o resto é
+// revisão humana e a suite de tests/integration.
 func identificadorDoPool(corpo *ast.BlockStmt, aliases map[string]string) string {
 	for _, stmt := range corpo.List {
 		atribuicao, ok := stmt.(*ast.AssignStmt)
@@ -278,6 +304,15 @@ func contemReturnDirecto(bloco *ast.BlockStmt) bool {
 // Aqui, ao contrário do resto da guarda, a procura desce por ast.Inspect: o
 // arranque pode estar embrulhado (`return srv.Iniciar(ctx)`, uma atribuição,
 // um `defer`), e o que interessa é o statement de topo em que aparece.
+//
+// Limitação conhecida: casa QUALQUER `<ident>.Iniciar(…)`. Se um dia existir
+// outra chamada `.Iniciar` mais acima em ExecutarServidor (métricas, relay), a
+// comparação de índices passa a ser feita contra essa e não contra o arranque
+// do servidor. O sentido do erro é seguro — a guarda fica mais exigente e
+// chumba, nunca aprova a mais — mas o diagnóstico enganaria quem o lesse, a
+// apontar para o statement errado. Se isso acontecer, ancorar o nome do
+// receptor (o `srv` devolvido por server.NovoComRotas) em vez do nome do
+// método.
 func indiceDoArranque(corpo *ast.BlockStmt) int {
 	for i, stmt := range corpo.List {
 		encontrado := false

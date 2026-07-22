@@ -276,6 +276,174 @@ func TestVerificarPapelRuntime_ApanhaPgWriteAllData(t *testing.T) {
 	}
 }
 
+// TestVerificarPapelRuntime_ApanhaTruncateNasFacturas é a prova da correcção 7
+// (CRITICAL): a interrogação da mutação fixava 'auditoria.auditoria_eventos' no
+// texto da consulta, quando tabelasDeValorLegal declara TRÊS tabelas e os três
+// triggers de imutabilidade são FOR EACH ROW (verificado em pg_get_triggerdef),
+// pelo que nenhum vê TRUNCATE. Reproduzido com GRANT DIRECTO, sem sequer
+// precisar de SET ROLE:
+//
+//	GRANT TRUNCATE ON financeiro.facturas, financeiro.itens_factura TO sgc_app;
+//	-- as quatro interrogações devolviam tudo limpo: o servidor arrancava
+//	BEGIN; TRUNCATE financeiro.itens_factura, financeiro.facturas; -- executou
+//
+// O dano é a destruição integral da cadeia de hash das facturas, da numeração
+// sem buracos e da base do SAF-T-AO/AGT (ADR-040/041, CLAUDE.md §5.4), com a
+// verificação de arranque a declarar-se satisfeita. sgc_app não tem TRUNCATE
+// hoje — isto é uma guarda de deriva, que é a função da verificação.
+func TestVerificarPapelRuntime_ApanhaTruncateNasFacturas(t *testing.T) {
+	migrarTudo(t)
+	concederTemporariamente(t, "TRUNCATE", "financeiro.facturas")
+
+	pool, ctx := ligarApp(t)
+	err := db.VerificarPapelRuntime(ctx, pool)
+	if err == nil {
+		t.Fatal("um runtime com TRUNCATE em financeiro.facturas tinha de ser recusado: " +
+			"TRUNCATE não dispara o trigger de imutabilidade (FOR EACH ROW) e apaga a cadeia " +
+			"de hash inteira")
+	}
+	if !strings.Contains(err.Error(), "financeiro.facturas") {
+		t.Fatalf("a mensagem tem de nomear a tabela; obtive: %v", err)
+	}
+}
+
+// TestVerificarPapelRuntime_ApanhaTruncateNosItensDaFactura: a mesma correcção
+// para a segunda tabela do Financeiro. Truncar só os itens deixa as facturas de
+// pé com o total selado a apontar para linhas que já não existem — o hash
+// canónico da ADR-041 deixa de ser reproduzível.
+func TestVerificarPapelRuntime_ApanhaTruncateNosItensDaFactura(t *testing.T) {
+	migrarTudo(t)
+	concederTemporariamente(t, "TRUNCATE", "financeiro.itens_factura")
+
+	pool, ctx := ligarApp(t)
+	err := db.VerificarPapelRuntime(ctx, pool)
+	if err == nil {
+		t.Fatal("um runtime com TRUNCATE em financeiro.itens_factura tinha de ser recusado")
+	}
+	if !strings.Contains(err.Error(), "financeiro.itens_factura") {
+		t.Fatalf("a mensagem tem de nomear a tabela; obtive: %v", err)
+	}
+}
+
+// TestVerificarPapelRuntime_ApanhaTruncateNasFacturasPorPertencaNoInherit junta
+// os dois vectores: a tabela que faltava (correcção 7) e a via que a correcção 6
+// fechou (pertença NOINHERIT, poder por SET ROLE).
+func TestVerificarPapelRuntime_ApanhaTruncateNasFacturasPorPertencaNoInherit(t *testing.T) {
+	migrarTudo(t)
+	papelDescartavelNoInherit(t, "zz_trunc_fac_teste",
+		`GRANT USAGE ON SCHEMA financeiro TO zz_trunc_fac_teste`,
+		`GRANT TRUNCATE ON financeiro.facturas TO zz_trunc_fac_teste`)
+
+	pool, ctx := ligarApp(t)
+	err := db.VerificarPapelRuntime(ctx, pool)
+	if err == nil {
+		t.Fatal("um runtime que pode assumir (SET ROLE) um papel com TRUNCATE em " +
+			"financeiro.facturas tinha de ser recusado")
+	}
+	if !strings.Contains(err.Error(), "zz_trunc_fac_teste") {
+		t.Fatalf("a mensagem tem de nomear o papel pela via do qual o poder chega; obtive: %v", err)
+	}
+	if !strings.Contains(err.Error(), "financeiro.facturas") {
+		t.Fatalf("a mensagem tem de nomear a tabela; obtive: %v", err)
+	}
+}
+
+// TestVerificarPapelRuntime_NaoRecusaEscritaNoRascunho é a não-regressão que
+// impede a correcção 7 de ir longe demais: o conjunto de privilégios recusado
+// NÃO é o mesmo nas três tabelas. A factura em RASCUNHO é mutável (ADR-039) e
+// sgc_app tem hoje UPDATE e DELETE em facturas e itens_factura — recusá-los
+// partiria a reescrita de rascunhos. Só TRUNCATE é proibido nas duas tabelas do
+// Financeiro; em auditoria_eventos são proibidos os três (append-only).
+//
+// O teste começa por MEDIR a precondição contra a base viva em vez de a assumir:
+// se um dia o provisionamento deixar de conceder UPDATE/DELETE, este teste diz
+// que a premissa mudou em vez de passar a verde por vacuidade.
+func TestVerificarPapelRuntime_NaoRecusaEscritaNoRascunho(t *testing.T) {
+	migrarTudo(t)
+	admin, ctxAdmin := ligar(t)
+
+	const qPrecondicao = `SELECT count(*)
+	                        FROM information_schema.table_privileges
+	                       WHERE grantee = 'sgc_app'
+	                         AND table_schema = 'financeiro'
+	                         AND table_name IN ('facturas', 'itens_factura')
+	                         AND privilege_type IN ('UPDATE', 'DELETE')`
+	var concedidos int
+	if err := admin.QueryRow(ctxAdmin, qPrecondicao).Scan(&concedidos); err != nil {
+		t.Fatalf("medir a precondição: %v", err)
+	}
+	if concedidos != 4 {
+		t.Fatalf("precondição falhada: esperava UPDATE e DELETE de sgc_app nas duas tabelas do "+
+			"Financeiro (4 privilégios), encontrei %d — a premissa da factura em RASCUNHO "+
+			"mutável (ADR-039) mudou e este teste deixou de provar o que promete", concedidos)
+	}
+
+	pool, ctx := ligarApp(t)
+	if err := db.VerificarPapelRuntime(ctx, pool); err != nil {
+		t.Fatalf("UPDATE e DELETE em facturas/itens_factura são trabalho legítimo sobre o "+
+			"RASCUNHO e não podem impedir o arranque: %v", err)
+	}
+}
+
+// TestVerificarPapelRuntime_ApanhaCreateNaBaseDeDados fecha a correcção 7 (N3):
+// as quatro interrogações olhavam para CREATE nos schemas conhecidos, mas
+// CREATE na BASE DE DADOS permite criar schemas NOVOS — e objectos lá dentro —
+// fora das migrations forward-only. Medido: com
+// `GRANT CREATE ON DATABASE sgc TO sgc_app`, tudo ficava limpo e
+// `CREATE SCHEMA zz_novo_schema; CREATE TABLE zz_novo_schema.t(x int)` executou.
+func TestVerificarPapelRuntime_ApanhaCreateNaBaseDeDados(t *testing.T) {
+	migrarTudo(t)
+	admin, ctxAdmin := ligar(t)
+
+	var base string
+	if err := admin.QueryRow(ctxAdmin, `SELECT current_database()`).Scan(&base); err != nil {
+		t.Fatalf("determinar a base de dados: %v", err)
+	}
+	if _, err := admin.Exec(ctxAdmin, `GRANT CREATE ON DATABASE `+base+` TO sgc_app`); err != nil {
+		t.Fatalf("preparar o desvio: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := admin.Exec(ctxAdmin,
+			`REVOKE CREATE ON DATABASE `+base+` FROM sgc_app`); err != nil {
+			t.Fatalf("repor o privilégio: %v — a base FICOU com CREATE ON DATABASE concedido a "+
+				"sgc_app, o que lhe permite criar schemas fora das migrations; repor manualmente "+
+				"com `REVOKE CREATE ON DATABASE %s FROM sgc_app;` antes de correr qualquer outro "+
+				"teste", err, base)
+		}
+	})
+
+	pool, ctx := ligarApp(t)
+	err := db.VerificarPapelRuntime(ctx, pool)
+	if err == nil {
+		t.Fatal("um runtime com CREATE na base de dados tinha de ser recusado: pode criar " +
+			"schemas novos e objectos lá dentro, fora das migrations forward-only")
+	}
+	if !strings.Contains(err.Error(), base) {
+		t.Fatalf("a mensagem tem de nomear a base de dados; obtive: %v", err)
+	}
+}
+
+// concederTemporariamente concede um privilégio a sgc_app sobre uma tabela e
+// regista a revogação antes de qualquer asserção.
+func concederTemporariamente(t *testing.T, privilegio, tabela string) {
+	t.Helper()
+	admin, ctxAdmin := ligar(t)
+
+	if _, err := admin.Exec(ctxAdmin,
+		`GRANT `+privilegio+` ON `+tabela+` TO sgc_app`); err != nil {
+		t.Fatalf("preparar o desvio (%s em %s): %v", privilegio, tabela, err)
+	}
+	t.Cleanup(func() {
+		if _, err := admin.Exec(ctxAdmin,
+			`REVOKE `+privilegio+` ON `+tabela+` FROM sgc_app`); err != nil {
+			t.Fatalf("repor o privilégio: %v — a base FICOU com %s concedido a sgc_app em %s, "+
+				"contornando a imutabilidade; repor manualmente com `REVOKE %s ON %s FROM "+
+				"sgc_app;` antes de correr qualquer outro teste",
+				err, privilegio, tabela, privilegio, tabela)
+		}
+	})
+}
+
 // TestVerificarPapelRuntime_ApanhaTruncateNaAuditoria trava a regressão da
 // correcção 3 da revisão da Tarefa 3: recusarMutacaoDaAuditoria verificava
 // UPDATE e DELETE mas não TRUNCATE. O único trigger em auditoria_eventos é

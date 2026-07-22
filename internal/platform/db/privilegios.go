@@ -15,18 +15,57 @@ var schemasBC = []string{
 	"identidade", "laboratorio", "recepcao", "shared",
 }
 
+// tabelaDeValorLegal junta o nome da tabela ao conjunto de privilégios que o
+// papel de runtime não pode ter sobre ela. Os dois campos vivem na MESMA
+// estrutura de propósito: era a separação entre uma lista de tabelas e uma
+// consulta com UMA tabela fixa no texto que deixava duas das três
+// desprotegidas contra TRUNCATE (ADR-043, correcção 7 da revisão da Tarefa 3).
+type tabelaDeValorLegal struct {
+	Nome      string
+	Proibidos []string
+}
+
 // tabelasDeValorLegal são as tabelas cuja posse daria ao runtime o poder de
 // desligar os triggers que as protegem (ADR-040, ADR-042 §2.6).
-var tabelasDeValorLegal = []string{
-	"financeiro.facturas",
-	"financeiro.itens_factura",
-	"auditoria.auditoria_eventos",
+//
+// O conjunto proibido NÃO é o mesmo nas três, e colapsá-lo partiria a
+// aplicação: a factura em RASCUNHO é mutável (ADR-039) e sgc_app tem hoje
+// UPDATE e DELETE nas duas tabelas do Financeiro — é trabalho legítimo. O que
+// não pode ter em nenhuma das três é TRUNCATE: os três triggers de
+// imutabilidade são FOR EACH ROW (verificado em pg_get_triggerdef para
+// trg_facturas_imutaveis, trg_itens_factura_imutaveis e trg_auditoria_imutavel)
+// e TRUNCATE não dispara triggers de linha. Em auditoria_eventos, append-only
+// significa também sem UPDATE nem DELETE.
+//
+// Medido contra sgc-postgres-1, com GRANT DIRECTO e sem sequer precisar de
+// SET ROLE: `GRANT TRUNCATE ON financeiro.facturas, financeiro.itens_factura TO
+// sgc_app` deixava as quatro interrogações limpas — o servidor arrancava — e
+// `TRUNCATE financeiro.itens_factura, financeiro.facturas` executou. É a
+// destruição integral da cadeia de hash, da numeração sem buracos e da base do
+// SAF-T-AO/AGT (ADR-040/041, CLAUDE.md §5.4).
+var tabelasDeValorLegal = []tabelaDeValorLegal{
+	{Nome: "financeiro.facturas", Proibidos: []string{"TRUNCATE"}},
+	{Nome: "financeiro.itens_factura", Proibidos: []string{"TRUNCATE"}},
+	{Nome: "auditoria.auditoria_eventos", Proibidos: []string{"DELETE", "TRUNCATE", "UPDATE"}},
+}
+
+// nomesDasTabelasDeValorLegal é o que as consultas de existência e de posse
+// consomem — derivado da declaração única acima, para que acrescentar uma
+// tabela não possa deixar metade das verificações para trás.
+func nomesDasTabelasDeValorLegal() []string {
+	nomes := make([]string, 0, len(tabelasDeValorLegal))
+	for _, tabela := range tabelasDeValorLegal {
+		nomes = append(nomes, tabela.Nome)
+	}
+	return nomes
 }
 
 // VerificarPapelRuntime confirma que o papel com que a aplicação está ligada não
 // consegue subverter as garantias que a base de dados impõe por trigger: não é
 // administrador, não é — nem pode assumir — o dono das tabelas de valor legal,
-// não cria objectos nos schemas de negócio e não muta o audit log.
+// não cria objectos (nem nos schemas de negócio nem na base de dados, que
+// permitiria schemas novos) e não pode destruir nenhuma das três tabelas de
+// valor legal por uma via que os triggers de linha não vêem.
 //
 // Devolve erro, nunca panic; o chamador trata-o como fatal. O servidor não
 // arranca com um papel privilegiado, em ambiente nenhum: falhar fechado é
@@ -45,7 +84,7 @@ func VerificarPapelRuntime(ctx context.Context, pool *pgxpool.Pool) error {
 	if err := recusarCriacaoDeObjectos(ctx, pool, papel); err != nil {
 		return err
 	}
-	return recusarMutacaoDaAuditoria(ctx, pool, papel)
+	return recusarMutacaoDoValorLegal(ctx, pool, papel)
 }
 
 func recusarAdministrador(ctx context.Context, pool *pgxpool.Pool, papel string) error {
@@ -111,7 +150,7 @@ func recusarDono(ctx context.Context, pool *pgxpool.Pool, papel string) error {
 	                   FROM unnest($1::text[]) AS t(nome)
 	                  WHERE to_regclass(t.nome) IS NULL`
 	var faltam string
-	if err := pool.QueryRow(ctx, qFaltam, tabelasDeValorLegal).Scan(&faltam); err != nil {
+	if err := pool.QueryRow(ctx, qFaltam, nomesDasTabelasDeValorLegal()).Scan(&faltam); err != nil {
 		return fmt.Errorf("localizar as tabelas de valor legal: %w", err)
 	}
 	if faltam != "" {
@@ -136,7 +175,7 @@ func recusarDono(ctx context.Context, pool *pgxpool.Pool, papel string) error {
 	             FROM unnest($1::text[]) AS t(nome)
 	             JOIN pg_class c ON c.oid = to_regclass(t.nome)`
 	var dono bool
-	if err := pool.QueryRow(ctx, q, tabelasDeValorLegal).Scan(&dono); err != nil {
+	if err := pool.QueryRow(ctx, q, nomesDasTabelasDeValorLegal()).Scan(&dono); err != nil {
 		return fmt.Errorf("verificar a posse das tabelas de valor legal: %w", err)
 	}
 	if dono {
@@ -207,19 +246,45 @@ func recusarCriacaoDeObjectos(ctx context.Context, pool *pgxpool.Pool, papel str
 			"com SET ROLE — CREATE nos schemas %s: pode criar objectos fora das migrations "+
 			"forward-only (ADR-043)", papel, comCreate)
 	}
+
+	// CREATE na BASE DE DADOS é uma via distinta e igualmente fatal para a
+	// restrição forward-only: não cria objectos nos schemas conhecidos, cria
+	// SCHEMAS NOVOS — e objectos lá dentro, à vontade. Medido contra
+	// sgc-postgres-1: `GRANT CREATE ON DATABASE sgc TO sgc_app` deixava as
+	// quatro interrogações limpas e `CREATE SCHEMA zz_novo_schema; CREATE TABLE
+	// zz_novo_schema.t(x int);` executou (ADR-043, correcção 7 da revisão da
+	// Tarefa 3). Mesma união de papéis assumíveis por SET ROLE, pela mesma razão.
+	const qBase = `SELECT current_database(),
+	                      coalesce(string_agg(r.rolname, ', ' ORDER BY r.rolname), '')
+	                 FROM pg_roles r
+	                WHERE pg_has_role(current_user, r.oid, 'MEMBER')
+	                  AND has_database_privilege(r.oid, current_database(), 'CREATE')`
+	var base, viasBase string
+	if err := pool.QueryRow(ctx, qBase).Scan(&base, &viasBase); err != nil {
+		return fmt.Errorf("verificar o privilégio CREATE na base de dados: %w", err)
+	}
+	if viasBase != "" {
+		return fmt.Errorf("o papel de runtime %q tem — por si ou por um papel que pode assumir "+
+			"com SET ROLE — CREATE na base de dados %q (via %s): pode criar schemas novos e "+
+			"objectos lá dentro, fora das migrations forward-only (ADR-043)",
+			papel, base, viasBase)
+	}
 	return nil
 }
 
-func recusarMutacaoDaAuditoria(ctx context.Context, pool *pgxpool.Pool, papel string) error {
-	// UPDATE, DELETE e TRUNCATE: o único trigger em auditoria_eventos
-	// (trg_auditoria_imutavel) é `BEFORE DELETE OR UPDATE ... FOR EACH ROW` —
-	// não existe trigger de TRUNCATE em nenhuma das três tabelas de valor
-	// legal, porque TRUNCATE não dispara triggers de linha. Hoje o privilégio
-	// está ausente (não há GRANT TRUNCATE para sgc_app), logo não há buraco
-	// vivo — mas faltava aqui verificar o que a garantia de append-only
-	// promete: sem esta linha, um GRANT TRUNCATE futuro apagaria o audit log
-	// inteiro contornando o trigger, e esta função continuaria a devolver nil
-	// (ADR-043, correcção da revisão da Tarefa 3).
+// recusarMutacaoDoValorLegal percorre as TRÊS tabelas de valor legal, cada uma
+// com o seu conjunto proibido — não uma tabela fixa no texto da consulta, que é
+// o que deixava `financeiro.facturas` e `financeiro.itens_factura` sem qualquer
+// protecção contra TRUNCATE enquanto a função dizia proteger o valor legal
+// (ADR-043, correcção 7 da revisão da Tarefa 3). Chamava-se
+// recusarMutacaoDaAuditoria: o nome dizia a verdade sobre o que fazia e mentia
+// sobre o que prometia.
+func recusarMutacaoDoValorLegal(ctx context.Context, pool *pgxpool.Pool, papel string) error {
+	// UPDATE, DELETE e TRUNCATE no audit log; só TRUNCATE nas duas tabelas do
+	// Financeiro — a factura em RASCUNHO é mutável (ADR-039) e sgc_app tem hoje
+	// UPDATE/DELETE lá, que é trabalho legítimo. Ver o comentário de
+	// tabelasDeValorLegal para o porquê de os conjuntos serem diferentes.
+	//
 	// Como em recusarCriacaoDeObjectos, a pergunta é sobre a UNIÃO dos papéis
 	// assumíveis por SET ROLE e não sobre current_user (ADR-043, correcção 6 da
 	// revisão da Tarefa 3). has_table_privilege(current_user, ...) responde "o
@@ -242,21 +307,43 @@ func recusarMutacaoDaAuditoria(ctx context.Context, pool *pgxpool.Pool, papel st
 	// e passa a ser apanhado aqui, porque pg_write_all_data tem UPDATE e DELETE
 	// em auditoria_eventos. Preferir a via genérica a alargar listas fixas: a
 	// lista fixa fica sempre atrás da próxima versão do PostgreSQL.
-	const q = `SELECT coalesce(string_agg(r.rolname || ' (' || p.priv || ')', ', '
-	                                      ORDER BY r.rolname, p.priv), '')
-	             FROM pg_roles r
-	             CROSS JOIN unnest(ARRAY['UPDATE', 'DELETE', 'TRUNCATE']) AS p(priv)
-	            WHERE pg_has_role(current_user, r.oid, 'MEMBER')
-	              AND has_table_privilege(r.oid, 'auditoria.auditoria_eventos', p.priv)`
+	//
+	// Os pares (tabela, privilégio) chegam achatados em dois arrays paralelos,
+	// derivados de tabelasDeValorLegal. Uma tabela declarada sem conjunto
+	// proibido é erro e não silêncio: falhar fechado é o que impede a próxima
+	// tabela de valor legal de entrar na lista e ficar por verificar — que foi,
+	// exactamente, este defeito.
+	tabelas, privilegios := make([]string, 0), make([]string, 0)
+	for _, tabela := range tabelasDeValorLegal {
+		if len(tabela.Proibidos) == 0 {
+			return fmt.Errorf("a tabela de valor legal %q está declarada sem privilégios "+
+				"proibidos: a verificação de arranque recusa-se a passar por cima dela "+
+				"(ADR-043)", tabela.Nome)
+		}
+		for _, privilegio := range tabela.Proibidos {
+			tabelas = append(tabelas, tabela.Nome)
+			privilegios = append(privilegios, privilegio)
+		}
+	}
+
+	// has_table_privilege(oid, text, text) rebenta se a tabela não existir —
+	// aceitável porque recusarDono já correu e exigiu as três presentes, com
+	// mensagem própria para o caso de faltarem.
+	const q = `SELECT coalesce(string_agg(t.tabela || ' ' || t.priv || ' (via ' || r.rolname || ')',
+	                                      ', ' ORDER BY t.tabela, t.priv, r.rolname), '')
+	             FROM unnest($1::text[], $2::text[]) AS t(tabela, priv)
+	             JOIN pg_roles r ON pg_has_role(current_user, r.oid, 'MEMBER')
+	            WHERE has_table_privilege(r.oid, t.tabela, t.priv)`
 	var vias string
-	if err := pool.QueryRow(ctx, q).Scan(&vias); err != nil {
-		return fmt.Errorf("verificar os privilégios sobre o audit log: %w", err)
+	if err := pool.QueryRow(ctx, q, tabelas, privilegios).Scan(&vias); err != nil {
+		return fmt.Errorf("verificar os privilégios sobre as tabelas de valor legal: %w", err)
 	}
 	if vias != "" {
 		return fmt.Errorf("o papel de runtime %q tem — por si ou por um papel que pode assumir "+
-			"com SET ROLE — UPDATE, DELETE ou TRUNCATE em auditoria.auditoria_eventos (via %s): "+
-			"o audit log é append-only e a retenção de 10 anos depende disso "+
-			"(LPDP / Lei 22/11, ADR-043)", papel, vias)
+			"com SET ROLE — privilégios que destroem valor legal por uma via que os triggers de "+
+			"linha não vêem: %s. O audit log é append-only com retenção de 10 anos (LPDP / Lei "+
+			"22/11) e a cadeia de hash das facturas não sobrevive a um TRUNCATE (ADR-040/041, "+
+			"ADR-043)", papel, vias)
 	}
 	return nil
 }
