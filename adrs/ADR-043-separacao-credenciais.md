@@ -23,7 +23,7 @@ Esta fatia fecha o R7. A medição feita para a executar mostrou que ele era
 
 ### 1.1 Uma credencial só, e superuser
 
-`docker-compose.yml:10` define `POSTGRES_USER: sgc`, e a imagem oficial
+`docker-compose.yml:11` define `POSTGRES_USER: sgc`, e a imagem oficial
 `postgres:16` cria o `POSTGRES_USER` como **`SUPERUSER`** — não apenas como dono
 das tabelas. Essa mesma credencial estava em `DATABASE_URL` em três sítios
 (`.env.example`, `docker-compose.yml`, `.github/workflows/ci.yml`) e era
@@ -294,6 +294,16 @@ migrador `NOSUPERUSER` aplicava as 30 primeiras migrações e parava em
 `shared/0003 … permission denied to alter role (SQLSTATE 42501)`. Em dev e em CI
 nunca falhou uma vez, porque lá o migrador é superuser — **o ambiente que a
 fatia existe para endurecer era o único onde o defeito aparecia.**
+
+A `shared/0003` tem uma **segunda** dependência do mesmo tipo, que o caminho do
+runbook evita mas que fica registada: ela **cria** `sgc_app` se ele faltar, e
+criar um papel exige `CREATEROLE`. Medido em clusters limpos com `sgc_app`
+inexistente: migrador `NOSUPERUSER NOCREATEROLE` pára com `permission denied to
+create role (SQLSTATE 42501)`; migrador `NOSUPERUSER CREATEROLE` aplica as 32 e
+`sgc_app` nasce correcto (`f`/`f`/`f`, `NOLOGIN`). O runbook §2 cria os dois
+papéis antes de migrar, precisamente para o migrador poder ficar **sem**
+`CREATEROLE` — dar-lho seria dar-lhe poder sobre papéis para o resto da vida da
+instalação.
 
 **Correcção:** o `ALTER ROLE` passa a correr dentro de um `DO` condicionado a
 `sgc_app` ter de facto um dos três atributos. No caso normal não há nada para

@@ -151,7 +151,23 @@ precisa também das variáveis obrigatórias que `config.Carregar()` exige
 ### 4.1 O migrador nunca precisa de ser `SUPERUSER`
 
 Não há promoção temporária, nem janela de privilégio, nem passo de despromoção a
-esquecer. O migrador é criado `NOSUPERUSER` na §2 e **assim fica**.
+esquecer. O migrador é criado `NOSUPERUSER` na §2 e **assim fica** — **desde que a
+§2 tenha sido cumprida**, isto é, desde que `sgc_app` já exista quando o `api
+migrate` corre. A dependência de ordem é real e vale a pena dizê-la por inteiro:
+a `shared/0003` **cria** `sgc_app` se ele faltar, e criar um papel exige
+`CREATEROLE` (ou superuser). Medido em dois clusters limpos, com `sgc_app`
+inexistente:
+
+| Migrador | `api migrate` |
+|---|---|
+| `NOSUPERUSER NOCREATEROLE` | pára em `shared/0003 … ERROR: permission denied to create role (SQLSTATE 42501)` |
+| `NOSUPERUSER CREATEROLE` | aplica as **32** migrações; `sgc_app` nasce `NOSUPERUSER NOCREATEDB NOCREATEROLE NOLOGIN` |
+
+O caminho deste runbook não passa por aí — a §2 cria os dois papéis antes de
+qualquer migração —, pelo que o migrador pode e deve ficar sem `CREATEROLE`. Mas
+saltar a criação de `sgc_app` na §2 troca uma decisão de segurança por um erro de
+arranque, e a alternativa (dar `CREATEROLE` ao migrador) é dar-lhe o poder de
+criar e alterar papéis para o resto da vida da instalação.
 
 Nem sempre foi assim, e a razão fica registada porque explica a forma actual da
 migração. A `shared/0003_papel_runtime.sql` reafirma os atributos de `sgc_app`, e
@@ -516,6 +532,11 @@ Está aqui para que ninguém leia a verificação da §5 como garantia total.
 | `papel de runtime inadequado: … é, ou pode assumir por SET ROLE, o papel administrativo <x>` | `GRANT <x> TO sgc_app` | `REVOKE <x> FROM sgc_app` (§6.1) |
 | `papel de runtime inadequado: … é dono das tabelas de valor legal` | `DATABASE_URL` aponta para o migrador | corrigir a variável (§1) |
 | `tabelas de valor legal ausentes (…)` / `schemas de negócio ausentes (…)` | base por migrar | correr `api migrate` (§4) |
-| `aplicar migration shared/0003_papel_runtime: ERROR: permission denied to alter role` | `sgc_app` tem um atributo de administração e o migrador não é superuser | descobrir quem promoveu `sgc_app`; corrigir com o superutilizador do cluster (§4.1, §6.1) |
+| **(create)** `aplicar migration shared/0003_papel_runtime: ERROR: permission denied to create role` | `sgc_app` **não existe** — a §2 foi saltada | criar `sgc_app` com o superutilizador do cluster, como na §2, e repetir o `api migrate`. **Não** dar `CREATEROLE` ao migrador (§4.1) |
+| **(alter)** `aplicar migration shared/0003_papel_runtime: ERROR: permission denied to alter role` | `sgc_app` **existe** mas tem um atributo de administração, e o migrador não é superuser | descobrir quem promoveu `sgc_app`; corrigir com o superutilizador do cluster (§4.1, §6.1) |
 | erro de permissão numa tabela **nova**, com tudo o resto a funcionar | a migração que a criou correu com outro papel | §1.1 |
 | `DATABASE_MIGRATION_URL não definida` no `api migrate` | variável ausente no passo de migração | §4 |
+
+As duas linhas da `shared/0003` diferem numa palavra — `create` e `alter` — e
+pedem acções **opostas**: uma cria o papel que falta, a outra despromove um papel
+que existe a mais. Leia a palavra antes de agir.
