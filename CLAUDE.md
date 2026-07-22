@@ -156,8 +156,12 @@ reproduzida e ambos da mesma classe — o âmbito real da verificação era mais
 que o nome dela prometia. O **R2 (DBA malicioso, `pg_dump`/`pg_restore`) fica declarado
 como limite, não como omissão**: o R7 defende contra aplicação comprometida, não contra
 acesso directo ao cluster. Provisionamento de produção em
-`docs/RUNBOOK-provisionamento-bd.md`. Continuam por fazer **anulação**, **pagamentos**,
-**SAF-T-AO** e **certificação AGT**.
+`docs/RUNBOOK-provisionamento-bd.md`, cujo ensaio literal contra um cluster limpo apanhou
+o último defeito da fatia: o `ALTER ROLE` incondicional da `shared/0003` **não corria**
+com o migrador `NOSUPERUSER` que o próprio runbook prescreve — e em dev/CI nunca falhava,
+porque lá o migrador é superuser por construção da imagem. **O ambiente que a fatia
+endurece era o único onde o defeito aparecia.** Continuam por fazer **anulação**,
+**pagamentos**, **SAF-T-AO** e **certificação AGT**.
 
 **M3 — Laboratório** (entregue; Sprints 12–13; ver `SPRINT.md`). Entrega o BC
 Laboratório completo: catálogo de análises, requisição (via ACL sobre o Clínico),

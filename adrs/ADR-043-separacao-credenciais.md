@@ -274,24 +274,57 @@ As notas **N1–N5** não são riscos abertos: são factos medidos que a próxim
 pessoa a mexer neste código precisa de ter à mão, e que de outro modo ficariam
 em relatórios não versionados.
 
-### R1 — A migração `shared/0003` exige um migrador `SUPERUSER` na primeira corrida
+### R1 — O migrador é `NOSUPERUSER` em produção, e é-o em desenvolvimento que não
 
-Em desenvolvimento o migrador é superuser por construção da imagem
-`postgres:16`. O desenho previa prescrever `NOSUPERUSER` em produção — e a
-medição mostrou que **não basta prescrevê-lo**. A `shared/0003` reafirma os
-atributos de `sgc_app` com `ALTER ROLE sgc_app NOSUPERUSER NOCREATEDB
-NOCREATEROLE`, e o PostgreSQL só deixa alterar o atributo `SUPERUSER` a quem é
-superuser — mesmo para o repor no valor que já tem, mesmo com `CREATEROLE` e
-`ADMIN OPTION` sobre o papel. Medido contra um cluster limpo: `api migrate` com
-migrador `NOSUPERUSER` aplica 30 migrações e pára em
-`shared/0003 … permission denied to alter role (SQLSTATE 42501)`.
+Em produção o migrador é criado `NOSUPERUSER` e **assim fica, sem excepção de
+provisionamento**. Em desenvolvimento e em CI continua superuser por construção
+da imagem `postgres:16`, que cria o `POSTGRES_USER` assim. Consequência honesta:
+em dev, quem tiver a credencial de migração pode tudo. Não é o vector que esta
+fatia fecha — o vector é a aplicação comprometida.
 
-O runbook resolve-o com **promoção temporária + despromoção imediata**,
-verificada por consulta (`RUNBOOK §4.1`). Medido também o outro lado: já
-`NOSUPERUSER`, o migrador continua a criar tabelas e os default privileges
-continuam a aplicar-se. Consequência honesta: em dev, e durante a janela da
-primeira migração em produção, quem tiver a credencial de migração pode tudo.
-Não é o vector que esta fatia fecha — o vector é a aplicação comprometida.
+**Mas o facto a registar é outro, e é o mais instrutivo desta fatia:** foi
+precisamente essa diferença entre dev e produção que escondeu um defeito real
+até ao ensaio literal do runbook contra um cluster limpo. A `shared/0003`
+reafirmava os atributos de `sgc_app` com um `ALTER ROLE sgc_app NOSUPERUSER
+NOCREATEDB NOCREATEROLE` **incondicional**, e o PostgreSQL só deixa alterar o
+atributo `SUPERUSER` a quem é superuser — mesmo para o repor no valor que já
+tem, e mesmo com `CREATEROLE` mais `ADMIN OPTION` sobre o papel (medido nas três
+configurações). Resultado medido contra um cluster limpo: `api migrate` com
+migrador `NOSUPERUSER` aplicava as 30 primeiras migrações e parava em
+`shared/0003 … permission denied to alter role (SQLSTATE 42501)`. Em dev e em CI
+nunca falhou uma vez, porque lá o migrador é superuser — **o ambiente que a
+fatia existe para endurecer era o único onde o defeito aparecia.**
+
+**Correcção:** o `ALTER ROLE` passa a correr dentro de um `DO` condicionado a
+`sgc_app` ter de facto um dos três atributos. No caso normal não há nada para
+corrigir e a instrução não é emitida; quando há, é emitida — e nesse caso o
+migrador tem mesmo de ser superuser, porque corrigir um papel promovido exige
+esse poder. A guarda não fica vazia, e isso foi medido por mutação: `sgc_app`
+criado com `CREATEDB` antes das migrações (`rolcreatedb = t`) ficou, depois do
+`api migrate`, com `rolcreatedb = f`.
+
+#### Porque foi legítimo editar uma migração já aplicada
+
+A regra do projecto é forward-only, e a razão da regra é concreta: o executor
+salta as versões registadas em `public.schema_migrations`, pelo que uma edição
+**não propaga** e o ficheiro passa a divergir do estado real da base — foi o
+incidente registado na ADR-040 §6.
+
+Aqui a divergência é **semanticamente vazia**, e é isso — e só isso — que
+justifica a excepção. A forma nova difere da antiga apenas na **ausência de uma
+instrução que, no estado normal, é um no-op**: quem já aplicou a `0003` tem
+`sgc_app` exactamente no estado que a versão nova produziria, porque a versão
+antiga executou um `ALTER ROLE` cujo efeito era nenhum. Não há estado alcançável
+pela versão antiga que a nova não produza. Provado nos três cenários que
+importam: cluster novo com migrador `NOSUPERUSER` (32 migrações, `f`/`f`/`f`),
+cluster novo com migrador superuser (idem, suite verde) e base já migrada, com a
+`0003` registada, onde o executor salta a versão (`aplicadas_agora: 0`), nada
+muda e a suite continua verde.
+
+**Não é licença geral.** A excepção vale por igualdade de resultado demonstrada,
+não por a alteração "parecer inofensiva" — que é exactamente o raciocínio que a
+regra existe para bloquear. Uma edição que mude o estado produzido continua a
+exigir migração nova, como a `shared/0004` fez.
 
 ### R2 — Um administrador do cluster continua a poder tudo
 
@@ -423,6 +456,17 @@ decide** — `osOitoSchemas` contra `pg_namespace` (o que existe), `schemasBC` p
 **alcançabilidade** (`USAGE` pela união dos papéis assumíveis), e
 `tabelasDeValorLegal` contra `pg_trigger`. Nenhuma pode crescer ou encolher em
 silêncio.
+
+### N6 — Risco declarado e não fechado: o `init.sql` cria `sgc_app` com password conhecida
+
+`docker/postgres/init.sql:25` dá a `sgc_app` a password de desenvolvimento
+`sgc_app`, **versionada em git**. É deliberado — é o que torna dev e CI
+utilizáveis sem passo manual — e o runbook proíbe montar o ficheiro em produção
+(§6.3). Mas a proibição é **operacional**: nada no código a impõe, e um
+`docker-compose` de produção copiado a partir do de desenvolvimento traria a
+montagem atrás. `VerificarPapelRuntime` não sabe distinguir uma password fraca
+de uma forte — verifica poder, não credencial. Fica registado como risco
+declarado, não fechado.
 
 ## 7. O que esta fatia custou, e a lição que fica
 

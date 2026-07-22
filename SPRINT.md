@@ -48,8 +48,16 @@
 - [x] **Runbook de produção** (`docs/RUNBOOK-provisionamento-bd.md`), com cada consulta
       executada contra uma instalação provisionada por ele. Fixa que o **papel de migração
       é imutável** durante a vida da instalação (trocá-lo falha em **silêncio**: medido,
-      tabela criada por outro papel nasce sem privilégios para `sgc_app`) e regista a
-      promoção temporária a `SUPERUSER` que a `shared/0003` exige na primeira migração.
+      tabela criada por outro papel nasce sem privilégios para `sgc_app`).
+- [x] **O migrador é `NOSUPERUSER` em produção, sem janela de privilégio.** O ensaio
+      literal do runbook contra um cluster limpo revelou que o `ALTER ROLE` incondicional
+      da `shared/0003` **não corre** com migrador `NOSUPERUSER` — o PostgreSQL exige
+      superuser para tocar no atributo `SUPERUSER`, mesmo para o repor no valor que já
+      tem. Em dev e em CI nunca falhou, porque lá o migrador é superuser por construção da
+      imagem: **o ambiente que a fatia endurece era o único onde o defeito aparecia.** O
+      `ALTER ROLE` passou a condicional (edição justificada por igualdade de resultado —
+      ver ADR-043 §6 R1), e a guarda **continua a morder**: `sgc_app` criado com `CREATEDB`
+      fica `rolcreatedb=f` depois do `api migrate`.
 - [x] **Âmbito registado com honestidade**: o R7 defende contra **aplicação
       comprometida**, não contra acesso directo ao cluster. A ADR **não** afirma fechar o
       DBA malicioso nem o `pg_dump`/`pg_restore`, e **não** antecipa anulação, pagamentos,

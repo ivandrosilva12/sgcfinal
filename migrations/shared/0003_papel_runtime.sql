@@ -44,8 +44,33 @@ $$;
 
 -- Reafirmar os atributos mesmo que o papel já existisse. Dar-lhe LOGIN e
 -- password é legítimo (é o que o provisionamento faz); torná-lo administrador
--- não é, e esta linha desfaz isso.
-ALTER ROLE sgc_app NOSUPERUSER NOCREATEDB NOCREATEROLE;
+-- não é, e este bloco desfaz isso.
+--
+-- Porquê condicional e não um ALTER ROLE directo: o PostgreSQL exige
+-- SUPERUSER para tocar no atributo SUPERUSER de um papel — MESMO para o repor
+-- no valor que ele já tem. Medido contra postgres:16 nas três configurações
+-- possíveis de migrador (NOSUPERUSER NOCREATEROLE; NOSUPERUSER CREATEROLE;
+-- NOSUPERUSER CREATEROLE com GRANT sgc_app TO ... WITH ADMIN OPTION): as três
+-- falham com `permission denied to alter role`. Com a instrução incondicional,
+-- `api migrate` numa instalação de produção — onde o migrador é NOSUPERUSER,
+-- que é precisamente o que o runbook prescreve — aplicava 30 migrações e
+-- parava aqui com SQLSTATE 42501. Em desenvolvimento e em CI o defeito era
+-- invisível, porque a imagem postgres:16 cria o POSTGRES_USER como SUPERUSER.
+--
+-- A guarda NÃO fica vazia: quando sgc_app existe com algum dos três atributos
+-- (provisionamento descuidado, ou alguém a promovê-lo depois), o bloco dispara
+-- e retira-os — e nesse caso o migrador TEM de ser superuser, porque a
+-- correcção exige mesmo esse poder. O que deixa de acontecer é pagar o preço
+-- no caso normal, em que não há nada para corrigir.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles
+                WHERE rolname = 'sgc_app'
+                  AND (rolsuper OR rolcreatedb OR rolcreaterole)) THEN
+        ALTER ROLE sgc_app NOSUPERUSER NOCREATEDB NOCREATEROLE;
+    END IF;
+END
+$$;
 
 -- Os sete schemas de negócio: DML completo, zero DDL.
 DO $$

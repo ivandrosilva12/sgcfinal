@@ -148,14 +148,16 @@ precisa também das variáveis obrigatórias que `config.Carregar()` exige
 `KEYCLOAK_ADMIN_CLIENT_SECRET`). Medido: sem elas o comando termina com
 `configuração inválida: variáveis em falta ou inválidas: …`.
 
-### 4.1 A primeira migração exige um migrador temporariamente `SUPERUSER`
+### 4.1 O migrador nunca precisa de ser `SUPERUSER`
 
-A migração `shared/0003_papel_runtime.sql` cria o papel `sgc_app` (se faltar) e
-reafirma-lhe os atributos com `ALTER ROLE sgc_app NOSUPERUSER NOCREATEDB
-NOCREATEROLE`. **O PostgreSQL só deixa alterar o atributo `SUPERUSER` a quem é
-superuser** — mesmo para o repor no valor que já tem, e mesmo que o papel já
-exista com os atributos certos. Medido nas três configurações possíveis, contra
-`postgres:16`:
+Não há promoção temporária, nem janela de privilégio, nem passo de despromoção a
+esquecer. O migrador é criado `NOSUPERUSER` na §2 e **assim fica**.
+
+Nem sempre foi assim, e a razão fica registada porque explica a forma actual da
+migração. A `shared/0003_papel_runtime.sql` reafirma os atributos de `sgc_app`, e
+o PostgreSQL **só deixa alterar o atributo `SUPERUSER` a quem é superuser** —
+mesmo para o repor no valor que já tem. Medido nas três configurações possíveis
+de migrador, contra `postgres:16`:
 
 | Papel que corre a migração | Resultado de `ALTER ROLE sgc_app NOSUPERUSER NOCREATEDB NOCREATEROLE` |
 |---|---|
@@ -163,34 +165,15 @@ exista com os atributos certos. Medido nas três configurações possíveis, con
 | `NOSUPERUSER CREATEROLE` (sem `ADMIN OPTION`) | o mesmo erro |
 | `NOSUPERUSER CREATEROLE` **com** `GRANT sgc_app TO … WITH ADMIN OPTION` | o mesmo erro; e mesmo sem `NOSUPERUSER` na instrução, `ERROR: … Only roles with the CREATEDB attribute may change the CREATEDB attribute.` |
 
-Com o migrador `NOSUPERUSER`, o `api migrate` numa base nova aplica as 30
-primeiras migrações e **pára** em:
+Com a instrução incondicional, `api migrate` num cluster de produção aplicava as
+30 primeiras migrações e parava em `shared/0003 … permission denied to alter role
+(SQLSTATE 42501)`. A migração passou por isso a executar o `ALTER ROLE` **só
+quando há algo para corrigir** — ou seja, quando `sgc_app` tem de facto um dos
+três atributos (ADR-043 §6, R1).
 
-```
-aplicar migrations: aplicar migration shared/0003_papel_runtime:
-ERROR: permission denied to alter role (SQLSTATE 42501)
-```
+Medido contra um cluster limpo, com o migrador `NOSUPERUSER` do princípio ao fim:
+`api migrate` aplicou as **32** migrações e `sgc_app` ficou
 
-Procedimento, portanto — promover, migrar, **despromover imediatamente**:
-
-```sql
--- como superutilizador do cluster
-ALTER ROLE sgc SUPERUSER;
-```
-```bash
-api migrate            # retoma exactamente onde parou: shared/0003 e 0004
-```
-```sql
--- como superutilizador do cluster, no MESMO turno de operação
-ALTER ROLE sgc NOSUPERUSER;
-```
-
-Verificação obrigatória a seguir (não deixar este passo para depois):
-
-```sql
-SELECT rolname, rolsuper, rolcreatedb, rolcreaterole
-  FROM pg_roles WHERE rolname IN ('sgc','sgc_app') ORDER BY 1;
-```
 ```
  rolname | rolsuper | rolcreatedb | rolcreaterole
 ---------+----------+-------------+---------------
@@ -198,11 +181,19 @@ SELECT rolname, rolsuper, rolcreatedb, rolcreaterole
  sgc_app | f        | f           | f
 ```
 
-Depois da despromoção, `sgc` continua a poder aplicar migrações normais — é dono
-dos schemas e das tabelas. Medido: com `sgc` já `NOSUPERUSER`, `CREATE TABLE
-clinico.zz_futura (id int)` executou e a tabela nasceu com
-`sgc_app=arwd/sgc` pelos default privileges. **Só migrações que mexam em papéis
-exigem repetir a promoção temporária.**
+**A salvaguarda continua viva.** Se `sgc_app` chegar às migrações com um dos
+atributos — provisionamento descuidado, ou alguém a promovê-lo depois —, o bloco
+dispara e retira-o. Medido: `sgc_app` criado com `CREATEDB` antes das migrações
+(`rolcreatedb = t`) ficou, depois do `api migrate`, com `rolcreatedb = f`. **Nesse
+caso, e só nesse, o migrador tem de ser superuser** — corrigir um papel promovido
+exige mesmo esse poder. Se acontecer em produção, a leitura certa não é "promover
+o migrador": é descobrir quem promoveu `sgc_app` e corrigir isso primeiro, com o
+superutilizador do cluster.
+
+Depois de migrar, `sgc` continua a poder aplicar migrações normais — é dono dos
+schemas e das tabelas. Medido, já `NOSUPERUSER`: `CREATE TABLE
+clinico.zz_futura (id int)` executou e a tabela nasceu com `sgc_app=arwd/sgc`
+pelos default privileges.
 
 ---
 
@@ -489,7 +480,13 @@ com um `GRANT CREATE` de conveniência.
 
 ### 6.3 Nunca montar `docker/postgres/init.sql` em produção
 
-Dá a `sgc_app` a password de desenvolvimento, que está em git.
+Dá a `sgc_app` a password de desenvolvimento, **que está em git**
+(`docker/postgres/init.sql:25`). É uma proibição operacional e **nada no código a
+impõe**: o ficheiro é montado pelo `docker-compose.yml` de desenvolvimento, e um
+compose de produção copiado a partir dele traria a montagem atrás. Risco
+declarado, não fechado — a verificação de arranque não sabe distinguir uma
+password fraca de uma forte. Mitigação imediata se houver dúvida: rodar a
+password (§3) e confirmar pela §5.
 
 ---
 
@@ -519,6 +516,6 @@ Está aqui para que ninguém leia a verificação da §5 como garantia total.
 | `papel de runtime inadequado: … é, ou pode assumir por SET ROLE, o papel administrativo <x>` | `GRANT <x> TO sgc_app` | `REVOKE <x> FROM sgc_app` (§6.1) |
 | `papel de runtime inadequado: … é dono das tabelas de valor legal` | `DATABASE_URL` aponta para o migrador | corrigir a variável (§1) |
 | `tabelas de valor legal ausentes (…)` / `schemas de negócio ausentes (…)` | base por migrar | correr `api migrate` (§4) |
-| `aplicar migration shared/0003_papel_runtime: ERROR: permission denied to alter role` | migrador `NOSUPERUSER` numa instalação nova | promoção temporária (§4.1) |
+| `aplicar migration shared/0003_papel_runtime: ERROR: permission denied to alter role` | `sgc_app` tem um atributo de administração e o migrador não é superuser | descobrir quem promoveu `sgc_app`; corrigir com o superutilizador do cluster (§4.1, §6.1) |
 | erro de permissão numa tabela **nova**, com tudo o resto a funcionar | a migração que a criou correu com outro papel | §1.1 |
 | `DATABASE_MIGRATION_URL não definida` no `api migrate` | variável ausente no passo de migração | §4 |
